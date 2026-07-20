@@ -1,3 +1,6 @@
+# --- Mode Éditable (Lien vers pyproject.toml) ---
+-e .
+
 # --- Dépendances principales (extraction, diagnostic, rendu, PDF fidèle) ---
 PyMuPDF>=1.24        # import fitz -- extract.py, faithful_pdf.py
 pdfplumber>=0.11      # extract.py (images, tables, lignes)
@@ -9,6 +12,15 @@ mistralai>=1.0        # ocr.py
 
 # --- Sortie .docx (output/docx.py) ---
 python-docx>=1.1       # import docx (nom du paquet PyPI diffère du nom importé)
+
+# --- OCR & Services tiers ---
+mistralai>=1.0.0
+
+# --- Export Document ---
+python-docx>=1.1.0
+
+# --- Outillage de Développement & Tests ---
+pytest>=7.0.0
 
 # Le reste des imports du projet (document.py, diagnostic.py, resolve.py,
 # render.py, pipeline.py) ne repose que sur la stdlib (dataclasses, json,

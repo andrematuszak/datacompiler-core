@@ -2,30 +2,43 @@
 venv/
 .venv/
 env/
+ENV/
 
-# --- Python & Cache ---
+# --- Python & Caches ---
 __pycache__/
 *.py[cod]
 *$py.class
 *.so
 .pytest_cache/
 
-# --- Build & Distribution ---
-build/
-dist/
-*.egg-info/
-.eggs/
-
-# --- Fichiers de sortie / Tests (Output) ---
-# On ignore les PDF générés dans le dossier de test pour ne pas polluer Git
-tests/output/
-*.output.pdf
-*_cleaned.pdf
-
-# --- IDE & Système ---
+# --- Fichiers système (macOS / Windows / IDEs) ---
 .DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
 .vscode/
 .idea/
 
-# --- Configuration locale / Sensible ---
+# --- Build, Packaging & Distribution ---
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+*.egg-info/
+*.egg
+
+# --- Fichiers de sorties temporaires & Logs ---
+*.log
+tests/output/
+*.output.pdf
+*_cleaned.pdf
+*_propre.pdf
+*_propre.json
+
+# --- Sensible & Secrets ---
 .env
