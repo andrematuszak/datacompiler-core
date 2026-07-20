@@ -41,4 +41,4 @@ tests/output/
 *_propre.json
 
 # --- Sensible & Secrets ---
-.env
+.envexperiments/
