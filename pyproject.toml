@@ -1,0 +1,44 @@
+[build-system]
+
+requires = ["setuptools>=61.0.0"]
+
+build-backend = "setuptools.build_meta"
+
+
+
+[project]
+
+name = "datacleaner"
+
+version = "0.1.0"
+
+description = "Nettoyage et reconstruction géométrique fidèle de fichiers PDF"
+
+readme = "README.md"
+
+requires-python = ">=3.11"
+
+dependencies = [
+
+    "pymupdf",
+
+    "pdfplumber",
+
+    "reportlab",
+
+    # Ajoute ici tes autres dépendances de requirements.txt
+
+]
+
+
+
+[project.scripts]
+
+datacleaner = "datacleaner.pipeline:main"
+
+
+
+[tool.setuptools.packages.find]
+
+where = ["src"] 
+

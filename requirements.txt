@@ -1,0 +1,15 @@
+# --- Dépendances principales (extraction, diagnostic, rendu, PDF fidèle) ---
+PyMuPDF>=1.24        # import fitz -- extract.py, faithful_pdf.py
+pdfplumber>=0.11      # extract.py (images, tables, lignes)
+
+# --- Dépendance optionnelle (uniquement si diagnostic.recommend_ocr et
+# appel réel à ocr.py / Mistral) ; import fait en différé dans ocr.py, donc
+# le pipeline tourne sans si tu ne l'utilises pas. ---
+mistralai>=1.0        # ocr.py
+
+# --- Sortie .docx (output/docx.py) ---
+python-docx>=1.1       # import docx (nom du paquet PyPI diffère du nom importé)
+
+# Le reste des imports du projet (document.py, diagnostic.py, resolve.py,
+# render.py, pipeline.py) ne repose que sur la stdlib (dataclasses, json,
+# typing, re, copy, argparse, pathlib, os, base64) -- rien à ajouter ici.

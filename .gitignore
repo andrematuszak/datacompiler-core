@@ -1,0 +1,31 @@
+# --- Environnements virtuels ---
+venv/
+.venv/
+env/
+
+# --- Python & Cache ---
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.pytest_cache/
+
+# --- Build & Distribution ---
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# --- Fichiers de sortie / Tests (Output) ---
+# On ignore les PDF générés dans le dossier de test pour ne pas polluer Git
+tests/output/
+*.output.pdf
+*_cleaned.pdf
+
+# --- IDE & Système ---
+.DS_Store
+.vscode/
+.idea/
+
+# --- Configuration locale / Sensible ---
+.env
