@@ -9,7 +9,7 @@ from datacleaner.core.diagnostic import diagnostiquer
 from datacleaner.core.document import Document
 from datacleaner.core.extract import extraire
 from datacleaner.core.ocr import ocraliser
-from datacleaner.core.resolve import resoudre
+from datacleaner.core.resolve.pipeline import resoudre
 
 # Module Renderers
 from datacleaner.renderers.faithful_pdf import render_faithful_pdf
