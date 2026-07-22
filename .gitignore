@@ -39,6 +39,7 @@ tests/output/
 *_cleaned.pdf
 *_propre.pdf
 *_propre.json
+*document.json
 
 # --- Sensible & Secrets ---
 .envexperiments/
