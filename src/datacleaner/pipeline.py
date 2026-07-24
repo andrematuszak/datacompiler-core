@@ -24,6 +24,7 @@ def executer_pipeline(pdf_path, format_sortie="faithful-pdf", sauver_json=True,
 
     print("[2/5] Diagnostic...")
     diagnostiquer(doc)
+    print(f" native_text_quality={doc.diagnostic.native_text_quality}")
     print(f"      recommend_ocr={doc.diagnostic.recommend_ocr}")
 
     if doc.diagnostic.recommend_ocr and (api_key := os.getenv("MISTRAL_API_KEY")):

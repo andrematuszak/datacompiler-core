@@ -27,23 +27,108 @@ SEUIL_COUVERTURE_PLEINE_PAGE = 0.85
 SEUIL_BAS = 0.6
 SEUIL_HAUT = 0.9
 
-
 def _chiffre_dans_mot(tok):
     return any(c.isdigit() for c in tok) and any(c.isalpha() for c in tok)
-
 
 def _casse_irreguliere(tok):
     return any(tok[i - 1].islower() and tok[i].isupper() for i in range(1, len(tok)))
 
-
 def _texte_page(page):
     return " ".join(w.text for w in page.native.words)
 
+def _detecter_erreurs_encodage(texte):
+    """Détecte les erreurs d'encodage courantes dans les PDFs.
+
+    Returns:
+        tuple: (taux_erreurs, details) où details est une liste de tuples
+               (type_erreur, count, exemples)
+    """
+    erreurs = []
+    total_chars = len(texte)
+    if total_chars == 0:
+        return 0.0, []
+
+    # 1. Symbole euro manquant (remplacé par 'e' ou 'E' isolé)
+    # Pattern: 'e' ou 'E' précédé/suivi par un espace ou un chiffre
+    euro_pattern = re.compile(r'(?<!\w)(\be\b)(?!\w)', re.UNICODE)
+    euro_matches = euro_pattern.findall(texte)
+    if euro_matches:
+        count = len(euro_matches)
+        # Filtrer les faux positifs: 'e' dans des mots comme 'le', 'de', etc.
+        # On garde seulement les 'e' qui sont probablement des €
+        true_euro = [m for m in euro_matches if
+                     (m == 'e' and not texte[texte.find(m)-2:texte.find(m)+3].strip().isalpha())]
+        if true_euro:
+            erreurs.append(('symbole_euro_manquant', len(true_euro), true_euro[:3]))
+
+    # 2. Apostrophes/guillemets mal encodés (droit au lieu de courbé)
+    # ' au lieu de ' ou " au lieu de " ou ""
+    straight_quote_pattern = re.compile(r"[']")
+    straight_quotes = straight_quote_pattern.findall(texte)
+    if straight_quotes:
+        # Vérifier si ce sont des apostrophes dans des mots (probablement OK)
+        # ou des guillemets isolés (probablement mal encodés)
+        isolated_quotes = [q for i, q in enumerate(straight_quotes)
+                          if i == 0 or not straight_quotes[i-1].isalnum()]
+        if len(isolated_quotes) > 0:
+            erreurs.append(('apostrophes_droites', len(straight_quotes), straight_quotes[:3]))
+
+    # 3. Accents corrompus (caractères ASCII au lieu de Unicode)
+    # Exemples: a au lieu de à, e au lieu de é, c au lieu de ç
+    accent_patterns = [
+        (r'\ba\b', 'à'),  # 'a' isolé qui devrait être 'à'
+        (r'\be\b', 'é'),  # 'e' isolé qui devrait être 'é'
+        (r'\bc\b', 'ç'),  # 'c' isolé qui devrait être 'ç'
+        (r'\bu\b', 'ù'),  # 'u' isolé qui devrait être 'ù'
+    ]
+    for pattern, expected in accent_patterns:
+        matches = re.findall(pattern, texte, re.UNICODE)
+        if matches:
+            # Filtrer les faux positifs (mots courts comme 'a', 'e' sont normaux)
+            # On vérifie le contexte
+            true_matches = []
+            for match in matches:
+                idx = texte.find(match)
+                if idx > 0 and idx < len(texte) - 1:
+                    context = texte[max(0, idx-2):min(len(texte), idx+3)]
+                    # Si le contexte suggère un mot français, c'est probablement une erreur
+                    if any(c.isalpha() for c in context.replace(match, '')):
+                        true_matches.append(match)
+            if true_matches:
+                erreurs.append((f'accent_corrompu_{expected}', len(true_matches), true_matches[:3]))
+
+    # 4. Espaces multiples ou anormaux
+    space_pattern = re.compile(r'[ \t]{2,}')
+    multi_spaces = space_pattern.findall(texte)
+    if multi_spaces:
+        erreurs.append(('espaces_multiples', len(multi_spaces), multi_spaces[:3]))
+
+    # 5. Caractères de contrôle ou invisibles
+    control_chars = re.compile(r'[\x00-\x1f\x7f-\x9f]')
+    control_matches = control_chars.findall(texte)
+    if control_matches:
+        erreurs.append(('caracteres_controle', len(control_matches), control_matches[:3]))
+
+    # 6. Mots avec des caractères suspects (comme 'pr´elev´ee')
+    # Détecter les mots avec des apostrophes ou backticks à l'intérieur
+    suspect_word_pattern = re.compile(r'\b\w+[\'`]\w+\b', re.UNICODE)
+    suspect_words = suspect_word_pattern.findall(texte)
+    if suspect_words:
+        erreurs.append(('mots_avec_caracteres_suspects', len(suspect_words), suspect_words[:3]))
+
+    # Calculer le taux d'erreurs
+    total_erreurs = sum(count for _, count, _ in erreurs)
+    taux = total_erreurs / total_chars if total_chars > 0 else 0.0
+
+    return taux, erreurs
 
 def _qualite_texte(texte):
     """Même heuristique que la version précédente (taux de caractères
     suspects + tokens à structure anormale), mais appliquée au texte
-    reconstruit depuis les mots déjà extraits plutôt qu'en rouvrant le pdf."""
+    reconstruit depuis les mots déjà extraits plutôt qu'en rouvrant le pdf.
+
+    Amélioration: détecte aussi les erreurs d'encodage courantes.
+    """
     if not texte:
         return None
     tokens = TOKEN_PATTERN.findall(texte)
@@ -52,8 +137,15 @@ def _qualite_texte(texte):
         len([t for t in tokens if len(t) >= 2 and (_chiffre_dans_mot(t) or _casse_irreguliere(t))]) / len(tokens)
         if tokens else 0.0
     )
-    return max(0.0, 1.0 - taux_suspect * 5 - taux_tokens * 3)
 
+    # Détecter les erreurs d'encodage
+    taux_encodage, erreurs_encodage = _detecter_erreurs_encodage(texte)
+
+    # Calculer la qualité en tenant compte des erreurs d'encodage
+    # Plus de poids aux erreurs d'encodage car elles sont critiques
+    qualite = max(0.0, 1.0 - taux_suspect * 5 - taux_tokens * 3 - taux_encodage * 10)
+
+    return qualite
 
 def _couverture_image_max(page):
     surface_page = page.width * page.height
@@ -67,7 +159,6 @@ def _couverture_image_max(page):
         hauteur = img.bbox.y1 - img.bbox.y0
         couverture = max(couverture, (largeur * hauteur) / surface_page)
     return couverture
-
 
 def _score_ordre_lecture(page):
     """Proxy sans réouverture du PDF : regroupe les mots en lignes par leur
@@ -97,7 +188,6 @@ def _score_ordre_lecture(page):
 
     return paires_dans_ordre / total_paires if total_paires else 1.0
 
-
 def diagnostiquer(doc: Document) -> Document:
     notes = []
     scores_qualite = []
@@ -107,6 +197,7 @@ def diagnostiquer(doc: Document) -> Document:
     a_tables = False
     a_images_pleine_page = False
     ocr_integre_detecte = False
+    erreurs_encodage_par_page = []
 
     for page in doc.pages:
         texte = _texte_page(page)
@@ -126,6 +217,11 @@ def diagnostiquer(doc: Document) -> Document:
         if qualite is not None:
             scores_qualite.append(qualite)
 
+        # Détecter les erreurs d'encodage pour cette page
+        _, erreurs_page = _detecter_erreurs_encodage(texte)
+        if erreurs_page:
+            erreurs_encodage_par_page.append((page.number, erreurs_page))
+
         # OCR tiers déjà appliqué en amont : image pleine page + texte natif
         # présent quand même (cf. test7, session précédente)
         if pleine_page and page.native.words:
@@ -144,10 +240,27 @@ def diagnostiquer(doc: Document) -> Document:
     native_text_quality = round(sum(scores_qualite) / len(scores_qualite), 3) if scores_qualite else None
     reading_order_score = round(sum(scores_ordre) / len(scores_ordre), 3) if scores_ordre else None
 
+    # Ajouter des notes sur les erreurs d'encodage
+    if erreurs_encodage_par_page:
+        for page_num, erreurs in erreurs_encodage_par_page:
+            for type_erreur, count, exemples in erreurs:
+                if type_erreur == 'symbole_euro_manquant':
+                    notes.append(f"Page {page_num} : symbole € probablement manquant (trouvé {count}x '{exemples[0] if exemples else 'e'}' à la place)")
+                elif type_erreur == 'apostrophes_droites':
+                    notes.append(f"Page {page_num} : apostrophes/guillemets probablement mal encodés ({count}x)")
+                elif type_erreur.startswith('accent_corrompu_'):
+                    char = type_erreur.split('_')[-1]
+                    notes.append(f"Page {page_num} : accent '{char}' probablement corrompu ({count}x)")
+                elif type_erreur == 'espaces_multiples':
+                    notes.append(f"Page {page_num} : espaces multiples détectés ({count}x)")
+                elif type_erreur == 'mots_avec_caracteres_suspects':
+                    notes.append(f"Page {page_num} : mots avec caractères suspects (ex: {', '.join(exemples[:2])}) ({count}x)")
+
     recommend_ocr = (
         not a_texte_natif
         or (native_text_quality is not None and native_text_quality < SEUIL_HAUT)
         or ocr_integre_detecte
+        or bool(erreurs_encodage_par_page)  # Recommander OCR si erreurs d'encodage
     )
 
     if recommend_ocr and not notes:
@@ -167,7 +280,6 @@ def diagnostiquer(doc: Document) -> Document:
     doc.diagnostic.notes = notes
 
     return doc
-
 
 if __name__ == "__main__":
     import sys
