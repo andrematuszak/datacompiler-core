@@ -1,4 +1,4 @@
-"""Renderer PDF fidèle: même apparence, couche texte résolue indépendante.
+"""faithful_pdf.py - Renderer PDF fidèle: même apparence, couche texte résolue indépendante.
 
 Le mode ``rasterized`` est le seul qui garantisse l'absence de l'ancienne
 couche texte: il rend chaque page source en image haute définition puis pose

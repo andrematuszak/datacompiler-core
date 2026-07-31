@@ -1,4 +1,4 @@
-"""output/ — Renderers de page.resolved vers différents formats de sortie.
+"""backend/ — Renderers de page.resolved vers différents formats de sortie.
 
 Deux formes d'interface selon le format :
   - "texte" (markdown, html) : la fonction retourne une chaîne ; FORMATS
