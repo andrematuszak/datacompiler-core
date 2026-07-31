@@ -34,7 +34,6 @@ eggs/
 
 # --- Fichiers de sorties temporaires & Logs ---
 *.log
-tests/output/
 *.output.pdf
 *_cleaned.pdf
 *_propre.pdf
