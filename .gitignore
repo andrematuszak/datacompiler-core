@@ -42,4 +42,6 @@ tests/output/
 *document.json
 
 # --- Sensible & Secrets ---
+experiments/
+tests/
 .envexperiments/

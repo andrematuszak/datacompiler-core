@@ -9,12 +9,8 @@ native reste présente.
 
 from pathlib import Path
 import fitz
-from datacleaner.core.document import Document
-from datacleaner.renderers.render import _grouper_mots_en_lignes
-
-# Chemin absolu vers la police embarquée dans le package
-FONT_PATH = Path(__file__).parent.parent / "assets" / "fonts" / "DejaVuSans.ttf"
-
+from document import Document
+from .layout import _grouper_mots_en_lignes
 
 # On insère TOUJOURS la couche invisible avec une police Unicode large
 # (DejaVu Sans) plutôt que "helv" (Helvetica base-14 de PyMuPDF).
@@ -39,7 +35,7 @@ _FALLBACK_FONTNAME = "df-fallback"
 # La police doit être committée dans le repo, à côté de ce fichier :
 # faithful_pdf.py
 # fonts/DejaVuSans.ttf   <- fichier fourni séparément, à copier ici
-_FALLBACK_FONTFILE = str(Path(__file__).parent.parent / "assets" / "fonts" / "DejaVuSans.ttf")
+_FALLBACK_FONTFILE = str(Path(__file__).parent / "fonts" / "DejaVuSans.ttf")
 
 _polices_chargees = {}  # cache : nom de police -> fitz.Font
 
