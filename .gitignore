@@ -41,6 +41,10 @@ eggs/
 *document.json
 
 # --- Sensible & Secrets ---
+anciens/
+apps/
 experiments/
+sources/
 tests/
+utils/
 .envexperiments/
