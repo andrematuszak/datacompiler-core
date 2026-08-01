@@ -3,10 +3,10 @@ datacompiler/frontend/extract/pdfplumber.py
 Moteur 2 — Extraction des éléments visuels et vectoriels via pdfplumber.
 """
 
+from . import table_reconstruction
 from typing import Tuple, List, Dict, Any
 import pdfplumber
 
-import table_reconstruction
 from datacompiler.model.document import BBox, ImageElement, TableElement, GraphicVector
 
 

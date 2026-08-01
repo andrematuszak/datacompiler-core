@@ -8,7 +8,7 @@ lire page.ocr sans se soucier de quel backend l'a rempli.
 
 from abc import ABC, abstractmethod
 
-from document import Document
+from datacompiler.model.document import Document
 
 
 class OcrBackend(ABC):

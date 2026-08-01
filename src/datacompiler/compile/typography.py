@@ -19,7 +19,7 @@ mots composés mal refusionnés. À affiner plus tard si besoin (dictionnaire,
 liste d'exceptions) plutôt que bloquant pour cette première version.
 """
 
-from document import Word
+from datacompiler.model.document import Word
 
 _LIGATURES = {
     "\ufb00": "ff",

@@ -7,7 +7,7 @@ import os
 from pathlib import Path
 
 
-from model import Document
+from datacompiler.model.document import Document
 from frontend.extract import extraire
 from frontend.diagnostic import diagnostiquer
 from frontend.diagnostic import report as diagnostic_report

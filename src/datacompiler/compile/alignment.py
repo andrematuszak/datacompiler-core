@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from difflib import SequenceMatcher
 from typing import Optional
 
-from document import Word
+from datacompiler.model.document import Word
 
 
 @dataclass

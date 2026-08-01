@@ -1,6 +1,6 @@
-# 🧹 DataCleaner
+# 🧹 DataCompiler
 
-**DataCleaner** est un package Python modulaire conçu pour l'extraction, le diagnostic, la résolution et la reconstruction fidèle géométrique de documents PDF.
+**DataCompiler** est un package Python modulaire conçu pour l'extraction, le diagnostic, la résolution et la reconstruction fidèle géométrique de documents PDF.
 
 ---
 
@@ -9,19 +9,17 @@
 L'architecture repose sur un *src-layout* moderne et modulaire :
 
 ```text
-datacleaner/
+datacompiler/
 ├── src/
-│   └── datacleaner/
-│       ├── core/           # Extraction, diagnostic, OCR, résolution
-│       ├── renderers/      # Moteurs de rendu (PDF fidèle, DOCX, etc.)
-│       ├── assets/         # Polices et ressources embarquées
+│   └── datacompiler/
+│       ├── frontend/       # Extraction, OCR (Mistral/Tesseract), Diagnostic
+│       ├── compile/        # Arbitrage native/OCR, résolution
+│       ├── backend/        # Moteurs de rendu (PDF fidèle, DOCX, HTML, etc.)
+│       ├── model/          # Modèles de données (Document, Word, BBox...)
 │       └── pipeline.py     # Orchestrateur principal
 ├── tests/                  # Tests unitaires et fixtures (pytest)
-├── examples/               # Exemples d'utilisation simples
-├── experiments/            # Espace de laboratoire et tests locaux
 ├── pyproject.toml          # Configuration du package
 └── requirements.txt        # Dépendances du projet
-```
 
 ---
 

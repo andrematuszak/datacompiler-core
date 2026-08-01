@@ -6,7 +6,7 @@ des deux à en avoir une, cf. alignment.py) -- un conflit ne fait jamais
 perdre le positionnement, seulement potentiellement le texte.
 """
 
-from document import Word
+from datacompiler.model.document import Word
 
 from . import confidence
 

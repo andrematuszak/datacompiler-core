@@ -1,30 +1,36 @@
-"""ocr_backends/ — Registre des backends OCR disponibles.
+"""ocr/ — Registre des backends OCR disponibles.
 
 Usage :
-    from ocr_backends import get_backend
+    from datacompiler.frontend.ocr import get_backend, ocraliser
+    
+    # Via le registre :
     backend = get_backend("tesseract", lang="fra")
     backend.ocraliser(doc, pdf_path, pages=[3, 4])
 
-N'importe ni ne casse rien dans ocr.py existant -- get_backend("mistral")
-appelle en interne la même fonction ocraliser() qu'avant, juste via
-l'interface commune.
+    # Ou via le helper direct :
+    ocraliser(doc, pdf_path, backend_name="mistral")
 """
 
 from .base import OcrBackend
-from .mistral_backend import MistralBackend
+from .mistral import MistralBackend
 
 BACKENDS = {"mistral": MistralBackend}
 
 try:
-    from .tesseract_backend import TesseractBackend
+    # 💡 Correction ici : nom du fichier = tesseract (.py)
+    from .tesseract import TesseractBackend
     BACKENDS["tesseract"] = TesseractBackend
 except ImportError:
-    pass  # pytesseract/Pillow non installés, ou binaire tesseract absent du
-          # système -- le backend est simplement absent du registre plutôt
-          # que de faire planter tout le reste au premier import.
+    pass  # pytesseract/Pillow non installés, ou binaire tesseract absent
 
 
 def get_backend(name: str, **kwargs) -> OcrBackend:
     if name not in BACKENDS:
         raise ValueError(f"Backend OCR inconnu : {name!r} (disponibles : {list(BACKENDS)})")
     return BACKENDS[name](**kwargs)
+
+
+def ocraliser(doc, pdf_path: str, backend_name: str = "mistral", **kwargs):
+    """Point d'entrée global pour exécuter l'OCR sur un document."""
+    backend = get_backend(backend_name, **kwargs)
+    return backend.ocraliser(doc, pdf_path, **kwargs)
