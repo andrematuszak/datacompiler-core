@@ -8,8 +8,8 @@ Nouvelle dépendance : python-docx (à ajouter à requirements.txt)."""
 from pathlib import Path
 from docx import Document as DocxDocument
 
-from document import Document
-from .layout import _grouper_mots_en_lignes
+from datacompiler.model.document import Document
+from datacompiler.compile.layout import grouper_par_ligne
 
 
 def render_docx(doc: Document, output_path: str) -> str:

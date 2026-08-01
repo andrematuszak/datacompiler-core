@@ -23,8 +23,8 @@ l'extraction)."""
 
 from pathlib import Path
 import fitz
-from document import Document
-from .layout import _grouper_mots_en_lignes
+from datacompiler.model.document import Document
+from datacompiler.compile.layout import grouper_par_ligne
 from .faithful_pdf import _FALLBACK_FONTNAME, _FALLBACK_FONTFILE, _font_objet
 
 MARGE = 50.0

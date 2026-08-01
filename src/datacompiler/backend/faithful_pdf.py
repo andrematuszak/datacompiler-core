@@ -9,8 +9,8 @@ native reste présente.
 
 from pathlib import Path
 import fitz
-from document import Document
-from .layout import _grouper_mots_en_lignes
+from datacompiler.model.document import Document
+from datacompiler.compile.layout import grouper_par_ligne
 
 # On insère TOUJOURS la couche invisible avec une police Unicode large
 # (DejaVu Sans) plutôt que "helv" (Helvetica base-14 de PyMuPDF).
@@ -64,7 +64,7 @@ def _insert_invisible_words(page, words):
     # Regroupement en lignes (même logique que render.py) : nécessaire pour
     # savoir quels mots sont adjacents et mériter un espace explicite entre
     # eux, plutôt que de traiter chaque mot isolément.
-    for ligne in _grouper_mots_en_lignes(words):
+    for ligne in grouper_par_ligne(words):
         mots_valides = [w for w in ligne if w.bbox and w.output_text.strip()]
         for i, word in enumerate(mots_valides):
             box = word.bbox

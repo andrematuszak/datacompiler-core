@@ -2,8 +2,8 @@
 hauteur libre), EXCLUSIVEMENT depuis page.resolved. Extrait de l'ancien
 render.py, logique inchangée à part l'import de _grouper_mots_en_lignes."""
 
-from document import Document
-from .layout import _grouper_mots_en_lignes
+from datacompiler.model.document import Document
+from datacompiler.compile.layout import grouper_par_ligne
 
 
 def rendre_html(doc: Document, largeur_affichage=700) -> str:

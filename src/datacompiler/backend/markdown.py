@@ -3,8 +3,8 @@ native/ocr directement). Extrait de l'ancien render.py, logique inchangée à
 part l'import de _grouper_mots_en_lignes (désormais output/layout.py, avec
 le correctif de tri décrit dans ce module)."""
 
-from document import Document
-from .layout import _grouper_mots_en_lignes
+from datacompiler.model.document import Document
+from datacompiler.compile.layout import grouper_par_ligne
 
 
 def rendre_markdown(doc: Document) -> str:

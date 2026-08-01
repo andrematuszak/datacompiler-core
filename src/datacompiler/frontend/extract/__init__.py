@@ -4,7 +4,8 @@ Point d'entrée de l'étape d'extraction brute.
 """
 
 import fitz
-import pdfplumber
+# 1. On donne un alias à la vraie librairie PyPI
+import pdfplumber as pdfplumber_lib
 
 from datacompiler.model.document import Document
 from .pymupdf import extraire_metadonnees, extraire_page_pymupdf
@@ -20,7 +21,8 @@ def extraire(doc_obj: Document, pdf_path: str) -> Document:
     3. Fusion des couches textuelle et graphique
     """
     doc_fitz = fitz.open(pdf_path)
-    pdf_plumb = pdfplumber.open(pdf_path)
+    # 2. On utilise l'alias pour faire appel à l'API publique
+    pdf_plumb = pdfplumber_lib.open(pdf_path)
 
     # 1. Ingestion des métadonnées globales
     metadata_dict = extraire_metadonnees(doc_fitz, pdf_path)

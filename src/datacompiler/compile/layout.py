@@ -54,10 +54,14 @@ def grouper_par_ligne(mots) -> list:
     """Reconstitue des groupes de mots à partir de `layout_line` déjà
     assigné -- utile côté backend/ pour retrouver l'ancienne interface
     (liste de listes) sans redupliquer la logique de détection de saut."""
+    # 🛡️ Protection contre None ou liste vide
+    if not mots:
+        return []
+
     groupes = {}
     ordre = []
     for mot in mots:
-        cle = mot.layout_line
+        cle = getattr(mot, "layout_line", 0)
         if cle not in groupes:
             groupes[cle] = []
             ordre.append(cle)
