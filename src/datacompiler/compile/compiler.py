@@ -72,19 +72,3 @@ def resoudre(doc: Document) -> Document:
         page.resolved.images = deepcopy(page.graphics.images)
         page.resolved.tables = deepcopy(page.graphics.tables)
     return doc
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-def _resoudre_page(page):
-    ...
