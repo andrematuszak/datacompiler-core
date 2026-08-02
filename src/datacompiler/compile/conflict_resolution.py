@@ -6,7 +6,7 @@ des deux à en avoir une, cf. alignment.py) -- un conflit ne fait jamais
 perdre le positionnement, seulement potentiellement le texte.
 """
 
-from datacompiler.model.document import Word
+from datacompiler.model.document import Word, Decision
 
 from . import confidence
 
@@ -18,14 +18,15 @@ def _resoudre_conflit(unite) -> Word:
 
     mot = unite.native  # bbox conservée quoi qu'il arrive
     if native_gagne or not ecart_net:
-        # Écart non significatif : on ne réécrit pas un texte natif qui a
-        # au moins une bbox fiable sur la seule foi d'un score OCR à peine
-        # supérieur -- le natif reste la source par défaut en cas de doute.
         mot.notes.append(
             f"conflit natif/OCR : texte natif conservé "
             f"('{unite.native.text}' vs OCR '{unite.ocr.text}', "
             f"confiance native={conf_native:.2f}, ocr={conf_ocr:.2f}"
             f"{', écart faible -> natif par défaut' if not ecart_net else ''})"
+        )
+        mot.decision = Decision(
+            regle="conflit_natif_conserve",
+            detail=f"'{unite.native.text}' vs OCR '{unite.ocr.text}'",
         )
     else:
         mot.resolved_text = unite.ocr.text
@@ -35,6 +36,10 @@ def _resoudre_conflit(unite) -> Word:
         mot.notes.append(
             f"conflit natif/OCR : corrigé '{unite.native.text}' -> '{unite.ocr.text}' "
             f"(confiance native={conf_native:.2f}, ocr={conf_ocr:.2f})"
+        )
+        mot.decision = Decision(
+            regle="conflit_ocr_corrige",
+            detail=f"'{unite.native.text}' -> '{unite.ocr.text}'",
         )
     return mot
 

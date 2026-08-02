@@ -3,7 +3,7 @@ du fichier (Metadata) et résultat du diagnostic (Diagnostic). Ni l'une ni
 l'autre ne référence Word/Page."""
 
 from dataclasses import dataclass, field
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
 
 @dataclass
@@ -38,5 +38,9 @@ class Diagnostic:
     overlapping_text_detected: bool = False
     out_of_bounds_detected: bool = False
     empty_pages: List[int] = field(default_factory=list)
+    confiance_suffisante: Optional[bool] = None
+    symboles_suspects: Dict[str, int] = field(default_factory=dict)
+    mots_suspects_ngrammes: List[Any] = field(default_factory=list)
+    categorie: Optional[str] = None
 
 

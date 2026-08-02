@@ -42,6 +42,8 @@ def afficher(doc: Document) -> None:
         print(_ligne("Producteur suspect", d.suspect_producer))
     if d.empty_pages:
         print(_ligne("Pages vides", ", ".join(str(p) for p in d.empty_pages)))
+    if d.categorie:
+        print(_ligne("Catégorie", d.categorie))
 
     print("-" * 64)
     print(_ligne("RECOMMANDATION OCR", "OUI" if d.recommend_ocr else "NON"))

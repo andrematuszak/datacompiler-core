@@ -7,7 +7,7 @@ from .geometry import BBox, Polygon
 from .typography import Font
 from .metadata import Metadata, Diagnostic
 from .document import (
-    Document, Page, Word,
+    Document, Page, Word, Decision,
     NativeContainer, GraphicsContainer, OcrContainer, ResolvedContainer,
     ImageElement, TableElement, GraphicVector, OcrBlock,
 )

@@ -1,19 +1,106 @@
-﻿"""diagnostic/ — Remplit doc.diagnostic à partir de l'objet Document DÉJÀ
-EXTRAIT. Ne rouvre jamais le PDF. Chaque préoccupation vit dans son propre
-module (text_integrity, visual_integrity, geometry, container) ; ce fichier
-les agrège, comme resolve/__init__.py le fait pour ses sous-modules.
+﻿"""diagnostic/ — Remplit page.diagnostic (et agrège doc.diagnostic) à partir
+de l'objet Document DÉJÀ EXTRAIT. Ne rouvre jamais le PDF."""
 
-Certains signaux (chevauchements, hors-limites, DPI bas) sont pour l'instant
-INFORMATIFS uniquement -- ils alimentent notes/ocr_reasons mais ne pèsent
-pas encore sur recommend_ocr, faute de preuve empirique de leur pouvoir
-prédictif. À activer dans le calcul de recommend_ocr une fois validés sur
-vos tests."""
+from datacompiler.model.document import Document
+from datacompiler.model.metadata import Diagnostic
 
-from datacompiler.model.document import Document   
+from .categorize import SEUIL_HAUT, categoriser
+from . import blind_spots, container, geometry, text_integrity, visual_integrity
 
-from . import container, geometry, text_integrity, visual_integrity
 
-SEUIL_HAUT = 0.9
+def _diagnostiquer_page(page) -> Diagnostic:
+    notes = []
+    ocr_reasons = []
+    diag = page.diagnostic
+
+    texte = text_integrity.texte_page(page)
+    has_native = bool(page.native.words)
+    qualite = text_integrity.qualite_texte(texte)
+    confiance = blind_spots.qualite_avec_confiance(texte, qualite)
+    symboles = blind_spots.symboles_corrompus(texte)
+    mots_suspects = blind_spots.mots_suspects_ngrammes(texte)
+
+    couverture = visual_integrity.couverture_image_max(page)
+    pleine_page = couverture >= visual_integrity.SEUIL_COUVERTURE_PLEINE_PAGE
+    ocr_integre = pleine_page and has_native
+
+    if ocr_integre:
+        notes.append("OCR tiers probable (image pleine page + texte natif présent)")
+        qualite = min(qualite, 0.4) if qualite is not None else 0.4
+
+    if text_integrity.page_a_faible_densite(page) and not page.graphics.images and has_native:
+        notes.append("Densité textuelle anormalement basse pour une page non vide")
+
+    images_basse_res = visual_integrity.images_basse_resolution(page)
+    for img, dpi in images_basse_res:
+        notes.append(f"Image basse résolution ({dpi:.0f} DPI effectif)")
+
+    chevauchements = geometry.detecter_chevauchements(page)
+    if chevauchements:
+        notes.append(f"{len(chevauchements)} paire(s) de mots avec bbox chevauchantes")
+
+    hors_limites = geometry.detecter_hors_limites(page)
+    if hors_limites:
+        notes.append(f"{len(hors_limites)} mot(s) hors des limites de la page")
+
+    ordre = geometry.score_ordre_lecture(page)
+    if ordre < 0.85:
+        notes.append(f"Ordre de lecture instable (score {ordre:.2f})")
+
+    if not has_native:
+        notes.append("Aucun texte natif -- OCR obligatoire")
+
+    if symboles:
+        notes.append(f"Symboles corrompus suspects : {symboles}")
+
+    if not confiance["confiance_suffisante"]:
+        notes.append(
+            f"Échantillon court ({confiance['nb_mots_analyses']} mots) -- "
+            "score de qualité peu fiable"
+        )
+
+    recommend_ocr = (
+        not has_native
+        or (qualite is not None and qualite < SEUIL_HAUT)
+        or ocr_integre
+        or confiance["recommend_ocr_par_precaution"]
+        or bool(symboles)
+    )
+
+    if not has_native:
+        ocr_reasons.append("aucun_texte_natif")
+    if qualite is not None and qualite < SEUIL_HAUT:
+        ocr_reasons.append("qualite_texte_basse")
+    if ocr_integre:
+        ocr_reasons.append("ocr_tiers_detecte")
+    if confiance["recommend_ocr_par_precaution"]:
+        ocr_reasons.append("echantillon_court")
+    if symboles:
+        ocr_reasons.append("symboles_corrompus")
+
+    diag.has_native_text = has_native
+    diag.has_images = bool(page.graphics.images)
+    diag.has_tables = bool(page.graphics.tables)
+    diag.has_full_page_images = pleine_page
+    diag.embedded_ocr_detected = ocr_integre
+    diag.reading_order_score = round(ordre, 3)
+    diag.native_text_quality = round(qualite, 3) if qualite is not None else None
+    diag.image_quality = None
+    diag.recommend_ocr = recommend_ocr
+    diag.ocr_reasons = ocr_reasons
+    diag.low_dpi_images_detected = bool(images_basse_res)
+    diag.overlapping_text_detected = bool(chevauchements)
+    diag.out_of_bounds_detected = bool(hors_limites)
+    diag.confiance_suffisante = confiance["confiance_suffisante"]
+    diag.symboles_suspects = symboles
+    diag.mots_suspects_ngrammes = mots_suspects
+    diag.notes = notes
+    diag.categorie = categoriser(diag)
+    return diag
+
+
+def pages_a_ocriser(doc: Document) -> list[int]:
+    return [page.number for page in doc.pages if page.diagnostic.recommend_ocr]
 
 
 def diagnostiquer(doc: Document) -> Document:
@@ -30,59 +117,49 @@ def diagnostiquer(doc: Document) -> Document:
     chevauchement_detecte = False
     hors_limites_detecte = False
     pages_vides = []
+    confiance_globale = True
+    symboles_globaux = {}
+    mots_suspects_globaux = []
 
     for page in doc.pages:
-        texte = text_integrity.texte_page(page)
-        if page.native.words:
+        _diagnostiquer_page(page)
+        pd = page.diagnostic
+
+        if pd.has_native_text:
             a_texte_natif = True
-        if page.graphics.images:
+        if pd.has_images:
             a_images = True
-        if page.graphics.tables:
+        if pd.has_tables:
             a_tables = True
+        if pd.has_full_page_images:
+            a_images_pleine_page = True
+        if pd.embedded_ocr_detected:
+            ocr_integre_detecte = True
+        if pd.low_dpi_images_detected:
+            dpi_bas_detecte = True
+        if pd.overlapping_text_detected:
+            chevauchement_detecte = True
+        if pd.out_of_bounds_detected:
+            hors_limites_detecte = True
+        if pd.confiance_suffisante is False:
+            confiance_globale = False
+        symboles_globaux.update(pd.symboles_suspects)
+        if pd.mots_suspects_ngrammes:
+            mots_suspects_globaux.extend(pd.mots_suspects_ngrammes)
 
         if not page.native.words and not page.graphics.images:
             pages_vides.append(page.number)
 
-        couverture = visual_integrity.couverture_image_max(page)
-        pleine_page = couverture >= visual_integrity.SEUIL_COUVERTURE_PLEINE_PAGE
-        if pleine_page:
-            a_images_pleine_page = True
+        if pd.native_text_quality is not None:
+            scores_qualite.append(pd.native_text_quality)
+        if pd.reading_order_score is not None:
+            scores_ordre.append(pd.reading_order_score)
 
-        qualite = text_integrity.qualite_texte(texte)
-        if qualite is not None:
-            scores_qualite.append(qualite)
-
-        if pleine_page and page.native.words:
-            ocr_integre_detecte = True
-            notes.append(f"Page {page.number} : OCR tiers probable (image pleine page + texte natif présent)")
-            qualite = min(qualite, 0.4) if qualite is not None else 0.4
-
-        if text_integrity.page_a_faible_densite(page) and not page.graphics.images and page.native.words:
-            notes.append(f"Page {page.number} : densité textuelle anormalement basse pour une page non vide")
-
-        images_basse_res = visual_integrity.images_basse_resolution(page)
-        if images_basse_res:
-            dpi_bas_detecte = True
-            for img, dpi in images_basse_res:
-                notes.append(f"Page {page.number} : image basse résolution ({dpi:.0f} DPI effectif)")
-
-        chevauchements = geometry.detecter_chevauchements(page)
-        if chevauchements:
-            chevauchement_detecte = True
-            notes.append(f"Page {page.number} : {len(chevauchements)} paire(s) de mots avec bbox chevauchantes")
-
-        hors_limites = geometry.detecter_hors_limites(page)
-        if hors_limites:
-            hors_limites_detecte = True
-            notes.append(f"Page {page.number} : {len(hors_limites)} mot(s) hors des limites de la page")
-
-        ordre = geometry.score_ordre_lecture(page)
-        scores_ordre.append(ordre)
-        if ordre < 0.85:
-            notes.append(f"Page {page.number} : ordre de lecture instable (score {ordre:.2f})")
-
-        if not page.native.words:
-            notes.append(f"Page {page.number} : aucun texte natif -- OCR obligatoire")
+        for note in pd.notes:
+            notes.append(f"Page {page.number} : {note}")
+        for reason in pd.ocr_reasons:
+            if reason not in ocr_reasons:
+                ocr_reasons.append(reason)
 
     native_text_quality = round(sum(scores_qualite) / len(scores_qualite), 3) if scores_qualite else None
     reading_order_score = round(sum(scores_ordre) / len(scores_ordre), 3) if scores_ordre else None
@@ -95,19 +172,7 @@ def diagnostiquer(doc: Document) -> Document:
     if suspect:
         notes.append(f"Producteur '{suspect}' déjà observé comme peu fiable sur vos tests précédents")
 
-    # --- Décision (conservatrice : seuls les signaux déjà validés pèsent) ---
-    recommend_ocr = (
-        not a_texte_natif
-        or (native_text_quality is not None and native_text_quality < SEUIL_HAUT)
-        or ocr_integre_detecte
-    )
-
-    if not a_texte_natif:
-        ocr_reasons.append("aucun_texte_natif")
-    if native_text_quality is not None and native_text_quality < SEUIL_HAUT:
-        ocr_reasons.append("qualite_texte_basse")
-    if ocr_integre_detecte:
-        ocr_reasons.append("ocr_tiers_detecte")
+    recommend_ocr = any(page.diagnostic.recommend_ocr for page in doc.pages)
 
     if recommend_ocr and not notes:
         notes.append("Enrichissement recommandé (raison non détaillée par page)")
@@ -130,20 +195,9 @@ def diagnostiquer(doc: Document) -> Document:
     doc.diagnostic.overlapping_text_detected = chevauchement_detecte
     doc.diagnostic.out_of_bounds_detected = hors_limites_detecte
     doc.diagnostic.empty_pages = pages_vides
+    doc.diagnostic.confiance_suffisante = confiance_globale
+    doc.diagnostic.symboles_suspects = symboles_globaux
+    doc.diagnostic.mots_suspects_ngrammes = mots_suspects_globaux
     doc.diagnostic.notes = notes
-
+    doc.diagnostic.categorie = categoriser(doc.diagnostic)
     return doc
-
-
-if __name__ == "__main__":
-    import sys
-    from document import Document as _Document
-
-    if len(sys.argv) < 2:
-        print("Usage : python -m diagnostic document.json")
-        sys.exit(1)
-
-    doc = _Document.load(sys.argv[1])
-    diagnostiquer(doc)
-    print(doc.diagnostic)
-

@@ -26,7 +26,7 @@ sans aucun changement.
 from copy import deepcopy
 
 
-from model import Document
+from datacompiler.model.document import Document
 
 
 from . import alignment, conflict_resolution, layout, reading_order, typography
@@ -39,7 +39,7 @@ def _resoudre_page(page):
     mots_normalises = typography.normaliser(mots_ordonnes)   # ligatures + césures
 
 
-    if page.ocr.words:
+    if page.ocr.words and page.diagnostic.recommend_ocr:
         unites = alignment.aligner(mots_normalises, page.ocr.words)
         mots_resolus = conflict_resolution.resoudre_page(unites)
     else:

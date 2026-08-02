@@ -11,6 +11,12 @@ from .metadata import Diagnostic, Metadata
 
 
 @dataclass
+class Decision:
+    regle: str
+    detail: str = ""
+
+
+@dataclass
 class Word:
     id: int
     text: str
@@ -31,6 +37,7 @@ class Word:
     reconstructed: bool = False
     is_corrected: bool = False
     replacement: Optional[str] = None
+    decision: Optional[Decision] = None
     notes: List[str] = field(default_factory=list)
 
     @property
@@ -105,6 +112,7 @@ class Page:
     width: float
     height: float
     rotation: float = 0.0
+    diagnostic: Diagnostic = field(default_factory=Diagnostic)
     native: NativeContainer = field(default_factory=NativeContainer)
     graphics: GraphicsContainer = field(default_factory=GraphicsContainer)
     ocr: OcrContainer = field(default_factory=OcrContainer)
@@ -118,7 +126,9 @@ class Document:
     pages: List[Page] = field(default_factory=list)
 
     def to_dict(self) -> Dict[str, Any]:
-        return asdict(self)
+        data = asdict(self)
+        data.pop("diagnostic", None)
+        return data
 
     def to_json(self) -> str:
         return json.dumps(self.to_dict(), indent=2, ensure_ascii=False)
@@ -134,10 +144,21 @@ class Document:
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "Document":
+        def decision(d):
+            if not d:
+                return None
+            return Decision(**{k: v for k, v in d.items() if k in Decision.__dataclass_fields__})
+
         def word(d):
             d = dict(d)
             d["bbox"] = BBox.from_dict(d.get("bbox"))
+            d["decision"] = decision(d.get("decision"))
             return Word(**{k: v for k, v in d.items() if k in Word.__dataclass_fields__})
+
+        def page_diagnostic(d):
+            if not d:
+                return Diagnostic()
+            return Diagnostic(**{k: v for k, v in d.items() if k in Diagnostic.__dataclass_fields__})
         def image(d):
             d = dict(d); d["bbox"] = BBox.from_dict(d.get("bbox"))
             return ImageElement(**{k: v for k, v in d.items() if k in ImageElement.__dataclass_fields__})
@@ -151,6 +172,7 @@ class Document:
             ocr = raw.get("ocr", {})
             resolved = raw.get("resolved", {})
             page = Page(number=raw["number"], width=raw["width"], height=raw["height"], rotation=raw.get("rotation", 0.0))
+            page.diagnostic = page_diagnostic(raw.get("diagnostic", {}))
             page.native = NativeContainer(words=[word(x) for x in native.get("words", [])], fonts=[Font(**x) for x in native.get("fonts", [])])
             page.graphics = GraphicsContainer(images=[image(x) for x in graphics.get("images", [])], tables=[table(x) for x in graphics.get("tables", [])])
             page.ocr = OcrContainer(engine=ocr.get("engine"), words=[word(x) for x in ocr.get("words", [])], blocks=[OcrBlock(BBox.from_dict(x.get("bbox")), x.get("type", "text"), x.get("content", "")) for x in ocr.get("blocks", [])])

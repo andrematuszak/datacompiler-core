@@ -19,7 +19,7 @@ mots composés mal refusionnés. À affiner plus tard si besoin (dictionnaire,
 liste d'exceptions) plutôt que bloquant pour cette première version.
 """
 
-from datacompiler.model.document import Word
+from datacompiler.model.document import Word, Decision
 
 _LIGATURES = {
     "\ufb00": "ff",
@@ -81,6 +81,7 @@ def normaliser(mots: list) -> list:
 
         if _a_des_ligatures(texte):
             mot.resolved_text = normaliser_ligatures(texte)
+            mot.decision = Decision(regle="ligature", detail=texte)
             mot.notes.append("ligature(s) normalisée(s)")
             texte = mot.resolved_text
 
