@@ -5,8 +5,7 @@ from datacompiler.model.document import Document
 from datacompiler.model.metadata import Diagnostic
 
 from .categorize import SEUIL_HAUT, categoriser
-from . import blind_spots, container, geometry, text_integrity, visual_integrity
-
+from . import blind_spots, container, geometry, text_integrity, vector_text, visual_integrity
 
 def _diagnostiquer_page(page) -> Diagnostic:
     notes = []
@@ -96,6 +95,8 @@ def _diagnostiquer_page(page) -> Diagnostic:
     diag.mots_suspects_ngrammes = mots_suspects
     diag.notes = notes
     diag.categorie = categoriser(diag)
+    diag.vectorized_text_detected = vector_text.texte_vectorise_detecte(page)
+    diag.has_images_with_text = visual_integrity.images_avec_texte(page)
     return diag
 
 
@@ -200,4 +201,6 @@ def diagnostiquer(doc: Document) -> Document:
     doc.diagnostic.mots_suspects_ngrammes = mots_suspects_globaux
     doc.diagnostic.notes = notes
     doc.diagnostic.categorie = categoriser(doc.diagnostic)
+    doc.diagnostic.vectorized_text_detected = any(page.diagnostic.vectorized_text_detected for page in doc.pages)
+    doc.diagnostic.has_images_with_text = any(page.diagnostic.has_images_with_text for page in doc.pages if page.diagnostic.has_images_with_text is not None) or None
     return doc

@@ -59,6 +59,7 @@ class ImageElement:
     height: Optional[int] = None
     source: str = "original_pdf"
     keep_original: bool = True
+    contains_text: Optional[bool] = None
 
 
 @dataclass

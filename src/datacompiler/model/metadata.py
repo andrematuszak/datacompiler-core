@@ -42,5 +42,7 @@ class Diagnostic:
     symboles_suspects: Dict[str, int] = field(default_factory=dict)
     mots_suspects_ngrammes: List[Any] = field(default_factory=list)
     categorie: Optional[str] = None
+    vectorized_text_detected: bool = False
+    has_images_with_text: Optional[bool] = None
 
 

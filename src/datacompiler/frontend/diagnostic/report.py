@@ -9,7 +9,7 @@ résultat, pas une étape du calcul."""
 
 from datacompiler.model.document import Document
 
-_LARGEUR_LABEL = 30
+_LARGEUR_LABEL = 35
 
 
 def _ligne(label, valeur):
@@ -17,6 +17,12 @@ def _ligne(label, valeur):
 
 
 def _oui_non(valeur: bool) -> str:
+    return "oui" if valeur else "non"
+
+
+def _oui_non_inconnu(valeur) -> str:
+    if valeur is None:
+        return "inconnu"
     return "oui" if valeur else "non"
 
 
@@ -32,8 +38,10 @@ def afficher(doc: Document) -> None:
     print(_ligne("Score ordre de lecture", d.reading_order_score if d.reading_order_score is not None else "n/a"))
     print(_ligne("Images", _oui_non(d.has_images)))
     print(_ligne("Tableaux", _oui_non(d.has_tables)))
+    print(_ligne("Texte vectorisé (glyphes)", _oui_non(d.vectorized_text_detected)))
+    print(_ligne("Images avec texte", _oui_non_inconnu(d.has_images_with_text)))
     print(_ligne("Images pleine page", _oui_non(d.has_full_page_images)))
-    print(_ligne("OCR tiers détecté", _oui_non(d.embedded_ocr_detected)))
+    print(_ligne("OCR embarqué détecté", _oui_non(d.embedded_ocr_detected)))
     print(_ligne("Images basse résolution", _oui_non(d.low_dpi_images_detected)))
     print(_ligne("Chevauchement de texte", _oui_non(d.overlapping_text_detected)))
     print(_ligne("Coordonnées hors-limites", _oui_non(d.out_of_bounds_detected)))

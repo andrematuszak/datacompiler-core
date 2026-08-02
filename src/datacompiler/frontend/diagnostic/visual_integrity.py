@@ -46,3 +46,26 @@ def images_basse_resolution(page) -> list:
             resultat.append((img, dpi))
     return resultat
 
+
+# --- Images avec texte --------------------------------------------------
+# NE CALCULE RIEN À PARTIR DES PIXELS ICI -- cette fonction lit un champ
+# déjà peuplé côté extraction (ImageElement.contains_text: Optional[bool],
+# None = pas encore analysé/inconnu). diagnostic.py ne rouvre jamais le
+# PDF (cf. container.py, ce fichier ci-dessus) ; détecter du texte dans une
+# image nécessite d'inspecter les pixels, donc ce calcul doit se faire
+# PENDANT l'extraction (le PDF est encore ouvert à ce moment-là), pas ici.
+# Tant que ce champ n'existe pas côté extraction, cette fonction retourne
+# toujours None (inconnu) pour chaque image -- comportement explicite
+# plutôt qu'un faux "non" qui masquerait l'absence de données.
+
+def images_avec_texte(page) -> Optional[bool]:
+    """True si au moins une image de la page est signalée comme contenant
+    du texte, False si toutes sont signalées comme n'en contenant pas,
+    None si l'information n'est disponible pour aucune image (champ pas
+    encore peuplé côté extraction, ou aucune image sur la page)."""
+    statuts = [getattr(img, "contains_text", None) for img in page.graphics.images]
+    statuts = [s for s in statuts if s is not None]
+    if not statuts:
+        return None
+    return any(statuts)
+
