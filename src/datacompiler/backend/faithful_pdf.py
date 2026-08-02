@@ -1,10 +1,11 @@
-"""faithful_pdf.py - Renderer PDF fidèle: même apparence, couche texte résolue indépendante.
+"""PDF fidèle : conserve le contenu source et ajoute au besoin une couche texte résolue.
 
-Le mode ``rasterized`` est le seul qui garantisse l'absence de l'ancienne
-couche texte: il rend chaque page source en image haute définition puis pose
-le texte résolu en mode invisible. Le mode ``overlay`` conserve le PDF source
-vecteur mais ne doit être utilisé que pour compléter le texte, car sa couche
-native reste présente.
+Par défaut, le mode ``overlay`` ouvre le PDF source et ne crée une couche
+texte invisible que si la résolution a modifié du texte. Ses vecteurs, images
+et compression sont donc préservés. Le mode ``rasterized`` reste disponible à
+titre exceptionnel pour aplatir l'ancienne couche texte, mais transforme
+inévitablement chaque page en image et ne doit pas être utilisé pour le rendu
+normal.
 """
 
 from pathlib import Path
@@ -87,8 +88,13 @@ def _insert_invisible_words(page, words):
                                   max(suivant.bbox.x0 - box.x1, 0.1), taille_nominale)
 
 
+def _texte_modifie(words):
+    """Indique si la couche résolue apporte réellement une correction."""
+    return any(word.output_text != word.text for word in words)
+
+
 def render_faithful_pdf(doc: Document, output_path: str, source_pdf: str = None,
-                        strategy: str = "rasterized", dpi: int = 300) -> str:
+                        strategy: str = "overlay", dpi: int = 300) -> str:
     source_path = source_pdf or doc.metadata.source_pdf
     if not source_path:
         raise ValueError("Le chemin du PDF source est requis pour le rendu fidèle.")
@@ -101,7 +107,10 @@ def render_faithful_pdf(doc: Document, output_path: str, source_pdf: str = None,
     if strategy == "overlay":
         output = fitz.open(source_path)
         for page, model_page in zip(output, doc.pages):
-            _insert_invisible_words(page, model_page.resolved.words)
+            # Tant que le texte résolu est identique au texte natif, le PDF
+            # source est déjà la représentation la plus compacte et fidèle.
+            if _texte_modifie(model_page.resolved.words):
+                _insert_invisible_words(page, model_page.resolved.words)
     else:
         output = fitz.open()
         scale = dpi / 72.0
@@ -114,6 +123,10 @@ def render_faithful_pdf(doc: Document, output_path: str, source_pdf: str = None,
 
     Path(output_path).parent.mkdir(parents=True, exist_ok=True)
     output.set_metadata({"producer": "DataCleaner faithful_pdf", "title": doc.metadata.filename})
+    # La police Unicode de la couche invisible ne doit pas embarquer tout
+    # DejaVu Sans (plusieurs centaines de Ko) : conserver uniquement les
+    # glyphes effectivement présents dans le document.
+    output.subset_fonts()
     output.save(output_path, garbage=4, deflate=True)
     output.close()
     source.close()

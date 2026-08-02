@@ -20,7 +20,7 @@ from backend.faithful_pdf import render_faithful_pdf
 
 
 def executer_pipeline(pdf_path, format_sortie="faithful-pdf", sauver_json=True,
-                      faithful_strategy="rasterized", dpi=300):
+                      faithful_strategy="overlay", dpi=300):
     pdf_path = str(Path(pdf_path).resolve())
     print(f"[1/5] Extraction : {pdf_path}")
     doc = extraire(Document(), pdf_path)
@@ -70,7 +70,12 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Pipeline de nettoyage de PDF")
     parser.add_argument("pdf")
     parser.add_argument("--format", choices=["faithful-pdf", "rebuilt-pdf", "markdown", "html", "docx"], default="faithful-pdf")
-    parser.add_argument("--faithful-strategy", choices=["rasterized", "overlay"], default="rasterized")
+    parser.add_argument(
+        "--faithful-strategy",
+        choices=["overlay", "rasterized"],
+        default="overlay",
+        help="overlay préserve le PDF vecteur source; rasterized aplati les pages en images.",
+    )
     parser.add_argument("--dpi", type=int, default=300)
     parser.add_argument("--no-json", action="store_true")
     args = parser.parse_args()
