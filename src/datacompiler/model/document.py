@@ -39,6 +39,7 @@ class Word:
     replacement: Optional[str] = None
     decision: Optional[Decision] = None
     notes: List[str] = field(default_factory=list)
+    is_vectorized: bool = False
 
     @property
     def output_text(self) -> str:

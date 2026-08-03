@@ -4,6 +4,11 @@ comme une image bitmap. Cas typique : logo texte, titre "designé" dans un
 outil vectoriel, export depuis un logiciel qui dessine les caractères au
 lieu de les écrire.
 
+Signal utilisé : le champ is_vectorized est maintenant calculé pendant
+l'extraction PyMuPDF (get_drawings()) et stocké sur chaque mot Word.
+Cette fonction vérifie simplement si au moins un mot de la page est marqué
+comme vectorisé.
+
 Signal utilisé, à partir de ce qui est DÉJÀ dans le modèle après extraction
 (même principe que container.py/visual_integrity.py -- pas de réouverture
 du PDF) : une zone à forte densité d'éléments vectoriels (lignes/courbes
@@ -108,3 +113,6 @@ def zones_texte_vectorise_probable(page) -> List[Tuple[float, float, float, floa
 
 def texte_vectorise_detecte(page) -> bool:
     return bool(zones_texte_vectorise_probable(page))
+    """Retourne True si au moins un mot de la page est marqué comme texte
+    vectorisé (dessiné géométriquement plutôt qu'écrit nativement)."""
+    return any(word.is_vectorized for word in page.native.words)
