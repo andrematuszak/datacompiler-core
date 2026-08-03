@@ -112,7 +112,6 @@ def zones_texte_vectorise_probable(page) -> List[Tuple[float, float, float, floa
 
 
 def texte_vectorise_detecte(page) -> bool:
-    return bool(zones_texte_vectorise_probable(page))
     """Retourne True si au moins un mot de la page est marqué comme texte
     vectorisé (dessiné géométriquement plutôt qu'écrit nativement)."""
     return any(word.is_vectorized for word in page.native.words)
