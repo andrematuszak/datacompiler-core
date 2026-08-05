@@ -23,7 +23,10 @@ SEUIL_HAUT = 0.9
 
 CATEGORIE_NATIF_PROPRE = "natif_propre"
 CATEGORIE_NATIF_CORROMPU = "natif_corrompu"
+CATEGORIE_NATIF_MIXTE = "natif_mixte"
 CATEGORIE_SCAN = "scan"
+
+SEUIL_COUVERTURE_MIXTE = 0.9
 
 
 def categoriser(diagnostic: Diagnostic) -> str:
@@ -34,4 +37,7 @@ def categoriser(diagnostic: Diagnostic) -> str:
         return CATEGORIE_SCAN
     if diagnostic.native_text_quality is not None and diagnostic.native_text_quality < SEUIL_HAUT:
         return CATEGORIE_NATIF_CORROMPU
+    if (diagnostic.native_text_coverage is not None
+            and diagnostic.native_text_coverage < SEUIL_COUVERTURE_MIXTE):
+        return CATEGORIE_NATIF_MIXTE
     return CATEGORIE_NATIF_PROPRE

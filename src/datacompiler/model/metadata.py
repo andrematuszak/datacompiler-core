@@ -28,6 +28,7 @@ class Diagnostic:
     embedded_ocr_detected: bool = False
     reading_order_score: Optional[float] = None
     native_text_quality: Optional[float] = None
+    native_text_coverage: Optional[float] = None
     image_quality: Optional[float] = None
     recommend_ocr: bool = False
     notes: List[str] = field(default_factory=list)

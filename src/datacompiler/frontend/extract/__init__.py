@@ -11,6 +11,7 @@ from datacompiler.model.document import Document
 from .pymupdf import extraire_metadonnees, extraire_page_pymupdf
 from .pdfplumber import extraire_page_pdfplumber
 from .merge import enrichir_metadonnees, fusionner_page
+from .image_text_probe import sonder_images_page
 
 
 def extraire(doc_obj: Document, pdf_path: str) -> Document:
@@ -34,6 +35,7 @@ def extraire(doc_obj: Document, pdf_path: str) -> Document:
     for idx in range(len(doc_fitz)):
         page_fitz = doc_fitz[idx]
         page_plumb = pdf_plumb.pages[idx]
+        image_text_signals = sonder_images_page(doc_fitz, page_fitz)
 
         # Ingestion Moteur 1 (Texte & Typographie)
         page_obj, word_global_id = extraire_page_pymupdf(
@@ -46,7 +48,8 @@ def extraire(doc_obj: Document, pdf_path: str) -> Document:
         graphics_data, image_global_id, table_global_id = extraire_page_pdfplumber(
             page_plumb, 
             start_image_id=image_global_id, 
-            start_table_id=table_global_id
+            start_table_id=table_global_id,
+            image_text_signals=image_text_signals,
         )
 
         # 3. Assemblage final dans la Page

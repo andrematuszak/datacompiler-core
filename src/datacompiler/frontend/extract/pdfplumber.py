@@ -4,7 +4,7 @@ Moteur 2 — Extraction des éléments visuels et vectoriels via pdfplumber.
 """
 
 from . import table_reconstruction
-from typing import Tuple, List, Dict, Any
+from typing import Tuple, List, Dict, Any, Optional
 import pdfplumber
 
 from datacompiler.model.document import BBox, ImageElement, TableElement, GraphicVector
@@ -13,7 +13,8 @@ from datacompiler.model.document import BBox, ImageElement, TableElement, Graphi
 def extraire_page_pdfplumber(
     page_plumb: Any,
     start_image_id: int,
-    start_table_id: int
+    start_table_id: int,
+    image_text_signals: Optional[list] = None,
 ) -> Tuple[Dict[str, List[Any]], int, int]:
     """
     Extrait les images, tableaux (avec reconstruction avancée) 
@@ -26,13 +27,24 @@ def extraire_page_pdfplumber(
     image_id = start_image_id
     table_id = start_table_id
 
+    def texte_dans_image(img) -> Optional[bool]:
+        """Rattache la bbox pdfplumber au placement PyMuPDF correspondant."""
+        if not image_text_signals:
+            return None
+        bbox = BBox(float(img["x0"]), float(img["top"]), float(img["x1"]), float(img["bottom"]))
+        for rect, signal in image_text_signals:
+            if all(abs(a - b) < 0.1 for a, b in zip((bbox.x0, bbox.y0, bbox.x1, bbox.y1), rect)):
+                return signal
+        return None
+
     # 1. Images
     for img in page_plumb.images:
         images.append(ImageElement(
             id=image_id,
             bbox=BBox(float(img["x0"]), float(img["top"]), float(img["x1"]), float(img["bottom"])),
             width=int(img.get("width", 0)),
-            height=int(img.get("height", 0))
+            height=int(img.get("height", 0)),
+            contains_text=texte_dans_image(img),
         ))
         image_id += 1
 
