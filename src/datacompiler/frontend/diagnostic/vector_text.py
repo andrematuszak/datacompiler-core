@@ -4,16 +4,9 @@ comme une image bitmap. Cas typique : logo texte, titre "designé" dans un
 outil vectoriel, export depuis un logiciel qui dessine les caractères au
 lieu de les écrire.
 
-Signal utilisé : le champ is_vectorized est maintenant calculé pendant
-l'extraction PyMuPDF (get_drawings()) et stocké sur chaque mot Word.
-Cette fonction vérifie simplement si au moins un mot de la page est marqué
-comme vectorisé.
-
-Signal utilisé, à partir de ce qui est DÉJÀ dans le modèle après extraction
-(même principe que container.py/visual_integrity.py -- pas de réouverture
-du PDF) : une zone à forte densité d'éléments vectoriels (lignes/courbes
-courtes), de forme et de taille proches d'une ligne de texte, SANS mot
-natif à cet endroit.
+Les tracés PyMuPDF sont conservés durant l'extraction dans ``page.graphics``.
+Le diagnostic regroupe ensuite les zones denses et retient seulement celles
+qui ne contiennent pas déjà de mot natif : aucun PDF n'est rouvert ici.
 
 LIMITE ASSUMÉE, à vérifier sur vos vrais fichiers : le modèle de données
 (GraphicVector) ne stocke qu'une bbox par élément, pas le tracé détaillé
@@ -111,7 +104,30 @@ def zones_texte_vectorise_probable(page) -> List[Tuple[float, float, float, floa
     return resultat
 
 
+def couverture_texte_natif(page) -> float | None:
+    """Estime la part de texte visible qui possède une couche native.
+
+    Les surfaces des mots natifs sont comparées aux zones de glyphes vectoriels
+    qui n'ont aucun mot natif associé. C'est une estimation géométrique, pas
+    une mesure des pixels d'une image.
+    """
+    surface_native = sum(
+        (word.bbox.x1 - word.bbox.x0) * (word.bbox.y1 - word.bbox.y0)
+        for word in page.native.words
+        if word.bbox
+    )
+    if not surface_native:
+        return 0.0 if page.native.words else None
+
+    surface_vectorielle = sum(
+        (x1 - x0) * (y1 - y0)
+        for x0, y0, x1, y1 in zones_texte_vectorise_probable(page)
+    )
+    if not surface_vectorielle:
+        return 1.0
+    return surface_native / (surface_native + surface_vectorielle)
+
+
 def texte_vectorise_detecte(page) -> bool:
-    """Retourne True si au moins un mot de la page est marqué comme texte
-    vectorisé (dessiné géométriquement plutôt qu'écrit nativement)."""
-    return any(word.is_vectorized for word in page.native.words)
+    """True si des glyphes dessinés sans texte natif associé sont détectés."""
+    return bool(zones_texte_vectorise_probable(page))

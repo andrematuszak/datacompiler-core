@@ -4,7 +4,7 @@ de l'objet Document DÉJÀ EXTRAIT. Ne rouvre jamais le PDF."""
 from datacompiler.model.document import Document
 from datacompiler.model.metadata import Diagnostic
 
-from .categorize import SEUIL_HAUT, categoriser
+from .categorize import SEUIL_QUALITE_CORROMPU, categoriser
 from . import blind_spots, container, geometry, text_integrity, vector_text, visual_integrity
 
 def _diagnostiquer_page(page) -> Diagnostic:
@@ -20,6 +20,9 @@ def _diagnostiquer_page(page) -> Diagnostic:
     mots_suspects = blind_spots.mots_suspects_ngrammes(texte)
 
     couverture = visual_integrity.couverture_image_max(page)
+    couverture_native = vector_text.couverture_texte_natif(page)
+    texte_vectorise = vector_text.texte_vectorise_detecte(page)
+    images_avec_texte = visual_integrity.images_avec_texte(page)
     pleine_page = couverture >= visual_integrity.SEUIL_COUVERTURE_PLEINE_PAGE
     ocr_integre = pleine_page and has_native
 
@@ -49,6 +52,9 @@ def _diagnostiquer_page(page) -> Diagnostic:
     if not has_native:
         notes.append("Aucun texte natif -- OCR obligatoire")
 
+    if couverture_native is not None and couverture_native < 0.9:
+        notes.append(f"Couverture texte natif insuffisante ({couverture_native:.1%}) -- texte vectoriel à extraire")
+
     if symboles:
         notes.append(f"Symboles corrompus suspects : {symboles}")
 
@@ -60,7 +66,9 @@ def _diagnostiquer_page(page) -> Diagnostic:
 
     recommend_ocr = (
         not has_native
-        or (qualite is not None and qualite < SEUIL_HAUT)
+        or (qualite is not None and qualite < SEUIL_QUALITE_CORROMPU)
+        or (couverture_native is not None and couverture_native < 0.9)
+        or images_avec_texte is True
         or ocr_integre
         or confiance["recommend_ocr_par_precaution"]
         or bool(symboles)
@@ -68,8 +76,12 @@ def _diagnostiquer_page(page) -> Diagnostic:
 
     if not has_native:
         ocr_reasons.append("aucun_texte_natif")
-    if qualite is not None and qualite < SEUIL_HAUT:
+    if qualite is not None and qualite < SEUIL_QUALITE_CORROMPU:
         ocr_reasons.append("qualite_texte_basse")
+    if couverture_native is not None and couverture_native < 0.9:
+        ocr_reasons.append("couverture_native_basse")
+    if images_avec_texte is True:
+        ocr_reasons.append("texte_dans_image")
     if ocr_integre:
         ocr_reasons.append("ocr_tiers_detecte")
     if confiance["recommend_ocr_par_precaution"]:
@@ -84,6 +96,7 @@ def _diagnostiquer_page(page) -> Diagnostic:
     diag.embedded_ocr_detected = ocr_integre
     diag.reading_order_score = round(ordre, 3)
     diag.native_text_quality = round(qualite, 3) if qualite is not None else None
+    diag.native_text_coverage = round(couverture_native, 3) if couverture_native is not None else None
     diag.image_quality = None
     diag.recommend_ocr = recommend_ocr
     diag.ocr_reasons = ocr_reasons
@@ -94,9 +107,9 @@ def _diagnostiquer_page(page) -> Diagnostic:
     diag.symboles_suspects = symboles
     diag.mots_suspects_ngrammes = mots_suspects
     diag.notes = notes
-    diag.categorie = categoriser(diag)
-    diag.vectorized_text_detected = vector_text.texte_vectorise_detecte(page)
-    diag.has_images_with_text = visual_integrity.images_avec_texte(page)
+    diag.vectorized_text_detected = texte_vectorise
+    diag.has_images_with_text = images_avec_texte
+    diag.categorie = categoriser(diag.has_native_text, diag.embedded_ocr_detected, diag.native_text_quality, diag.native_text_coverage)
     return diag
 
 
@@ -109,6 +122,7 @@ def diagnostiquer(doc: Document) -> Document:
     ocr_reasons = []
     scores_qualite = []
     scores_ordre = []
+    couvertures_natives = []
     a_texte_natif = False
     a_images = False
     a_tables = False
@@ -155,6 +169,8 @@ def diagnostiquer(doc: Document) -> Document:
             scores_qualite.append(pd.native_text_quality)
         if pd.reading_order_score is not None:
             scores_ordre.append(pd.reading_order_score)
+        if pd.native_text_coverage is not None:
+            couvertures_natives.append(pd.native_text_coverage)
 
         for note in pd.notes:
             notes.append(f"Page {page.number} : {note}")
@@ -164,6 +180,7 @@ def diagnostiquer(doc: Document) -> Document:
 
     native_text_quality = round(sum(scores_qualite) / len(scores_qualite), 3) if scores_qualite else None
     reading_order_score = round(sum(scores_ordre) / len(scores_ordre), 3) if scores_ordre else None
+    native_text_coverage = min(couvertures_natives) if couvertures_natives else None
 
     encrypted = doc.metadata.encrypted
     if encrypted:
@@ -187,6 +204,7 @@ def diagnostiquer(doc: Document) -> Document:
     doc.diagnostic.embedded_ocr_detected = ocr_integre_detecte
     doc.diagnostic.reading_order_score = reading_order_score
     doc.diagnostic.native_text_quality = native_text_quality
+    doc.diagnostic.native_text_coverage = native_text_coverage
     doc.diagnostic.image_quality = None
     doc.diagnostic.recommend_ocr = recommend_ocr
     doc.diagnostic.ocr_reasons = ocr_reasons
@@ -200,7 +218,8 @@ def diagnostiquer(doc: Document) -> Document:
     doc.diagnostic.symboles_suspects = symboles_globaux
     doc.diagnostic.mots_suspects_ngrammes = mots_suspects_globaux
     doc.diagnostic.notes = notes
-    doc.diagnostic.categorie = categoriser(doc.diagnostic)
     doc.diagnostic.vectorized_text_detected = any(page.diagnostic.vectorized_text_detected for page in doc.pages)
-    doc.diagnostic.has_images_with_text = any(page.diagnostic.has_images_with_text for page in doc.pages if page.diagnostic.has_images_with_text is not None) or None
+    statuts_images_texte = [page.diagnostic.has_images_with_text for page in doc.pages if page.diagnostic.has_images_with_text is not None]
+    doc.diagnostic.has_images_with_text = any(statuts_images_texte) if statuts_images_texte else None
+    doc.diagnostic.categorie = categoriser(doc.diagnostic.has_native_text, doc.diagnostic.embedded_ocr_detected, doc.diagnostic.native_text_quality, doc.diagnostic.native_text_coverage)
     return doc

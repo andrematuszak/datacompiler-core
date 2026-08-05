@@ -11,8 +11,8 @@ Usage :
     ocraliser(doc, pdf_path, backend_name="mistral")
 """
 
-from .base import OcrBackend
-from .mistral import MistralBackend
+from datacompiler.frontend.ocr.base import OcrBackend
+from datacompiler.frontend.ocr.mistral import MistralBackend
 
 BACKENDS = {"mistral": MistralBackend}
 
@@ -30,7 +30,7 @@ def get_backend(name: str, **kwargs) -> OcrBackend:
     return BACKENDS[name](**kwargs)
 
 
-def ocraliser(doc, pdf_path: str, backend_name: str = "mistral", **kwargs):
+def ocraliser(doc, pdf_path: str, backend_name: str = "mistral", pages: list = None, **kwargs):
     """Point d'entrée global pour exécuter l'OCR sur un document."""
     backend = get_backend(backend_name, **kwargs)
-    return backend.ocraliser(doc, pdf_path, **kwargs)
+    return backend.ocraliser(doc, pdf_path, pages=pages, **kwargs)

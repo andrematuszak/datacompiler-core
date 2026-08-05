@@ -35,7 +35,8 @@ def afficher(doc: Document) -> None:
     print(_ligne("Pages", doc.metadata.page_count))
     print(_ligne("Texte natif présent", _oui_non(d.has_native_text)))
     print(_ligne("Qualité texte natif", d.native_text_quality if d.native_text_quality is not None else "n/a"))
-    print(_ligne("Couverture texte natif", d.native_text_coverage if d.native_text_coverage is not None else "n/a"))
+    couverture = f"{d.native_text_coverage:.1%}" if d.native_text_coverage is not None else "n/a"
+    print(_ligne("Couverture texte natif", couverture))
     print(_ligne("Score ordre de lecture", d.reading_order_score if d.reading_order_score is not None else "n/a"))
     print(_ligne("Images", _oui_non(d.has_images)))
     print(_ligne("Tableaux", _oui_non(d.has_tables)))

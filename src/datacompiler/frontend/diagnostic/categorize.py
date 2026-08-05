@@ -11,15 +11,19 @@ diverger silencieusement le jour où un seuil change dans un seul des deux
 fichiers. Ici, une seule fonction, un seul endroit à modifier.
 
 Usage (ne modifie rien tant que tu ne l'appelles pas explicitement) :
-    from diagnostic_categorie import categoriser
+    from .categorize import categoriser
 
-    diagnostiquer(doc)                       # ton diagnostic.py, inchangé
-    doc.diagnostic.categorie = categoriser(doc.diagnostic)
+    doc.diagnostic.categorie = categoriser(
+        has_native_text=doc.diagnostic.has_native_text,
+        embedded_ocr_detected=doc.diagnostic.embedded_ocr_detected,
+        native_text_quality=doc.diagnostic.native_text_quality,
+        native_text_coverage=doc.diagnostic.native_text_coverage,
+    )
 """
 
-from datacompiler.model.metadata import Diagnostic
+from typing import Optional
 
-SEUIL_HAUT = 0.9
+SEUIL_QUALITE_CORROMPU = 0.9
 
 CATEGORIE_NATIF_PROPRE = "natif_propre"
 CATEGORIE_NATIF_CORROMPU = "natif_corrompu"
@@ -29,15 +33,23 @@ CATEGORIE_SCAN = "scan"
 SEUIL_COUVERTURE_MIXTE = 0.9
 
 
-def categoriser(diagnostic: Diagnostic) -> str:
-    """Dérive la catégorie depuis les champs déjà calculés par diagnostiquer()."""
-    if not diagnostic.has_native_text:
+def categoriser(
+    has_native_text: bool,
+    embedded_ocr_detected: bool,
+    native_text_quality: Optional[float],
+    native_text_coverage: Optional[float] = None,
+) -> str:
+    """Dérive une catégorie unique depuis les signaux déjà calculés.
+
+    ``natif_propre`` veut dire texte lisible *et* couverture native suffisante,
+    pas seulement « du texte natif existe ».
+    """
+    if not has_native_text:
         return CATEGORIE_SCAN
-    if diagnostic.embedded_ocr_detected:
+    if embedded_ocr_detected:
         return CATEGORIE_SCAN
-    if diagnostic.native_text_quality is not None and diagnostic.native_text_quality < SEUIL_HAUT:
+    if native_text_quality is not None and native_text_quality < SEUIL_QUALITE_CORROMPU:
         return CATEGORIE_NATIF_CORROMPU
-    if (diagnostic.native_text_coverage is not None
-            and diagnostic.native_text_coverage < SEUIL_COUVERTURE_MIXTE):
+    if native_text_coverage is not None and native_text_coverage < SEUIL_COUVERTURE_MIXTE:
         return CATEGORIE_NATIF_MIXTE
     return CATEGORIE_NATIF_PROPRE

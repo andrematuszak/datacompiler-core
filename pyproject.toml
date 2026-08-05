@@ -8,23 +8,49 @@ version = "0.1.0"
 description = "Nettoyage et reconstruction géométrique fidèle de fichiers PDF"
 readme = "README.md"
 requires-python = ">=3.11"
+# Dépendances de base minimales pour faire tourner le noyau sans fonctionnalités extra
 dependencies = [
     "pymupdf>=1.24",
     "pdfplumber>=0.11",
-    "reportlab",
-    "mistralai>=1.0.0",
-    "python-docx>=1.1.0"
-    ,"pytesseract>=0.3.10"
-    ,"Pillow>=10.0"
+    "reportlab"
 ]
 
 [project.optional-dependencies]
+# Moteur OCR (Cloud avec Mistral ou Local avec Tesseract/Pillow)
+ocr = [
+    "mistralai>=1.0.0",
+    "pytesseract>=0.3.10",
+    "Pillow>=10.0"
+]
+# Export au format Word
+docx = [
+    "python-docx>=1.1.0"
+]
+# Outils de développement et de tests
 dev = [
+    "pytest>=7.0.0",
+    "pytest-cov",
+    "black",
+    "ruff",
+    "mypy"
+]
+# Tout installer en une commande
+all = [
+    "mistralai>=1.0.0",
+    "pytesseract>=0.3.10",
+    "Pillow>=10.0",
+    "python-docx>=1.1.0",
     "pytest>=7.0.0"
 ]
 
 [project.scripts]
 datacompiler = "datacompiler.pipeline:main"
 
+[tool.setuptools]
+include-package-data = true
+
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+datacompiler = ["backend/fonts/*.ttf"]

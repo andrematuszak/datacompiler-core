@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Dict, Tuple, Set, Any, List
 import fitz
 
-from datacompiler.model.document import Page, Word, Font, BBox
+from datacompiler.model.document import BBox, Font, GraphicVector, Page, Word
 
 
 def _convertir_couleur(srgb_int: int | None) -> str:
@@ -147,7 +147,7 @@ def extraire_page_pymupdf(
     """
     Extrait le texte natif, les Bounding Boxes et la typographie d'une page.
     Gère la ré-indexation des blocs de texte pour éliminer les décalages avec les images.
-    Détecte également le texte vectorisé (dessiné géométriquement).
+    Conserve également les tracés vectoriels nécessaires au diagnostic.
     """
     page_obj = Page(
         number=page_number,
@@ -161,9 +161,17 @@ def extraire_page_pymupdf(
     font_map: Dict[str, Set[float]] = {}
     word_global_id = start_word_id
 
-    # Détection des zones vectorielles (potentiellement du texte dessiné)
-    zones_vectorielles = _grouper_zones_vectorielles_proches(_extraire_zones_vectorielles(page_fitz))
-    zones_bboxes = [z["bbox"] for z in zones_vectorielles]
+    # Conserver les tracés permet au diagnostic d'identifier les glyphes sans
+    # texte natif associé, sans jamais rouvrir le PDF.
+    for zone in _extraire_zones_vectorielles(page_fitz):
+        x0, y0, x1, y1 = zone["bbox"]
+        vector = GraphicVector(bbox=BBox(x0, y0, x1, y1))
+        if zone["type"] == "line":
+            page_obj.graphics.lines.append(vector)
+        elif zone["type"] == "rect":
+            page_obj.graphics.rects.append(vector)
+        elif zone["type"] == "curve":
+            page_obj.graphics.curves.append(vector)
 
     # Alignement d'index : ignorer les blocs non-texte (images)
     text_block_idx = 0
@@ -190,9 +198,6 @@ def extraire_page_pymupdf(
             for w in words_fitz:
                 if w[5] == block_idx and w[6] == line_idx:
                     word_bbox = BBox(w[0], w[1], w[2], w[3])
-                    # Vérifier si le mot est dans une zone vectorielle
-                    is_vectorized = any(_mot_dans_zone_vectorielle(word_bbox, z_bbox) for z_bbox in zones_bboxes)
-                    
                     page_obj.native.words.append(Word(
                         id=word_global_id,
                         text=w[4],
@@ -206,7 +211,6 @@ def extraire_page_pymupdf(
                         italic=italic,
                         color=color_hex,
                         rotation=float(page_fitz.rotation),
-                        is_vectorized=is_vectorized
                     ))
                     word_global_id += 1
 
