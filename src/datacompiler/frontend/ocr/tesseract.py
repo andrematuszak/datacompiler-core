@@ -23,8 +23,9 @@ import pytesseract
 from PIL import Image
 
 from datacompiler.model.document import BBox, Document, Word
-
 from datacompiler.frontend.ocr.base import OcrBackend
+
+pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
 
 
 _PSM_LAYOUT_GENERAL = 3   # défaut Tesseract : segmentation automatique de page -- bonne mise en page générale
@@ -104,6 +105,33 @@ def _extraire_deux_passes(image, lang):
     return fusion
 
 
+def _ocraliser_zone_image(image, lang: str, dpi: int, offset: tuple = (0.0, 0.0)) -> list:
+    """OCRise UNE image déjà croppée (zone précise, pas la page) et
+    translate les bbox résultantes dans le repère de la PAGE COMPLÈTE,
+    pas celui du crop -- `offset` = (x0, y0) de la zone dans la page, en
+    points PDF, tel que fourni par vector_text.py."""
+    scale = dpi / 72.0
+    dx, dy = offset
+    mots = []
+    for m in _extraire_deux_passes(image, lang):
+        x = dx + m["x0"] / scale
+        y = dy + m["y0"] / scale
+        largeur = (m["x1"] - m["x0"]) / scale
+        hauteur = (m["y1"] - m["y0"]) / scale
+        mots.append(Word(
+            id=-1,  # renumérotation finale par compile/compiler.py
+            text=m["text"],
+            resolved_text=m["text"],
+            bbox=BBox(x, y, x + largeur, y + hauteur),
+            confidence=m["confidence"],
+            source="ocr_vectoriel",
+            is_vectorized=True,
+            reconstructed=True,
+            notes=["texte vectorisé récupéré par OCR ciblé (zone crop)"],
+        ))
+    return mots
+
+
 def _parser_image(image, lang: str, scale: float) -> list:
     """Fait tourner Tesseract sur UNE image déjà rendue (stratégie à deux
     passes, cf. _extraire_deux_passes) et retourne une liste de Word --
@@ -152,5 +180,9 @@ class TesseractBackend(OcrBackend):
                 page_obj.ocr.words = _parser_image(image, self.lang, scale)  # ré-appel idempotent : remplace, n'accumule pas
         finally:
             source.close()
-
+    
         return doc
+      
+    def ocraliser_zone(self, image, offset: tuple = (0.0, 0.0), lang: str = None, dpi: int = None, **kwargs) -> list:
+        return _ocraliser_zone_image(image, lang or self.lang, dpi or self.dpi, offset)
+    

@@ -10,6 +10,15 @@ from abc import ABC, abstractmethod
 
 from datacompiler.model.document import Document
 
+def ocraliser_zone(self, image, offset: tuple = (0.0, 0.0), **kwargs) -> list:
+        """OCR ciblé sur une zone déjà croppée, bbox déjà translatées dans
+        le repère page via `offset`. Optionnel : NotImplementedError par
+        défaut. Seul un backend donnant une bbox PAR MOT peut l'implémenter
+        (Tesseract, pas Mistral -- cf. tesseract.py). L'appelant vérifie la
+        capacité (hasattr / try-except) plutôt que de supposer un
+        comportement uniforme entre backends."""
+        raise NotImplementedError(f"{self.name} ne supporte pas l'OCR de zone ciblée.")
+
 
 class OcrBackend(ABC):
     name: str = "backend"
