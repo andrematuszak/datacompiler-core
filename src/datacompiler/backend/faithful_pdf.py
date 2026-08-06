@@ -89,9 +89,13 @@ def _insert_invisible_words(page, words):
 
 
 def _texte_modifie(words):
-    """Indique si la couche résolue apporte réellement une correction."""
-    return any(word.output_text != word.text for word in words)
-
+    """Indique si la couche résolue apporte quelque chose que le PDF source
+    n'a pas déjà : soit une correction de texte natif existant
+    (output_text != text), soit un mot entièrement reconstruit et absent du
+    PDF source (OCR-seul, texte vectorisé) -- ce dernier cas n'a par
+    définition aucun texte natif à comparer, donc output_text == text n'y
+    signifie PAS "rien à faire"."""
+    return any(word.output_text != word.text or word.reconstructed for word in words)
 
 def render_faithful_pdf(doc: Document, output_path: str, source_pdf: str = None,
                         strategy: str = "overlay", dpi: int = 300) -> str:
