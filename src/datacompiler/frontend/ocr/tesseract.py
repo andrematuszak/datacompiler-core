@@ -22,9 +22,9 @@ import fitz
 import pytesseract
 from PIL import Image
 
-from document import BBox, Document, Word
+from datacompiler.model.document import BBox, Document, Word
 
-from .base import OcrBackend
+from datacompiler.frontend.ocr.base import OcrBackend
 
 
 _PSM_LAYOUT_GENERAL = 3   # défaut Tesseract : segmentation automatique de page -- bonne mise en page générale

@@ -219,3 +219,17 @@ def extraire_page_pymupdf(
         page_obj.native.fonts.append(Font(name=name, sizes=sorted(list(sizes))))
 
     return page_obj, word_global_id
+
+def rendre_zone_image(page_fitz: fitz.Page, bbox: BBox, dpi: int = 300):
+    """Rend en pixels UNE zone précise de la page (crop), pas la page
+    entière -- pendant de get_pixmap() plein page déjà utilisé côté OCR
+    page-entière. Retourne (image PIL, scale) ; scale nécessaire côté
+    appelant pour reconvertir les coordonnées pixel -> points PDF."""
+    from PIL import Image
+    import io
+
+    scale = dpi / 72.0
+    matrix = fitz.Matrix(scale, scale)
+    clip = fitz.Rect(bbox.x0, bbox.y0, bbox.x1, bbox.y1)
+    pix = page_fitz.get_pixmap(matrix=matrix, clip=clip, alpha=False)
+    return Image.open(io.BytesIO(pix.tobytes("png"))), scale
