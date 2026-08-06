@@ -25,8 +25,16 @@ from PIL import Image
 from datacompiler.model.document import BBox, Document, Word
 from datacompiler.frontend.ocr.base import OcrBackend
 
-pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
+import sys
+import shutil
+import pytesseract
 
+# Ne définir le chemin manuellement QUE si Tesseract n'est pas trouvé dans le PATH
+if not shutil.which("tesseract"):
+    if sys.platform == "win32":
+        pytesseract.pytesseract.tesseract_cmd = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
+    elif sys.platform == "darwin":
+        pytesseract.pytesseract.tesseract_cmd = "/opt/homebrew/bin/tesseract"
 
 _PSM_LAYOUT_GENERAL = 3   # défaut Tesseract : segmentation automatique de page -- bonne mise en page générale
 _PSM_BLOC_UNIFORME = 6    # traite l'image comme un bloc de texte uniforme -- meilleur sur les tableaux denses de chiffres
