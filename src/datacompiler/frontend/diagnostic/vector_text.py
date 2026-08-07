@@ -104,15 +104,20 @@ def _grouper_par_proximite(elements, tolerance=3.0):
     return groupes
 
 
-def _mot_natif_present(page, bbox) -> bool:
+def _mot_natif_present(page, bbox, seuil_recouvrement=0.5) -> bool:
     x0, y0, x1, y1 = bbox
     for w in page.native.words:
         if not w.bbox:
             continue
-        cx = (w.bbox.x0 + w.bbox.x1) / 2
-        cy = (w.bbox.y0 + w.bbox.y1) / 2
-        if x0 <= cx <= x1 and y0 <= cy <= y1:
-            return True
+        ix0 = max(w.bbox.x0, x0)
+        iy0 = max(w.bbox.y0, y0)
+        ix1 = min(w.bbox.x1, x1)
+        iy1 = min(w.bbox.y1, y1)
+        if ix0 < ix1 and iy0 < iy1:
+            aire_inter = (ix1 - ix0) * (iy1 - iy0)
+            aire_mot = (w.bbox.x1 - w.bbox.x0) * (w.bbox.y1 - w.bbox.y0)
+            if aire_mot > 0 and aire_inter / aire_mot >= seuil_recouvrement:
+                return True
     return False
 
 
