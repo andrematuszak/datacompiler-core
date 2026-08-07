@@ -65,7 +65,8 @@ def _insert_invisible_words(page, words):
     # Regroupement en lignes (même logique que render.py) : nécessaire pour
     # savoir quels mots sont adjacents et mériter un espace explicite entre
     # eux, plutôt que de traiter chaque mot isolément.
-    for ligne in grouper_par_ligne(words):
+    a_inserer = [w for w in words if w.output_text != w.text or w.reconstructed]
+    for ligne in grouper_par_ligne(a_inserer):
         mots_valides = [w for w in ligne if w.bbox and w.output_text.strip()]
         for i, word in enumerate(mots_valides):
             box = word.bbox
