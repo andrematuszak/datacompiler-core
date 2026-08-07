@@ -26,8 +26,7 @@ from datacompiler.model.document import BBox, Document, Word
 from datacompiler.frontend.ocr.base import OcrBackend
 
 import sys
-import shutil
-import pytesseract
+import shutil   
 
 # Ne définir le chemin manuellement QUE si Tesseract n'est pas trouvé dans le PATH
 if not shutil.which("tesseract"):

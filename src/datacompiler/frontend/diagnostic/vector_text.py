@@ -47,25 +47,60 @@ def _elements_vectoriels(page) -> list:
 
 def _grouper_par_proximite(elements, tolerance=3.0):
     """Regroupe les éléments par recouvrement/proximité de bbox -- fusion
-    transitive simple, pas un clustering sophistiqué (pas nécessaire vu la
-    volumétrie attendue par page)."""
+    TRANSITIVE (union-find), pas une passe gloutonne à arrêt au premier
+    groupe trouvé.
+
+    CORRECTIF (remplace l'ancienne version) : l'ancienne implémentation
+    rattachait chaque élément au PREMIER groupe compatible trouvé, sans
+    vérifier s'il était également compatible avec un autre groupe déjà
+    créé -- cas "fan-in" (élément B proche de A ET de C, mais A et C pas
+    proches directement, traités dans l'ordre A, C, B) : A et C restaient
+    dans deux groupes séparés au lieu de fusionner via B. Confirmé en
+    pratique sur test-impots-revenu (phénomène 2 : mots fragmentés
+    chevauchants type "Date ate d'établ lissement").
+    """
+    n = len(elements)
+    parent = list(range(n))
+
+    def find(i):
+        racine = i
+        while parent[racine] != racine:
+            racine = parent[racine]
+        while parent[i] != racine:  # compression de chemin
+            parent[i], i = racine, parent[i]
+        return racine
+
+    def union(i, j):
+        ri, rj = find(i), find(j)
+        if ri != rj:
+            parent[ri] = rj
+
+    def proche(a, b):
+        return not (a.x1 < b.x0 - tolerance or a.x0 > b.x1 + tolerance or
+                    a.y1 < b.y0 - tolerance or a.y0 > b.y1 + tolerance)
+
+    # Comparaison par paire -- O(n²), largement suffisant vu la volumétrie
+    # attendue (quelques centaines d'éléments vectoriels par page au plus).
+    for i in range(n):
+        for j in range(i + 1, n):
+            if proche(elements[i], elements[j]):
+                union(i, j)
+
+    composantes = {}
+    for i, e in enumerate(elements):
+        composantes.setdefault(find(i), []).append(e)
+
     groupes = []
-    for e in elements:
-        rattache = None
-        for g in groupes:
-            gx0, gy0, gx1, gy1 = g["bbox"]
-            if not (e.x1 < gx0 - tolerance or e.x0 > gx1 + tolerance or
-                    e.y1 < gy0 - tolerance or e.y0 > gy1 + tolerance):
-                rattache = g
-                break
-        if rattache is None:
-            groupes.append({"elements": [e], "bbox": [e.x0, e.y0, e.x1, e.y1]})
-        else:
-            rattache["elements"].append(e)
-            rattache["bbox"][0] = min(rattache["bbox"][0], e.x0)
-            rattache["bbox"][1] = min(rattache["bbox"][1], e.y0)
-            rattache["bbox"][2] = max(rattache["bbox"][2], e.x1)
-            rattache["bbox"][3] = max(rattache["bbox"][3], e.y1)
+    for membres in composantes.values():
+        groupes.append({
+            "elements": membres,
+            "bbox": [
+                min(e.x0 for e in membres),
+                min(e.y0 for e in membres),
+                max(e.x1 for e in membres),
+                max(e.y1 for e in membres),
+            ],
+        })
     return groupes
 
 
