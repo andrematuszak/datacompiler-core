@@ -150,31 +150,39 @@ def _est_pleine_largeur(ligne, largeur_max_observee, tolerance=0.9):
     return (x1 - x0) >= largeur_max_observee * tolerance
 
 
-def _colonnes_depuis_fragments(lignes, marge_min=2.0):
+def _colonnes_depuis_fragments(lignes, marge_min=2.0, frequence_min=3):
     """Regroupe les fragments de ligne (déjà scindés par _scinder_ligne) en
-    positions de colonnes, à partir de leur x0 de départ -- plus direct que
-    fusionner des intervalles de mots individuels sur toute la page,
-    puisque chaque fragment est déjà un morceau de ligne cohérent à ce
-    stade (une colonne entière, pas un mélange). Retourne une liste de x0
-    croissants, un par colonne détectée."""
+    positions de colonnes, à partir de leur x0 de départ.
+
+    CORRECTIF : une frontière de colonne n'est retenue que si elle est
+    SOUTENUE par au moins `frequence_min` lignes distinctes -- une vraie
+    colonne se reconnaît par des débuts de ligne qui se répètent à la même
+    position, pas par une position isolée qui n'apparaît qu'une fois.
+    Sans ce filtre, un mot unique en bord de page (ex. "SABINE" en fin de
+    nom, "RG"/"AVIS_IR_" en haut de page) était traité comme une colonne à
+    part entière -- son tampon ne se vidant qu'au flush final de ordonner(),
+    il sortait hors de l'ordre vertical réel de la page (confirmé sur
+    test-impots-revenu, cf. dump reading_order)."""
     if not lignes:
         return [0.0]
-    debuts = sorted(set(round(min(w.bbox.x0 for w in l), 1) for l in lignes))
-    if len(debuts) == 1:
-        return debuts
+    debuts_bruts = [round(min(w.bbox.x0 for w in l), 1) for l in lignes]
+    debuts_uniques = sorted(set(debuts_bruts))
+    if len(debuts_uniques) == 1:
+        return debuts_uniques
 
-    ecarts = [debuts[i + 1] - debuts[i] for i in range(len(debuts) - 1)]
-    # Peu de valeurs distinctes ici (une poignée de colonnes, pas des
-    # centaines de mots) : la contrainte de fréquence de _seuil_bimodal
-    # n'a plus de sens (chaque position n'apparaît qu'une fois dans cette
-    # liste dédupliquée), on la désactive pour ce cas d'usage.
+    ecarts = [debuts_uniques[i + 1] - debuts_uniques[i] for i in range(len(debuts_uniques) - 1)]
     seuil = _seuil_bimodal(ecarts, plancher=marge_min, frequence_min=1)
 
-    frontieres = [debuts[0]]
-    for i in range(len(debuts) - 1):
-        if debuts[i + 1] - debuts[i] > seuil:
-            frontieres.append(debuts[i + 1])
-    return frontieres
+    frontieres_candidates = [debuts_uniques[0]]
+    for i in range(len(debuts_uniques) - 1):
+        if debuts_uniques[i + 1] - debuts_uniques[i] > seuil:
+            frontieres_candidates.append(debuts_uniques[i + 1])
+
+    frontieres = [
+        f for f in frontieres_candidates
+        if sum(1 for d in debuts_bruts if abs(d - f) <= marge_min) >= frequence_min
+    ]
+    return frontieres or [frontieres_candidates[0]]  # jamais de liste vide
 
 
 def _colonne_de_fragment(fragment, frontieres):

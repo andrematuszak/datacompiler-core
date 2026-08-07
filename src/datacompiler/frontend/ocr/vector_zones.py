@@ -67,10 +67,37 @@ def _fusionner_zones_chevauchantes(zones):
         for membres in composantes.values()
     ]
 
+def _chevauche_natif(mot, mots_natifs, seuil_recouvrement=0.5):
+    """True si `mot` (produit par OCR de zone) recouvre significativement un
+    mot déjà natif -- signe qu'il duplique du texte déjà bien extrait par
+    PyMuPDF plutôt que de combler un vrai vide.
+
+    Nécessaire depuis l'ajout de _fusionner_zones_chevauchantes : la fusion
+    produit un rectangle ENGLOBANT plusieurs zones individuellement validées
+    par vector_text._mot_natif_present, mais ce rectangle peut avaler une
+    portion de texte natif située ENTRE deux zones fusionnées -- jamais
+    couverte par aucune zone individuelle, donc jamais testée en amont. Le
+    crop+OCR du rectangle plus large relit alors ce texte natif et produit un
+    doublon -- pas un faux positif de détection de zone, un effet de bord de
+    la fusion géométrique elle-même."""
+    if not mot.bbox:
+        return False
+    for nat in mots_natifs:
+        if not nat.bbox:
+            continue
+        x0 = max(mot.bbox.x0, nat.bbox.x0)
+        y0 = max(mot.bbox.y0, nat.bbox.y0)
+        x1 = min(mot.bbox.x1, nat.bbox.x1)
+        y1 = min(mot.bbox.y1, nat.bbox.y1)
+        if x0 < x1 and y0 < y1:
+            intersection = (x1 - x0) * (y1 - y0)
+            aire_mot = (mot.bbox.x1 - mot.bbox.x0) * (mot.bbox.y1 - mot.bbox.y0)
+            if aire_mot > 0 and intersection / aire_mot >= seuil_recouvrement:
+                return True
+    return False
+
+
 def recuperer_texte_vectorise(doc: Document, pdf_path: str, backend, lang: str = "fra", dpi: int = 300) -> Document:
-    """Pour chaque page où vector_text détecte des zones suspectes : crop +
-    OCR ciblé de chaque zone, fusion directe dans page.native.words.
-    No-op silencieux si `backend` n'implémente pas ocraliser_zone."""
     if not hasattr(backend, "ocraliser_zone"):
         return doc
 
@@ -85,19 +112,24 @@ def recuperer_texte_vectorise(doc: Document, pdf_path: str, backend, lang: str =
                 BBox(x0 - MARGE_ZONE, y0 - MARGE_ZONE, x1 + MARGE_ZONE, y1 + MARGE_ZONE)
                 for x0, y0, x1, y1 in zones
             ]
-            # Fusion AVANT crop+OCR : deux zones dont les crops se
-            # toucheraient après marge sont traitées comme une seule.
             zones_a_traiter = _fusionner_zones_chevauchantes(zones_marginees)
 
             page_fitz = source[i]
+            mots_natifs_existants = page.native.words  # référence avant tout ajout, pour cette page
             for zone in zones_a_traiter:
                 image, _ = rendre_zone_image(page_fitz, zone, dpi=dpi)
                 try:
                     mots = backend.ocraliser_zone(image, offset=(zone.x0, zone.y0), lang=lang, dpi=dpi)
                 except NotImplementedError:
                     continue
-                page.native.words.extend(mots)
+                # Filtre AVANT ajout : un mot OCR qui recouvre significativement
+                # du natif existant est un doublon dû à la fusion de zones
+                # (cf. _chevauche_natif), pas une vraie récupération.
+                mots_valides = [m for m in mots if not _chevauche_natif(m, mots_natifs_existants)]
+                page.native.words.extend(mots_valides)
     finally:
         source.close()
 
     return doc
+
+
