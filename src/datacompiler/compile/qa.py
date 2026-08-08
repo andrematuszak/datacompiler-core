@@ -3,9 +3,6 @@
 est indépendante et n'est activée que si elle a une base fiable pour
 fonctionner.
 
-Point 1 (confiance basse) seul implémenté ici : lit un champ déjà présent
-sur Word, ne dépend d'aucun ordre ni regroupement -- fiable dès maintenant.
-
 Points différés, PAS oubliés -- dépendent tous d'un ordre/regroupement
 stable que reading_order.py ne garantit pas encore (cf.
 _colonnes_depuis_fragments, correction en cours) :
