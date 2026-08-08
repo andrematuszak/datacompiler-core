@@ -15,6 +15,12 @@ class Decision:
     regle: str
     detail: str = ""
 
+@dataclass
+class Flag:
+    type: str
+    detail: str = ""
+    severity: str = "info"  # "info" | "warning" | "critical"
+
 
 @dataclass
 class Word:
@@ -40,6 +46,7 @@ class Word:
     decision: Optional[Decision] = None
     notes: List[str] = field(default_factory=list)
     is_vectorized: bool = False
+    flags: List[Flag] = field(default_factory=list) 
 
     @property
     def output_text(self) -> str:
