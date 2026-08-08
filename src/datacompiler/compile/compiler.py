@@ -29,7 +29,7 @@ from copy import deepcopy
 from datacompiler.model.document import Document
 
 
-from . import alignment, conflict_resolution, layout, reading_order, typography
+from . import alignment, conflict_resolution, layout, qa, reading_order, typography
 
 
 
@@ -56,7 +56,8 @@ def _resoudre_page(page):
         mot.id = i
 
 
-    layout.assigner_lignes(mots_resolus)   # <-- nouveau
+    layout.assigner_lignes(mots_resolus)
+    qa.annoter(mots_resolus)
 
 
     return mots_resolus
