@@ -36,6 +36,7 @@ n'est pas géré -- à revoir avec des cas réels plutôt que sur-ingénierer.
 """
 
 from copy import deepcopy
+from collections import defaultdict
 
 
 def _dans_un_tableau(mot, tables):
@@ -150,39 +151,117 @@ def _est_pleine_largeur(ligne, largeur_max_observee, tolerance=0.9):
     return (x1 - x0) >= largeur_max_observee * tolerance
 
 
-def _colonnes_depuis_fragments(lignes, marge_min=2.0, frequence_min=3):
-    """Regroupe les fragments de ligne (déjà scindés par _scinder_ligne) en
-    positions de colonnes, à partir de leur x0 de départ.
+def _colonnes_depuis_fragments(lignes, marge_min=2.0, frequence_min=3,
+                                tolerance_x=5.0, min_cooccurrence_ratio=0.3):
+    """Détecte les vraies colonnes en combinant DEUX filtres indépendants,
+    chacun attrapant une classe de faux positif que l'autre rate seul :
 
-    CORRECTIF : une frontière de colonne n'est retenue que si elle est
-    SOUTENUE par au moins `frequence_min` lignes distinctes -- une vraie
-    colonne se reconnaît par des débuts de ligne qui se répètent à la même
-    position, pas par une position isolée qui n'apparaît qu'une fois.
-    Sans ce filtre, un mot unique en bord de page (ex. "SABINE" en fin de
-    nom, "RG"/"AVIS_IR_" en haut de page) était traité comme une colonne à
-    part entière -- son tampon ne se vidant qu'au flush final de ordonner(),
-    il sortait hors de l'ordre vertical réel de la page (confirmé sur
-    test-impots-revenu, cf. dump reading_order)."""
+
+    1. FRÉQUENCE PROPRE (frequence_min) : le candidat doit apparaître comme
+       début de ligne au moins `frequence_min` fois sur la page. Élimine
+       les artefacts ponctuels (ex. "SABINE" en fin de nom, "RG" isolé en
+       haut de page) qui n'ont géométriquement aucune chance de se répéter.
+
+
+    2. CO-OCCURRENCE (min_cooccurrence_ratio) : le candidat doit coexister
+       avec un AUTRE candidat sur plusieurs bandes horizontales -- c'est la
+       vraie signature d'une colonne de lecture parallèle (papier IEEE :
+       gauche et droite actives simultanément sur presque toute la page).
+
+
+    Le filtre 2 seul est INSUFFISANT : un candidat qui n'apparaît qu'une
+    fois co-occurre par construction à 100% avec sa propre ligne d'origine
+    (le ratio ne peut jamais le disqualifier). Le filtre 1 seul serait
+    insuffisant dans l'autre sens : un candidat qui revient plusieurs fois
+    sur la page (ex. plusieurs blocs d'adresse alignés verticalement, mais
+    JAMAIS lus en parallèle d'un autre bloc) passerait la fréquence sans
+    être une vraie colonne de lecture.
+
+
+    Un candidat n'est retenu que s'il passe les DEUX filtres."""
     if not lignes:
         return [0.0]
+
+
     debuts_bruts = [round(min(w.bbox.x0 for w in l), 1) for l in lignes]
     debuts_uniques = sorted(set(debuts_bruts))
     if len(debuts_uniques) == 1:
         return debuts_uniques
 
+
+    # --- Filtre 1 : fréquence propre ---
     ecarts = [debuts_uniques[i + 1] - debuts_uniques[i] for i in range(len(debuts_uniques) - 1)]
     seuil = _seuil_bimodal(ecarts, plancher=marge_min, frequence_min=1)
+
 
     frontieres_candidates = [debuts_uniques[0]]
     for i in range(len(debuts_uniques) - 1):
         if debuts_uniques[i + 1] - debuts_uniques[i] > seuil:
             frontieres_candidates.append(debuts_uniques[i + 1])
 
-    frontieres = [
+
+    frontieres_frequentes = [
         f for f in frontieres_candidates
         if sum(1 for d in debuts_bruts if abs(d - f) <= marge_min) >= frequence_min
     ]
-    return frontieres or [frontieres_candidates[0]]  # jamais de liste vide
+    if not frontieres_frequentes:
+        return [frontieres_candidates[0]]
+
+
+    # --- Filtre 2 : co-occurrence par bandes horizontales ---
+    # Regroupe chaque LIGNE (pas chaque mot) sous la frontière la plus
+    # proche par valeur inférieure -- réutilise _colonne_de_fragment pour
+    # rester cohérent avec le reste du fichier plutôt que réinventer un
+    # arrondi de x0 séparé.
+    groupes_lignes = defaultdict(list)
+    for l in lignes:
+        idx = _colonne_de_fragment(l, frontieres_frequentes)
+        groupes_lignes[frontieres_frequentes[idx]].append(l)
+
+
+    y_coords = set()
+    for l in lignes:
+        for w in l:
+            y_coords.add(w.bbox.y0)
+            y_coords.add(w.bbox.y1)
+    y_sorted = sorted(y_coords)
+    bandes = [(y_sorted[i], y_sorted[i + 1])
+              for i in range(len(y_sorted) - 1)
+              if y_sorted[i + 1] - y_sorted[i] > 5.0]
+    if not bandes:
+        return [frontieres_frequentes[0]]
+
+
+    presence_par_bande = []
+    for y_start, y_end in bandes:
+        mid_y = (y_start + y_end) / 2
+        presents = set()
+        for f, groupe in groupes_lignes.items():
+            for l in groupe:
+                if any(w.bbox.y0 <= mid_y <= w.bbox.y1 for w in l):
+                    presents.add(f)
+                    break
+        presence_par_bande.append(presents)
+
+
+    frontieres_validees = []
+    for f in frontieres_frequentes:
+        hauteur_totale = sum(
+            (max(w.bbox.y1 for w in l) - min(w.bbox.y0 for w in l))
+            for l in groupes_lignes.get(f, [])
+        )
+        if hauteur_totale == 0:
+            continue
+        hauteur_en_cooccurrence = sum(
+            (bandes[i][1] - bandes[i][0])
+            for i, presents in enumerate(presence_par_bande)
+            if f in presents and len(presents) > 1
+        )
+        if hauteur_en_cooccurrence / hauteur_totale >= min_cooccurrence_ratio:
+            frontieres_validees.append(f)
+
+
+    return frontieres_validees or [frontieres_frequentes[0]]
 
 
 def _colonne_de_fragment(fragment, frontieres):
