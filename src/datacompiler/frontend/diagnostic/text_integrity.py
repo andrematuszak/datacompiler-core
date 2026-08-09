@@ -3,7 +3,7 @@ tokens anormaux) et densité textuelle par page."""
 
 from typing import Optional
 
-from heuristics import taux_caracteres_suspects, taux_tokens_anormaux
+from datacompiler.heuristics import taux_caracteres_suspects, taux_tokens_anormaux
 
 
 def texte_page(page) -> str:
