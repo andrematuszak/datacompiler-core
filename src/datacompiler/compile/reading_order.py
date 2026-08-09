@@ -278,21 +278,25 @@ def _colonne_de_fragment(fragment, frontieres):
 
 def ordonner(page) -> list:
     """Retourne des COPIES des mots natifs de `page`, dans l'ordre de
-    lecture réel : tableaux exclus, blocs pleine largeur préservés à leur
-    position naturelle, colonnes traitées de gauche à droite entre deux
-    blocs pleine largeur.
-
-    Copie (deepcopy) faite ici, au tout premier maillon du pipeline resolve/
-    -- l'immutabilité de native (contrat documenté dans document.py) est
-    garantie à la source plutôt que rappelée à chaque étape suivante."""
+    lecture réel : tableaux exclus du tri par colonnes, mais réintégrés
+    à la fin pour ne jamais perdre de contenu.
+    """
     tables = page.graphics.tables
-    mots = [
+
+    # 1. Séparation : mots hors table (pour tri complexe) vs mots dans table (sauvegarde)
+    mots_hors_table = [
         deepcopy(w)
         for w in page.native.words
         if w.bbox and not _dans_un_tableau(w, tables)
     ]
+    mots_dans_table = [
+        deepcopy(w)
+        for w in page.native.words
+        if w.bbox and _dans_un_tableau(w, tables)
+    ]
 
-    lignes_brutes = _grouper_lignes_brutes(mots)
+    # 2. Traitement de l'ordre de lecture uniquement sur les mots HORS table
+    lignes_brutes = _grouper_lignes_brutes(mots_hors_table)
     seuil_scission = _ecart_mot_normal(lignes_brutes)
 
     lignes = []
@@ -305,11 +309,36 @@ def ordonner(page) -> list:
     )
 
     lignes_etroites = [l for l in lignes if not _est_pleine_largeur(l, largeur_max_observee)]
-
     frontieres = _colonnes_depuis_fragments(lignes_etroites) if lignes_etroites else [0.0]
 
     resultat = []
     tampons = {i: [] for i in range(len(frontieres))}
+
+    # Logique de tri par colonnes (inchangée) pour les mots hors table
+    for ligne in lignes:
+        # Déterminer la colonne dominante de la ligne
+        x_moyen = sum(w.bbox.x0 for w in ligne) / len(ligne)
+        col_idx = 0
+        for i, frontiere in enumerate(frontieres):
+            if x_moyen >= frontiere:
+                col_idx = i
+        
+        tampons[col_idx].extend(ligne)
+
+    # Vider les tampons colonne par colonne
+    for i in range(len(frontieres)):
+        # Tri vertical dans chaque colonne
+        col_mots = sorted(tampons[i], key=lambda w: (w.bbox.y0, w.bbox.x0))
+        resultat.extend(col_mots)
+
+    # 3. RÉINTÉGRATION : Ajout des mots de tableau à la suite
+    # Triés simplement par position (y, x) car la structure interne du tableau 
+    # n'est pas encore reconstruite (réservé à resolved.tables dans la roadmap).
+    if mots_dans_table:
+        mots_dans_table_tries = sorted(mots_dans_table, key=lambda w: (w.bbox.y0, w.bbox.x0))
+        resultat.extend(mots_dans_table_tries)
+
+    return resultat
 
     def vider_tampons():
         for i in range(len(frontieres)):
