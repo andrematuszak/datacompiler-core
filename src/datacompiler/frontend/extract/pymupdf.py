@@ -139,30 +139,19 @@ def extraire_metadonnees(doc_fitz: fitz.Document, pdf_path: str) -> dict:
     }
 
 
-def extraire_page_pymupdf(
-    page_fitz: fitz.Page, 
-    page_number: int, 
-    start_word_id: int
-) -> Tuple[Page, int]:
-    """
-    Extrait le texte natif, les Bounding Boxes et la typographie d'une page.
-    Gère la ré-indexation des blocs de texte pour éliminer les décalages avec les images.
-    Conserve également les tracés vectoriels nécessaires au diagnostic.
-    """
+def extraire_page_pymupdf(page_fitz, page_number, start_word_id):
     page_obj = Page(
         number=page_number,
         width=float(page_fitz.rect.width),
         height=float(page_fitz.rect.height),
-        rotation=float(page_fitz.rotation)
+        rotation=float(page_fitz.rotation),
     )
 
     page_dict = page_fitz.get_text("dict")
     words_fitz = page_fitz.get_text("words")
-    font_map: Dict[str, Set[float]] = {}
+    font_map = {}
     word_global_id = start_word_id
 
-    # Conserver les tracés permet au diagnostic d'identifier les glyphes sans
-    # texte natif associé, sans jamais rouvrir le PDF.
     for zone in _extraire_zones_vectorielles(page_fitz):
         x0, y0, x1, y1 = zone["bbox"]
         vector = GraphicVector(bbox=BBox(x0, y0, x1, y1))
@@ -173,19 +162,30 @@ def extraire_page_pymupdf(
         elif zone["type"] == "curve":
             page_obj.graphics.curves.append(vector)
 
-    # Alignement d'index : ignorer les blocs non-texte (images)
+    # CORRECTIF : plus d'appariement par égalité d'index (block_idx ==
+    # w[5], line_idx == w[6]). get_text("dict") et get_text("words")
+    # n'utilisent pas les mêmes règles de numérotation de bloc par défaut
+    # (images comptées dans l'un, ignorées dans l'autre -- confirmé par
+    # les mainteneurs PyMuPDF) : sur une page avec des images intercalées,
+    # ça fait dériver silencieusement des mots entiers hors de toute
+    # correspondance -- perdus sans erreur (confirmé : "virement",
+    # page avec has_images=True).
+    #
+    # On itère directement sur words_fitz (garanti exhaustif : c'est LA
+    # source de vérité pour "quels mots existent"), et on retrouve la
+    # typographie par containment géométrique du centre du mot dans la
+    # bbox de ligne du dict, avec repli sur la ligne verticalement la plus
+    # proche si aucun containment exact (tolérance aux petits écarts
+    # d'arrondi de bbox entre les deux extractions). Un mot ne peut plus
+    # jamais disparaître : au pire, sa typographie est mal attribuée --
+    # jamais son existence.
+    lignes_typo = []
     text_block_idx = 0
     for b in page_dict.get("blocks", []):
         if b.get("type") != 0:
             continue
-
-        block_idx = text_block_idx
-        text_block_idx += 1
-
-        for line_idx, l in enumerate(b.get("lines", [])):
+        for l in b.get("lines", []):
             font_name, font_size, bold, italic, color_hex = "Unknown", 0.0, False, False, "#000000"
-            
-            # Récupération de la typographie via les spans
             for s in l.get("spans", []):
                 font_name = s.get("font", "Unknown")
                 font_size = float(s.get("size", 0.0))
@@ -193,32 +193,50 @@ def extraire_page_pymupdf(
                 italic = bool(s.get("flags", 0) & 2)
                 color_hex = _convertir_couleur(s.get("color"))
                 font_map.setdefault(font_name, set()).add(round(font_size, 1))
+            bbox_ligne = l.get("bbox")
+            if bbox_ligne:
+                lignes_typo.append({
+                    "bbox": bbox_ligne, "block": text_block_idx, "font": font_name,
+                    "font_size": font_size, "bold": bold, "italic": italic, "color": color_hex,
+                })
+        text_block_idx += 1
 
-            # Récupération géométrique des mots
-            for w in words_fitz:
-                if w[5] == block_idx and w[6] == line_idx:
-                    word_bbox = BBox(w[0], w[1], w[2], w[3])
-                    page_obj.native.words.append(Word(
-                        id=word_global_id,
-                        text=w[4],
-                        bbox=word_bbox,
-                        block=int(w[5]),
-                        line=int(w[6]),
-                        word=int(w[7]),
-                        font=font_name,
-                        font_size=font_size,
-                        bold=bold,
-                        italic=italic,
-                        color=color_hex,
-                        rotation=float(page_fitz.rotation),
-                    ))
-                    word_global_id += 1
+    def _ligne_correspondante(word_bbox):
+        cx, cy = (word_bbox[0] + word_bbox[2]) / 2, (word_bbox[1] + word_bbox[3]) / 2
+        meilleure, meilleure_dist = None, None
+        for lt in lignes_typo:
+            bx0, by0, bx1, by1 = lt["bbox"]
+            if bx0 - 1 <= cx <= bx1 + 1 and by0 - 1 <= cy <= by1 + 1:
+                return lt
+            dist = abs((by0 + by1) / 2 - cy)
+            if meilleure_dist is None or dist < meilleure_dist:
+                meilleure, meilleure_dist = lt, dist
+        return meilleure
 
-    # Ingestion des polices recensées
+    for w in words_fitz:
+        x0, y0, x1, y1, texte = w[0], w[1], w[2], w[3], w[4]
+        lt = _ligne_correspondante((x0, y0, x1, y1))
+        page_obj.native.words.append(Word(
+            id=word_global_id,
+            text=texte,
+            bbox=BBox(x0, y0, x1, y1),
+            block=lt["block"] if lt else 0,
+            line=0,
+            word=0,
+            font=lt["font"] if lt else "Unknown",
+            font_size=lt["font_size"] if lt else 0.0,
+            bold=lt["bold"] if lt else False,
+            italic=lt["italic"] if lt else False,
+            color=lt["color"] if lt else "#000000",
+            rotation=float(page_fitz.rotation),
+        ))
+        word_global_id += 1
+
     for name, sizes in font_map.items():
         page_obj.native.fonts.append(Font(name=name, sizes=sorted(list(sizes))))
 
     return page_obj, word_global_id
+
 
 def rendre_zone_image(page_fitz: fitz.Page, bbox: BBox, dpi: int = 300):
     """Rend en pixels UNE zone précise de la page (crop), pas la page
