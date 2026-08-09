@@ -1,4 +1,4 @@
-"""PDF fidèle : conserve le contenu source et ajoute au besoin une couche texte résolue.
+"""faithful_pdf.py PDF fidèle : conserve le contenu source et ajoute au besoin une couche texte résolue.
 
 Par défaut, le mode ``overlay`` ouvre le PDF source et ne crée une couche
 texte invisible que si la résolution a modifié du texte. Ses vecteurs, images
@@ -62,12 +62,13 @@ def _inserer_texte(page, x0, y1, texte, largeur_cible, taille_nominale):
 
 
 def _insert_invisible_words(page, words):
-    # Regroupement en lignes (même logique que render.py) : nécessaire pour
-    # savoir quels mots sont adjacents et mériter un espace explicite entre
-    # eux, plutôt que de traiter chaque mot isolément.
-    a_inserer = [w for w in words if w.output_text != w.text or w.reconstructed]
-    for ligne in grouper_par_ligne(a_inserer):
-        mots_valides = [w for w in ligne if w.bbox and w.output_text.strip()]
+    for ligne in grouper_par_ligne(words):
+        ligne_triee = sorted(
+            [w for w in ligne if w.bbox and w.output_text.strip()],
+            key=lambda w: w.bbox.x0,
+        )
+        mots_valides = [w for w in ligne_triee if w.reconstructed or w.is_corrected]
+
         for i, word in enumerate(mots_valides):
             box = word.bbox
             largeur_cible = max(box.x1 - box.x0, 0.1)
@@ -77,14 +78,22 @@ def _insert_invisible_words(page, words):
 
             if i + 1 < len(mots_valides):
                 suivant = mots_valides[i + 1]
-                if suivant.bbox.x0 > box.x1:
-                    # Espace EXPLICITE entre deux mots voisins d'une même
-                    # ligne : on ne compte plus sur l'extracteur de texte
-                    # (pdftotext, etc.) pour déduire une coupure de mot à
-                    # partir d'un écart géométrique -- un seuil ambigu qui
-                    # dépend du moteur d'extraction, de la police de
-                    # substitution et de la taille rescalée. Un vrai
-                    # caractère espace dans le flux est sans ambiguïté.
+                # Un mot NATIF exclu du filtre peut se trouver
+                # géométriquement ENTRE deux mots reconstruits sur la même
+                # ligne (ex. "Numéro [nér«] fiscal", "nér«" isolé entre
+                # deux natifs). Sans cette vérification, l'espace inséré
+                # entre deux mots reconstruits non adjacents dans le flux
+                # réel serait étiré sur tout l'écart -- y compris par-
+                # dessus du texte natif déjà présent. Détecté via le test
+                # de régression mot-à-mot (adresse DUPONT manquante du
+                # PDF, mots parasites en trop), invisible au simple
+                # comptage total.
+                intercale = any(
+                    w is not word and w is not suivant and w.bbox
+                    and box.x1 < w.bbox.x0 < suivant.bbox.x0
+                    for w in ligne_triee
+                )
+                if suivant.bbox.x0 > box.x1 and not intercale:
                     _inserer_texte(page, box.x1, box.y1, " ",
                                   max(suivant.bbox.x0 - box.x1, 0.1), taille_nominale)
 
@@ -131,7 +140,6 @@ def render_faithful_pdf(doc: Document, output_path: str, source_pdf: str = None,
     # La police Unicode de la couche invisible ne doit pas embarquer tout
     # DejaVu Sans (plusieurs centaines de Ko) : conserver uniquement les
     # glyphes effectivement présents dans le document.
-    output.subset_fonts()
     output.save(output_path, garbage=4, deflate=True)
     output.close()
     source.close()
