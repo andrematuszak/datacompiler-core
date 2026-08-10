@@ -76,7 +76,7 @@ def main():
     parser = argparse.ArgumentParser(description="Pipeline de nettoyage de PDF")
     parser.add_argument("pdf")
     parser.add_argument("--format", choices=["faithful-pdf", "rebuilt-pdf", "markdown", "html", "docx"], default="faithful-pdf")
-    parser.add_argument("--faithful-strategy", choices=["overlay", "rasterized"], default="overlay")
+    parser.add_argument("--faithful-strategy", choices=["overlay", "rasterized", "clean_overlay"], default="overlay", help="Stratégie de rendu PDF fidèle")
     parser.add_argument("--dpi", type=int, default=300)
     parser.add_argument("--tesseract-lang", default="fra", help="Langue Tesseract pour l'OCR ciblé du texte vectorisé")
     parser.add_argument("--no-json", action="store_true")
