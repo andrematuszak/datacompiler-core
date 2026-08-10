@@ -314,6 +314,26 @@ def ordonner(page) -> list:
     resultat = []
     tampons = {i: [] for i in range(len(frontieres))}
 
+    def vider_tampons():
+        # On vide en triant (tolérance sur Y pour simuler la ligne)
+        for i in range(len(frontieres)):
+            resultat.extend(sorted(tampons[i], key=lambda w: (round(w.bbox.y0 / 3), w.bbox.x0)))
+            tampons[i] = []
+
+    # Nouvelle logique avec détection des lignes pleine largeur
+    for ligne in lignes:  # dans l'ordre y d'origine (fragments d'une même bande y restent adjacents)
+        if _est_pleine_largeur(ligne, largeur_max_observee):
+            # Termine la lecture des colonnes accumulées AVANT ce bloc --
+            # sinon il s'intercalerait au milieu d'une colonne en cours.
+            vider_tampons()
+            resultat.extend(sorted(ligne, key=lambda w: w.bbox.x0))
+        else:
+            idx = _colonne_de_fragment(ligne, frontieres)
+            tampons[idx].extend(ligne)
+
+    # Vider ce qu'il reste à la fin du document
+    vider_tampons()
+
     # Logique de tri par colonnes (inchangée) pour les mots hors table
     for ligne in lignes:
         # Déterminer la colonne dominante de la ligne
@@ -338,22 +358,4 @@ def ordonner(page) -> list:
         mots_dans_table_tries = sorted(mots_dans_table, key=lambda w: (w.bbox.y0, w.bbox.x0))
         resultat.extend(mots_dans_table_tries)
 
-    return resultat
-
-    def vider_tampons():
-        for i in range(len(frontieres)):
-            resultat.extend(sorted(tampons[i], key=lambda w: (round(w.bbox.y0 / 3), w.bbox.x0)))
-            tampons[i] = []
-
-    for ligne in lignes:  # dans l'ordre y d'origine (fragments d'une même bande y restent adjacents)
-        if _est_pleine_largeur(ligne, largeur_max_observee):
-            # Termine la lecture des colonnes accumulées AVANT ce bloc --
-            # sinon il s'intercalerait au milieu d'une colonne en cours.
-            vider_tampons()
-            resultat.extend(sorted(ligne, key=lambda w: w.bbox.x0))
-        else:
-            idx = _colonne_de_fragment(ligne, frontieres)
-            tampons[idx].extend(ligne)
-
-    vider_tampons()
     return resultat
