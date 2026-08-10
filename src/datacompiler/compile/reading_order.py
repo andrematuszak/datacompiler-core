@@ -334,23 +334,6 @@ def ordonner(page) -> list:
     # Vider ce qu'il reste à la fin du document
     vider_tampons()
 
-    # Logique de tri par colonnes (inchangée) pour les mots hors table
-    for ligne in lignes:
-        # Déterminer la colonne dominante de la ligne
-        x_moyen = sum(w.bbox.x0 for w in ligne) / len(ligne)
-        col_idx = 0
-        for i, frontiere in enumerate(frontieres):
-            if x_moyen >= frontiere:
-                col_idx = i
-        
-        tampons[col_idx].extend(ligne)
-
-    # Vider les tampons colonne par colonne
-    for i in range(len(frontieres)):
-        # Tri vertical dans chaque colonne
-        col_mots = sorted(tampons[i], key=lambda w: (w.bbox.y0, w.bbox.x0))
-        resultat.extend(col_mots)
-
     # 3. RÉINTÉGRATION : Ajout des mots de tableau à la suite
     # Triés simplement par position (y, x) car la structure interne du tableau 
     # n'est pas encore reconstruite (réservé à resolved.tables dans la roadmap).
