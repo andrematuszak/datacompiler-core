@@ -71,7 +71,7 @@ def _font_objet(fontname, fontfile=None):
 
 
 def _inserer_texte(page, x0, y1, texte, largeur_cible, taille_nominale,
-                   nom_police, couleur_hex, render_mode=3):
+                   nom_police, couleur_hex, render_mode=0):
     """Insère un mot en ajustant la taille pour coller à la largeur cible."""
     police = _font_objet(nom_police, _FALLBACK_FONTFILE)
     # Le nom RÉELLEMENT utilisable, après repli éventuel dans _font_objet --
@@ -92,6 +92,7 @@ def _inserer_texte(page, x0, y1, texte, largeur_cible, taille_nominale,
                      fontfile=_FALLBACK_FONTFILE,
                      color=couleur_rgb,
                      render_mode=render_mode,
+                     fill_opacity=0.015,
                      overlay=True)
 
 
@@ -342,9 +343,30 @@ def render_faithful_pdf(doc: Document, output_path: str,
             for page, model_page in zip(output, doc.pages):
                 mots_visibles = [w for w in model_page.resolved.words
                                  if w.resolved_text != w.text or w.reconstructed]
+                # render_mode différencié : visible (0) pour le texte
+                # vectorisé récupéré par vector_zones.py (rien de sélectionnable
+                # en dessous, seulement des tracés -- pas de duplication
+                # possible), invisible (3) pour les corrections sur du texte
+                # natif déjà existant (là, la duplication visuelle EST un
+                # risque réel, déjà rencontré et corrigé une fois cette
+                # session -- cf. bug 'duplication de rendu invisible').
+                mots_vectorises = [w for w in mots_visibles if getattr(w, "is_vectorized", False)]
+                mots_corriges = [w for w in mots_visibles if not getattr(w, "is_vectorized", False)]
+                if mots_vectorises:
+                    _inserer_tous_les_mots(page, mots_vectorises, render_mode=0)
+                if mots_corriges:
+                    _inserer_tous_les_mots(page, mots_corriges, render_mode=3)
                 if mots_visibles:
-                    _inserer_tous_les_mots(page, mots_visibles, render_mode=3)
                     report["mots_inseres"] += len([w for w in mots_visibles if w.resolved_text.strip()])
+                # Fusionne tous les streams de contenu de la page en UN SEUL
+                # objet physique. Hypothèse à tester : insert_text(overlay=True)
+                # ajoute un stream séparé (/Contents devient un tableau), et un
+                # extracteur "flux plat" comme celui d'Okapi/Matecat (confirmé
+                # par la doc officielle cette session) pourrait ne lire
+                # correctement qu'un seul stream -- indépendamment du
+                # render_mode, ce qui expliquerait que même du texte VISIBLE
+                # ajouté en overlay reste invisible à Matecat.
+                page.clean_contents()
             output.set_metadata({"producer": "DataCleaner faithful_pdf (overlay)",
                                  "title": doc.metadata.filename})
             output.save(output_path, garbage=4, deflate=True)
