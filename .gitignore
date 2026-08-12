@@ -39,6 +39,7 @@ eggs/
 *_propre.pdf
 *_propre.json
 *document.json
+*repomap.json
 
 # --- Sensible & Secrets ---
 anciens/
@@ -47,3 +48,7 @@ experiments/
 sources/
 utils/
 .envexperiments/
+.aider*
+.editorconfig
+.continue.ctx
+CONTINUE_SETUP.md
