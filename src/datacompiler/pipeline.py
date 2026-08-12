@@ -6,6 +6,7 @@ import logging
 import os
 from pathlib import Path
 
+from datacompiler.frontend.diagnostic.vector_text import zones_texte_vectorise_probable
 from datacompiler.model.document import Document
 from datacompiler.frontend.extract import extraire
 from datacompiler.frontend import diagnostiquer, ocraliser, report as diagnostic_report
