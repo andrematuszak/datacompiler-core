@@ -21,7 +21,7 @@ from datacompiler.backend.rebuilt_pdf import render_rebuilt_pdf
 logger = logging.getLogger(__name__)
 
 
-def executer_pipeline(pdf_path, strategy="overlay", format_sortie="faithful-pdf", sauver_json=True,
+def executer_pipeline(pdf_path, strategy="overlay", sauver_json=True,
                       dpi=300, tesseract_lang="fra"):
     pdf_path = str(Path(pdf_path).resolve())
     logger.info("[1/6] Extraction : %s", pdf_path)
@@ -56,8 +56,7 @@ def executer_pipeline(pdf_path, strategy="overlay", format_sortie="faithful-pdf"
     resoudre(doc)
 
     base = str(Path(pdf_path).with_suffix(""))
-    logger.info("[6/6] Rendu (%s)...", format_sortie)
-    logger.info("  → format_sortie = %s", format_sortie) 
+    logger.info("[6/6] Rendu (stratégie : %s)...", strategy)
     if strategy in ("overlay", "clean_overlay", "rasterized"):
         fichier_sortie = base + "_propre.pdf"
         render_faithful_pdf(doc, fichier_sortie, strategy=strategy, dpi=dpi)
@@ -67,12 +66,11 @@ def executer_pipeline(pdf_path, strategy="overlay", format_sortie="faithful-pdf"
     elif strategy == "rebuilt":
         fichier_sortie = base + "_rebuilt.pdf"
         render_rebuilt_pdf(doc, fichier_sortie, source_pdf=pdf_path, dpi=dpi)
-        logger.warning("Stratégie '%s' non reconnue, fallback sur FORMATS", strategy)
     elif strategy in FORMATS:
         fichier_sortie = base + f"_propre.{EXTENSIONS[strategy]}"
         FORMATS[strategy](doc, fichier_sortie)
     else:
-        raise ValueError(f"Format inconnu : {format_sortie}")
+        raise ValueError(f"Stratégie inconnue : {strategy}")
 
     if sauver_json:
         json_path = base + ".document.json"
@@ -103,7 +101,7 @@ def main():
         datefmt="%H:%M:%S"
     )
 
-    executer_pipeline(args.pdf, strategy=args.strategy, format_sortie=args.format, sauver_json=not args.no_json, dpi=args.dpi, tesseract_lang=args.tesseract_lang)
+    executer_pipeline(args.pdf, strategy=args.strategy, sauver_json=not args.no_json, dpi=args.dpi, tesseract_lang=args.tesseract_lang)
 
 
 if __name__ == "__main__":
