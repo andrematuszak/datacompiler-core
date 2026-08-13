@@ -15,12 +15,14 @@ from datacompiler.frontend.ocr.vector_zones import recuperer_texte_vectorise
 from datacompiler.compile import resoudre
 from datacompiler.backend import EXTENSIONS, FORMATS
 from datacompiler.backend.faithful_pdf import render_faithful_pdf
+from datacompiler.backend.flow_pdf import render_flow_pdf
+from datacompiler.backend.rebuilt_pdf import render_rebuilt_pdf
 
 logger = logging.getLogger(__name__)
 
 
-def executer_pipeline(pdf_path, format_sortie="faithful-pdf", sauver_json=True,
-                      faithful_strategy="overlay", dpi=300, tesseract_lang="fra"):
+def executer_pipeline(pdf_path, strategy="overlay", format_sortie="faithful-pdf", sauver_json=True,
+                      dpi=300, tesseract_lang="fra"):
     pdf_path = str(Path(pdf_path).resolve())
     logger.info("[1/6] Extraction : %s", pdf_path)
     doc = extraire(Document(), pdf_path)
@@ -55,12 +57,20 @@ def executer_pipeline(pdf_path, format_sortie="faithful-pdf", sauver_json=True,
 
     base = str(Path(pdf_path).with_suffix(""))
     logger.info("[6/6] Rendu (%s)...", format_sortie)
-    if format_sortie == "faithful-pdf":
+    logger.info("  → format_sortie = %s", format_sortie) 
+    if strategy in ("overlay", "clean_overlay", "rasterized"):
         fichier_sortie = base + "_propre.pdf"
-        render_faithful_pdf(doc, fichier_sortie, strategy=faithful_strategy, dpi=dpi)
-    elif format_sortie in FORMATS:
-        fichier_sortie = base + f"_propre.{EXTENSIONS[format_sortie]}"
-        FORMATS[format_sortie](doc, fichier_sortie)
+        render_faithful_pdf(doc, fichier_sortie, strategy=strategy, dpi=dpi)
+    elif strategy == "flow":
+        fichier_sortie = base + "_flow.pdf"
+        render_flow_pdf(doc, fichier_sortie)
+    elif strategy == "rebuilt":
+        fichier_sortie = base + "_rebuilt.pdf"
+        render_rebuilt_pdf(doc, fichier_sortie, source_pdf=pdf_path, dpi=dpi)
+        logger.warning("Stratégie '%s' non reconnue, fallback sur FORMATS", strategy)
+    elif strategy in FORMATS:
+        fichier_sortie = base + f"_propre.{EXTENSIONS[strategy]}"
+        FORMATS[strategy](doc, fichier_sortie)
     else:
         raise ValueError(f"Format inconnu : {format_sortie}")
 
@@ -74,10 +84,12 @@ def executer_pipeline(pdf_path, format_sortie="faithful-pdf", sauver_json=True,
 
 def main():
     """Entrée CLI."""
-    parser = argparse.ArgumentParser(description="Pipeline de nettoyage de PDF")
+    parser = argparse.ArgumentParser(description="Pipeline de compilation de PDF")
     parser.add_argument("pdf")
-    parser.add_argument("--format", choices=["faithful-pdf", "rebuilt-pdf", "markdown", "html", "docx"], default="faithful-pdf")
-    parser.add_argument("--faithful-strategy", choices=["overlay", "rasterized", "clean_overlay"], default="overlay", help="Stratégie de rendu PDF fidèle")
+    parser.add_argument("--format", choices=["faithful-pdf", "flow-pdf", "rebuilt-pdf", "markdown", "html", "docx"], 
+                        default="faithful-pdf", help="Format de sortie")
+    parser.add_argument("--strategy", choices=["clean_overlay", "flow", "overlay", "rasterized", "rebuilt"], 
+                        default="overlay", help="Stratégie de rendu : overlay (défaut), clean_overlay, rasterized, flow, rebuilt, markdown, html, docx")
     parser.add_argument("--dpi", type=int, default=300)
     parser.add_argument("--tesseract-lang", default="fra", help="Langue Tesseract pour l'OCR ciblé du texte vectorisé")
     parser.add_argument("--no-json", action="store_true")
@@ -91,7 +103,7 @@ def main():
         datefmt="%H:%M:%S"
     )
 
-    executer_pipeline(args.pdf, args.format, not args.no_json, args.faithful_strategy, args.dpi, args.tesseract_lang)
+    executer_pipeline(args.pdf, strategy=args.strategy, format_sortie=args.format, sauver_json=not args.no_json, dpi=args.dpi, tesseract_lang=args.tesseract_lang)
 
 
 if __name__ == "__main__":
