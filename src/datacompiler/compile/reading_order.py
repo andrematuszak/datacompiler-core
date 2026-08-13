@@ -1,45 +1,95 @@
 """reading_order.py — Détermine l'ordre de lecture réel des mots natifs
-d'une page : exclut ceux qui appartiennent à un tableau (déjà représentés
-via graphics.tables / resolved.tables -- les inclure aussi comme mots isolés
-les dupliquerait), détecte les colonnes, puis trie colonne par colonne,
-ligne par ligne au sein de chaque colonne.
+d'une page, en construisant des BOÎTES (régions rectangulaires physiques),
+en les regroupant en RANGÉES par chevauchement vertical, puis en triant
+chaque rangée gauche -> droite.
 
 Ne modifie ni texte ni bbox -- uniquement l'ORDRE. typography.py (césures)
 et alignment.py (natif<->OCR) supposent tous les deux que cet ordre est déjà
 correct quand ils s'exécutent.
 
-Deux corrections apportées après un test sur un vrai papier IEEE deux
-colonnes, qui cassait complètement avec la version précédente :
+Remplace l'ancien moteur par détection de colonnes globales
+(SEUIL_GAP / _colonnes_depuis_fragments / pleine largeur), qui s'est révélé
+structurellement incapable de gérer un layout "libellé aligné à gauche /
+valeur alignée à droite sur la même ligne" (ex. "Détail des revenus" du
+document fiscal : bloc PyMuPDF multi-lignes de libellés vs colonne de
+montants une-ligne chacun -- les deux tombaient dans deux "colonnes"
+distinctes, triées indépendamment, perdant l'appariement). Confirmé aussi
+fragile sur un layout de lettre/formulaire (page 1 du même document,
+plusieurs encarts à x0 différents mais pas de vraies colonnes de lecture
+parallèle) : l'ancien moteur dépendait d'un seuil "pleine largeur" (90% de
+la ligne la plus large observée) pour décider quand vider les tampons de
+colonne -- un seuil qui basculait entre correct et cassé pour des écarts de
+largeur de bbox de quelques points, preuve empirique à l'appui.
 
-1. SEUIL ADAPTATIF plutôt que fixe : l'ancien SEUIL_GAP=15.0 échouait sur
-   ce papier, dont la vraie gouttière ne fait que ~11pt -- plus petit que
-   le seuil fixe, donc jamais détecté comme séparation de colonnes. Le
-   seuil est maintenant dérivé de l'écart médian entre mots CE document
-   précis (un vrai gouttière de colonne se détache nettement de
-   l'espacement normal, quel que soit le document).
+PRINCIPE (aucune notion de "colonne globale") :
 
-2. LIGNES PLEINE LARGEUR exclues de la détection de colonnes : un titre ou
-   un résumé qui chevauche toute la largeur de la page comble l'écart entre
-   colonnes pour TOUTE la page si on les laisse participer à la détection
-   (confirmé sur le papier IEEE : un seul bloc pleine largeur en haut de
-   page faisait fusionner les deux colonnes en une seule bande sur la page
-   entière). Ces lignes sont maintenant mises de côté pour la détection,
-   puis réinsérées à la bonne position dans l'ordre final -- ce qui
-   nécessite de "vider" les colonnes en cours de lecture avant d'émettre un
-   bloc pleine largeur (sinon il s'intercalerait au milieu d'une colonne).
+1. Construire des BOÎTES :
+   - natif : le champ `.block` de PyMuPDF donne un découpage gratuit, mais
+     un bloc peut couvrir un paragraphe multi-lignes entier (ex. 90pt,
+     7 lignes empilées) -- laissé en une seule boîte, il absorbe dans sa
+     rangée plusieurs petites boîtes concurrentes en face (ex. une colonne
+     de montants, une ligne par valeur), perdant l'info verticale pour les
+     remettre dans le bon ordre. Confirmé empiriquement (bug N5/N21-N26 :
+     "Salaires" vs "30050" etc.). (block, line) de PyMuPDF a été testé
+     comme fix et écarté : line=0 uniforme même sur un bloc normal dès
+     qu'il y a des pointillés de tabulation sur ce document. Fix retenu :
+     redécoupage par tolérance géométrique sur y0
+     (`_grouper_lignes_par_tolerance`), une boîte par LIGNE physique.
+   - vectorisé (`.is_vectorized`) : pas de `.block` exploitable -> les mots
+     sont clusterisés par proximité géométrique (union-find sur
+     chevauchement de bbox dilatée), puis chaque cluster est lui aussi
+     redécoupé en lignes par la même tolérance géométrique (même bug que
+     N5, côté vectorisé : cas V12, "Numéro FIP / Numéro rôle / Date
+     d'établissement / Date mise en recouvrement" fusionnés à tort en une
+     seule boîte de 40pt par le clustering).
+   - Repli défensif : un mot natif sans `.block` (cas non rencontré sur le
+     document de test, mais pas garanti sur un autre) devient sa propre
+     boîte à un seul mot plutôt que d'être silencieusement perdu.
 
-LIMITE CONNUE, TOUJOURS VRAIE : ceci reste une heuristique de projection
-horizontale, pas un vrai analyseur de mise en page. Un layout plus complexe
-que "colonnes verticales strictes + blocs pleine largeur" (encadrés
-flottants, texte qui serpente autour d'une image, 3+ colonnes irrégulières)
-n'est pas géré -- à revoir avec des cas réels plutôt que sur-ingénierer.
+2. Regrouper les boîtes en RANGÉES par chevauchement vertical significatif
+   (tri par y0, extension de plage tant que le chevauchement dépasse
+   SEUIL_CHEVAUCHEMENT_RANGEE). Une rangée à 1 boîte = comportement page
+   normale ; une rangée à N boîtes = les N boîtes sont lues côte à côte,
+   peu importe qu'elles fassent partie d'un "vrai" système de colonnes de
+   texte ou soient juste deux encarts positionnés l'un à côté de l'autre.
+
+3. Trier chaque rangée par x0 croissant (gauche -> droite), concaténer les
+   rangées dans l'ordre (haut -> bas).
+
+RISQUE CONNU, NON ÉLIMINÉ : une boîte nettement plus haute que ses voisines
+de rangée n'a besoin de chevaucher que SEUIL_CHEVAUCHEMENT_RANGEE (30%) de
+la hauteur d'une petite boîte pour l'absorber dans sa rangée -- et
+transitivement, tout ce qui touche cette petite boîte aussi, même sans
+jamais toucher la grosse boîte directement. `diagnostiquer_absorption` sert
+à repérer ce risque a posteriori (rangées où le ratio hauteur max/min
+dépasse 3x) ; ce n'est PAS branché automatiquement dans `ordonner()` (qui
+reste une fonction pure, sans log) -- à appeler explicitement depuis les
+tests ou le pipeline si besoin d'une alerte QA.
+
+LIMITE CONNUE, NON RETESTÉE dans cette version : le papier IEEE deux
+colonnes qui avait motivé l'ancien moteur colonnes n'a pas été revérifié
+avec cette nouvelle approche -- risque de régression non écarté (choix
+explicite : "on reste sur mon premier test, on bosse test par test").
+
+L'exclusion des mots de table (`_dans_un_tableau`/`graphics.tables`) est
+CONSERVÉE en amont, inchangée par rapport à l'ancienne version -- décision
+d'architecture volontaire, un changement à la fois. Les mots de table ne
+passent PAS par le moteur boîtes/rangées ; ils sont réintégrés à la fin,
+triés simplement par (y0, x0).
 """
 
+import itertools
 from copy import deepcopy
 from collections import defaultdict
 
 
+SEUIL_CHEVAUCHEMENT_RANGEE = 0.3   # fraction de la + petite hauteur, pour dire "même rangée"
+DILATATION_CLUSTERING_VECTO = 8.0  # pt, marge de tolérance pour fusionner des mots vectorisés proches
+TOLERANCE_LIGNE = 3.5              # pt, écart de y0 toléré pour dire "même ligne" (bruit OCR)
+
+
 def _dans_un_tableau(mot, tables):
+    """Vérifie si le centre d'un mot tombe dans une table."""
     if not mot.bbox:
         return False
     cx = (mot.bbox.x0 + mot.bbox.x1) / 2
@@ -52,238 +102,223 @@ def _dans_un_tableau(mot, tables):
     return False
 
 
-def _grouper_lignes_brutes(mots, tolerance_y=3.0):
-    """Regroupement en lignes par simple proximité verticale -- ne suppose
-    RIEN sur les colonnes (contrairement à output/layout.py, qui suppose
-    l'ordre déjà résolu). Sert uniquement à décider, ligne par ligne, si
-    elle est pleine largeur ou non."""
-    mots_tries = sorted([w for w in mots if w.bbox], key=lambda w: (w.bbox.y0, w.bbox.x0))
+def _grouper_lignes_par_tolerance(mots, tolerance=TOLERANCE_LIGNE):
+    """Regroupe des mots en lignes (liste de LISTES, pas encore aplatie)
+    par tolérance sur y0 -- coeur commun réutilisé à deux endroits :
+    1. `_grouper_par_ligne_tolerant` : tri final à l'intérieur d'une boîte.
+    2. `_construire_boites_natives`/`_construire_boites_vectorisees` :
+       découpage d'un bloc/cluster en boîtes une-ligne AVANT le
+       regroupement en rangées, pas seulement au moment du tri final --
+       voir docstring de module pour le bug concret (N5/V12) que ça
+       corrige."""
+    mots_tries = sorted(mots, key=lambda w: w.bbox.y0)
     lignes = []
     ligne_courante = []
-    y_courant = None
-    for mot in mots_tries:
-        y = mot.bbox.y0
-        if y_courant is None or abs(y - y_courant) <= tolerance_y:
-            ligne_courante.append(mot)
-            y_courant = y if y_courant is None else y_courant
+    y_ref = None
+    for w in mots_tries:
+        y0 = w.bbox.y0
+        if ligne_courante and abs(y0 - y_ref) <= tolerance:
+            ligne_courante.append(w)
         else:
-            lignes.append(ligne_courante)
-            ligne_courante = [mot]
-            y_courant = y
+            if ligne_courante:
+                lignes.append(ligne_courante)
+            ligne_courante = [w]
+            y_ref = y0
     if ligne_courante:
         lignes.append(ligne_courante)
     return lignes
 
 
-def _seuil_bimodal(ecarts, plancher=2.0, frequence_min=3, facteur_relatif=1.5):
-    """Cherche la frontière entre 'espacement normal entre mots' et 'vraie
-    séparation de colonne' dans la distribution des écarts.
-
-    Deux contraintes, ajoutées après deux échecs successifs sur le papier
-    IEEE :
-    1. La valeur en dessous de la frontière doit SE RÉPÉTER (au moins
-       `frequence_min` fois) -- un vrai gouttière de colonne revient des
-       dizaines de fois, un écart isolé (indentation de paragraphe, note de
-       bas de page...) ne doit pas pouvoir définir la frontière.
-    2. On s'arrête au PREMIER saut relatif suffisant en balayant du plus
-       petit écart vers le plus grand (`facteur_relatif`, défaut +50%),
-       plutôt que de chercher le plus grand saut absolu sur toute la
-       distribution -- sinon un saut plus loin dans la traîne (ex. entre
-       deux valeurs rares mais numériquement très espacées) l'emporte à
-       tort sur le vrai saut, plus modeste en valeur absolue mais qui
-       sépare réellement les deux populations recherchées."""
-    valeurs = sorted(e for e in ecarts if e > 0)
-    if len(valeurs) < 2:
-        return plancher
-
-    from collections import Counter
-    compte = Counter(round(v, 1) for v in valeurs)
-
-    for i in range(len(valeurs) - 1):
-        if valeurs[i] < plancher:
-            continue
-        if compte[round(valeurs[i], 1)] < frequence_min:
-            continue
-        if valeurs[i + 1] >= valeurs[i] * facteur_relatif:
-            return (valeurs[i] + valeurs[i + 1]) / 2
-
-    return plancher
-
-
-def _ecart_mot_normal(lignes):
-    """Rassemble tous les écarts horizontaux intra-ligne de la page et en
-    déduit un seuil de scission par détection bimodale (cf. _seuil_bimodal)
-    -- agrégé sur toute la page plutôt que ligne par ligne, où l'échantillon
-    serait trop petit pour distinguer fiablement les deux populations."""
-    ecarts = []
+def _grouper_par_ligne_tolerant(mots, tolerance=TOLERANCE_LIGNE):
+    """Regroupe des mots en lignes par tolérance sur y0 (pas un tri brut),
+    puis trie chaque ligne par x0. Évite qu'un micro-écart de y0 (ex. 19.7
+    vs 21.4, deux mots de la MÊME ligne visuelle) ne fasse passer un mot de
+    droite avant un mot de gauche."""
+    lignes = _grouper_lignes_par_tolerance(mots, tolerance)
+    resultat = []
     for ligne in lignes:
-        mots_tries = sorted(ligne, key=lambda w: w.bbox.x0)
-        for i in range(len(mots_tries) - 1):
-            ecarts.append(mots_tries[i + 1].bbox.x0 - mots_tries[i].bbox.x1)
-    return _seuil_bimodal(ecarts)
+        resultat.extend(sorted(ligne, key=lambda w: w.bbox.x0))
+    return resultat
 
 
-def _scinder_ligne(ligne, seuil):
-    """Scinde une 'ligne' (mots proches en y) en fragments séparés par un
-    écart horizontal significatif. Nécessaire car deux lignes de COLONNES
-    DIFFÉRENTES tombent souvent dans la même bande de y par coïncidence
-    (hauteurs de ligne similaires des deux côtés) et se retrouvent
-    fusionnées par _grouper_lignes_brutes -- sans cette scission,
-    _est_pleine_largeur mesurerait la largeur totale de ce faux-positif
-    (colonne gauche + trou + colonne droite) et le confondrait avec une
-    vraie ligne pleine largeur continue."""
-    mots_tries = sorted(ligne, key=lambda w: w.bbox.x0)
-    fragments = [[mots_tries[0]]]
-    for i in range(1, len(mots_tries)):
-        if mots_tries[i].bbox.x0 - mots_tries[i - 1].bbox.x1 > seuil:
-            fragments.append([])
-        fragments[-1].append(mots_tries[i])
-    return fragments
+class Boite:
+    """Région rectangulaire regroupant un ou plusieurs mots déjà reconnus
+    comme faisant partie de la même ligne physique (native ou vectorisée).
+    Volontairement publique : `diagnostiquer_absorption` et les tests
+    manipulent directement des `Boite`."""
+    __slots__ = ("id", "x0", "y0", "x1", "y1", "mots", "origine")
+
+    def __init__(self, id_, mots, origine):
+        self.id = id_
+        self.mots = mots
+        self.origine = origine
+        self.x0 = min(w.bbox.x0 for w in mots)
+        self.y0 = min(w.bbox.y0 for w in mots)
+        self.x1 = max(w.bbox.x1 for w in mots)
+        self.y1 = max(w.bbox.y1 for w in mots)
+
+    def __repr__(self):
+        apercu = " ".join((w.text or "") for w in self.mots[:5])
+        return (f"Boite#{self.id} [{self.origine}] y=({self.y0:.1f}-{self.y1:.1f}) "
+                f"x=({self.x0:.1f}-{self.x1:.1f}) n={len(self.mots)} \"{apercu}...\"")
 
 
-def _est_pleine_largeur(ligne, largeur_max_observee, tolerance=0.9):
-    """True si l'étendue horizontale de ce FRAGMENT (déjà scindé par
-    _scinder_ligne) est proche de la largeur de ligne la plus large
-    observée sur la page -- proxy adaptatif de "pleine largeur" plutôt
-    qu'une marge fixe, qui suppose à tort une mise en page standard."""
-    x0 = min(w.bbox.x0 for w in ligne)
-    x1 = max(w.bbox.x1 for w in ligne)
-    return (x1 - x0) >= largeur_max_observee * tolerance
+def _construire_boites_natives(mots_natifs, tolerance_ligne=TOLERANCE_LIGNE):
+    """Une boîte par LIGNE physique à l'intérieur de chaque bloc PyMuPDF,
+    pas une boîte par bloc entier (cf. docstring de module, bug N5). Un mot
+    sans `.block` (repli défensif, jamais rencontré sur le document de
+    test mais pas garanti ailleurs) devient sa propre boîte isolée plutôt
+    que d'être perdu."""
+    compteur_repli = itertools.count()
+    par_block = defaultdict(list)
+    for w in mots_natifs:
+        bloc = w.block if getattr(w, "block", None) is not None else f"_sans_block_{next(compteur_repli)}"
+        par_block[bloc].append(w)
+    boites = []
+    for bid, mots in par_block.items():
+        lignes = _grouper_lignes_par_tolerance(mots, tolerance_ligne)
+        for i, ligne in enumerate(lignes):
+            boites.append(Boite(f"N{bid}L{i}", ligne, "native"))
+    return boites
 
 
-def _colonnes_depuis_fragments(lignes, marge_min=2.0, frequence_min=3,
-                                tolerance_x=5.0, min_cooccurrence_ratio=0.3):
-    """Détecte les vraies colonnes en combinant DEUX filtres indépendants,
-    chacun attrapant une classe de faux positif que l'autre rate seul :
+class _UnionFind:
+    """Structure union-find pour le clustering des mots vectorisés."""
+    def __init__(self, n):
+        self.parent = list(range(n))
+
+    def find(self, x):
+        while self.parent[x] != x:
+            self.parent[x] = self.parent[self.parent[x]]
+            x = self.parent[x]
+        return x
+
+    def union(self, a, b):
+        ra, rb = self.find(a), self.find(b)
+        if ra != rb:
+            self.parent[ra] = rb
 
 
-    1. FRÉQUENCE PROPRE (frequence_min) : le candidat doit apparaître comme
-       début de ligne au moins `frequence_min` fois sur la page. Élimine
-       les artefacts ponctuels (ex. "SABINE" en fin de nom, "RG" isolé en
-       haut de page) qui n'ont géométriquement aucune chance de se répéter.
+def _chevauche_dilate(a, b, marge):
+    """Vérifie si deux bbox se chevauchent après dilatation de `marge` points."""
+    return not (a.bbox.x1 + marge < b.bbox.x0 or
+                a.bbox.x0 - marge > b.bbox.x1 or
+                a.bbox.y1 + marge < b.bbox.y0 or
+                a.bbox.y0 - marge > b.bbox.y1)
 
 
-    2. CO-OCCURRENCE (min_cooccurrence_ratio) : le candidat doit coexister
-       avec un AUTRE candidat sur plusieurs bandes horizontales -- c'est la
-       vraie signature d'une colonne de lecture parallèle (papier IEEE :
-       gauche et droite actives simultanément sur presque toute la page).
+def _construire_boites_vectorisees(mots_vecto, marge=DILATATION_CLUSTERING_VECTO,
+                                    tolerance_ligne=TOLERANCE_LIGNE):
+    """Le clustering union-find regroupe des mots proches en une même ZONE
+    OCR -- légitime en soi, mais si on laisse la zone entière comme UNE
+    boîte, elle subit le même problème que N5 côté natif (cas V12, cf.
+    docstring de module). Donc : cluster par proximité pour DÉCIDER quels
+    mots appartiennent à la même zone, puis redécoupe cette zone en lignes
+    (même logique que côté natif) avant de créer les boîtes finales."""
+    n = len(mots_vecto)
+    if n == 0:
+        return []
+    uf = _UnionFind(n)
+    for i in range(n):
+        for j in range(i + 1, n):
+            if _chevauche_dilate(mots_vecto[i], mots_vecto[j], marge):
+                uf.union(i, j)
+
+    groupes = defaultdict(list)
+    for i in range(n):
+        groupes[uf.find(i)].append(mots_vecto[i])
+
+    boites = []
+    for i, (racine, mots) in enumerate(groupes.items()):
+        lignes = _grouper_lignes_par_tolerance(mots, tolerance_ligne)
+        for j, ligne in enumerate(lignes):
+            boites.append(Boite(f"V{i}L{j}", ligne, "vectorized"))
+    return boites
 
 
-    Le filtre 2 seul est INSUFFISANT : un candidat qui n'apparaît qu'une
-    fois co-occurre par construction à 100% avec sa propre ligne d'origine
-    (le ratio ne peut jamais le disqualifier). Le filtre 1 seul serait
-    insuffisant dans l'autre sens : un candidat qui revient plusieurs fois
-    sur la page (ex. plusieurs blocs d'adresse alignés verticalement, mais
-    JAMAIS lus en parallèle d'un autre bloc) passerait la fréquence sans
-    être une vraie colonne de lecture.
-
-
-    Un candidat n'est retenu que s'il passe les DEUX filtres."""
-    if not lignes:
-        return [0.0]
-
-
-    debuts_bruts = [round(min(w.bbox.x0 for w in l), 1) for l in lignes]
-    debuts_uniques = sorted(set(debuts_bruts))
-    if len(debuts_uniques) == 1:
-        return debuts_uniques
-
-
-    # --- Filtre 1 : fréquence propre ---
-    ecarts = [debuts_uniques[i + 1] - debuts_uniques[i] for i in range(len(debuts_uniques) - 1)]
-    seuil = _seuil_bimodal(ecarts, plancher=marge_min, frequence_min=1)
-
-
-    frontieres_candidates = [debuts_uniques[0]]
-    for i in range(len(debuts_uniques) - 1):
-        if debuts_uniques[i + 1] - debuts_uniques[i] > seuil:
-            frontieres_candidates.append(debuts_uniques[i + 1])
-
-
-    frontieres_frequentes = [
-        f for f in frontieres_candidates
-        if sum(1 for d in debuts_bruts if abs(d - f) <= marge_min) >= frequence_min
-    ]
-    if not frontieres_frequentes:
-        return [frontieres_candidates[0]]
-
-
-    # --- Filtre 2 : co-occurrence par bandes horizontales ---
-    # Regroupe chaque LIGNE (pas chaque mot) sous la frontière la plus
-    # proche par valeur inférieure -- réutilise _colonne_de_fragment pour
-    # rester cohérent avec le reste du fichier plutôt que réinventer un
-    # arrondi de x0 séparé.
-    groupes_lignes = defaultdict(list)
-    for l in lignes:
-        idx = _colonne_de_fragment(l, frontieres_frequentes)
-        groupes_lignes[frontieres_frequentes[idx]].append(l)
-
-
-    y_coords = set()
-    for l in lignes:
-        for w in l:
-            y_coords.add(w.bbox.y0)
-            y_coords.add(w.bbox.y1)
-    y_sorted = sorted(y_coords)
-    bandes = [(y_sorted[i], y_sorted[i + 1])
-              for i in range(len(y_sorted) - 1)
-              if y_sorted[i + 1] - y_sorted[i] > 5.0]
-    if not bandes:
-        return [frontieres_frequentes[0]]
-
-
-    presence_par_bande = []
-    for y_start, y_end in bandes:
-        mid_y = (y_start + y_end) / 2
-        presents = set()
-        for f, groupe in groupes_lignes.items():
-            for l in groupe:
-                if any(w.bbox.y0 <= mid_y <= w.bbox.y1 for w in l):
-                    presents.add(f)
-                    break
-        presence_par_bande.append(presents)
-
-
-    frontieres_validees = []
-    for f in frontieres_frequentes:
-        hauteur_totale = sum(
-            (max(w.bbox.y1 for w in l) - min(w.bbox.y0 for w in l))
-            for l in groupes_lignes.get(f, [])
-        )
-        if hauteur_totale == 0:
+def diagnostiquer_absorption(rangees, seuil_ratio=3.0):
+    """Alerte sur les rangées où une boîte est nettement plus haute que les
+    autres membres -- signature du risque qu'une grosse boîte absorbe à
+    tort une petite boîte sans rapport dans sa rangée (cf. RISQUE CONNU,
+    docstring de module). PAS appelée automatiquement par `ordonner()` --
+    fonction pure, sans log ; à appeler explicitement depuis les tests ou
+    le pipeline (QA) si une alerte est souhaitée."""
+    alertes = []
+    for i, rangee in enumerate(rangees):
+        if len(rangee) < 2:
             continue
-        hauteur_en_cooccurrence = sum(
-            (bandes[i][1] - bandes[i][0])
-            for i, presents in enumerate(presence_par_bande)
-            if f in presents and len(presents) > 1
-        )
-        if hauteur_en_cooccurrence / hauteur_totale >= min_cooccurrence_ratio:
-            frontieres_validees.append(f)
+        hauteurs = [(b, b.y1 - b.y0) for b in rangee]
+        h_max = max(h for _, h in hauteurs)
+        h_min = min(h for _, h in hauteurs)
+        if h_min > 0 and h_max / h_min >= seuil_ratio:
+            grosse = next(b for b, h in hauteurs if h == h_max)
+            petite = next(b for b, h in hauteurs if h == h_min)
+            alertes.append((i, grosse, petite, h_max / h_min))
+    return alertes
 
 
-    return frontieres_validees or [frontieres_frequentes[0]]
+def _ordonner_par_boites(boites, seuil=SEUIL_CHEVAUCHEMENT_RANGEE):
+    """Regroupe les boîtes en rangées (chevauchement vertical >= seuil),
+    trie chaque rangée par x0, concatène. Retourne (boîtes dans l'ordre,
+    rangées avant aplatissement) -- le second élément sert uniquement au
+    diagnostic (`diagnostiquer_absorption`).
 
+    Une nouvelle boîte est comparée à la BANDE COMMUNE de la rangée
+    (intersection courante des bornes y de tous les membres déjà admis),
+    PAS à un membre individuel pris isolément. La bande ne peut que
+    RÉTRÉCIR à chaque ajout, jamais s'élargir -- ça borne la dérive à
+    l'ancre initiale de la rangée. Sans ça (comparaison à "n'importe quel
+    membre déjà présent"), une rangée peut dériver transitivement loin de
+    son ancre : A chevauche B, B chevauche C, mais A et C ne se chevauchent
+    jamais -- A, B et C finiraient quand même dans la même rangée, triés
+    par x0 sans rapport avec leur position verticale réelle. Confirmé
+    empiriquement (deux champs sans rapport, colonnes horizontalement
+    éloignées, finissaient dans la même rangée avec la version "any")."""
+    boites_triees = sorted(boites, key=lambda b: b.y0)
+    rangees = []
+    rangee_courante = []
+    bande_y0 = bande_y1 = None
 
-def _colonne_de_fragment(fragment, frontieres):
-    """Un fragment est déjà entièrement dans UNE colonne (c'est le sens de
-    _scinder_ligne) -- on lui trouve la frontière de colonne la plus proche
-    par valeur inférieure, pas un vote mot par mot."""
-    x0 = min(w.bbox.x0 for w in fragment)
-    meilleur = 0
-    for i, f in enumerate(frontieres):
-        if f <= x0 + 1:
-            meilleur = i
-    return meilleur
+    def chevauchement_bande(boite):
+        inter = min(bande_y1, boite.y1) - max(bande_y0, boite.y0)
+        if inter <= 0:
+            return 0.0
+        plus_petite_hauteur = min(bande_y1 - bande_y0, boite.y1 - boite.y0)
+        if plus_petite_hauteur <= 0:
+            return 0.0
+        return inter / plus_petite_hauteur
+
+    for boite in boites_triees:
+        if not rangee_courante:
+            rangee_courante = [boite]
+            bande_y0, bande_y1 = boite.y0, boite.y1
+            continue
+        if chevauchement_bande(boite) >= seuil:
+            rangee_courante.append(boite)
+            bande_y0 = max(bande_y0, boite.y0)
+            bande_y1 = min(bande_y1, boite.y1)
+        else:
+            rangees.append(rangee_courante)
+            rangee_courante = [boite]
+            bande_y0, bande_y1 = boite.y0, boite.y1
+    if rangee_courante:
+        rangees.append(rangee_courante)
+
+    resultat = []
+    for rangee in rangees:
+        resultat.extend(sorted(rangee, key=lambda b: b.x0))
+    return resultat, rangees
 
 
 def ordonner(page) -> list:
     """Retourne des COPIES des mots natifs de `page`, dans l'ordre de
-    lecture réel : tableaux exclus du tri par colonnes, mais réintégrés
-    à la fin pour ne jamais perdre de contenu.
+    lecture réel : tableaux exclus du tri par boîtes/rangées, mais
+    réintégrés à la fin pour ne jamais perdre de contenu.
     """
     tables = page.graphics.tables
 
-    # 1. Séparation : mots hors table (pour tri complexe) vs mots dans table (sauvegarde)
+    # 1. Séparation : mots hors table (pour tri complexe) vs mots dans table
+    #    (sauvegarde) -- inchangé par rapport à l'ancienne version.
     mots_hors_table = [
         deepcopy(w)
         for w in page.native.words
@@ -295,48 +330,22 @@ def ordonner(page) -> list:
         if w.bbox and _dans_un_tableau(w, tables)
     ]
 
-    # 2. Traitement de l'ordre de lecture uniquement sur les mots HORS table
-    lignes_brutes = _grouper_lignes_brutes(mots_hors_table)
-    seuil_scission = _ecart_mot_normal(lignes_brutes)
+    # 2. Séparation natif / vectorisé, construction des boîtes, ordre par
+    #    rangées -- remplace l'ancien tri par colonnes globales.
+    natifs = [w for w in mots_hors_table if not getattr(w, "is_vectorized", False)]
+    vectos = [w for w in mots_hors_table if getattr(w, "is_vectorized", False)]
 
-    lignes = []
-    for l in lignes_brutes:
-        lignes.extend(_scinder_ligne(l, seuil_scission))
+    boites_natives = _construire_boites_natives(natifs)
+    boites_vectorisees = _construire_boites_vectorisees(vectos)
+    toutes_boites = boites_natives + boites_vectorisees
 
-    largeur_max_observee = max(
-        (max(w.bbox.x1 for w in l) - min(w.bbox.x0 for w in l) for l in lignes),
-        default=page.width,
-    )
-
-    lignes_etroites = [l for l in lignes if not _est_pleine_largeur(l, largeur_max_observee)]
-    frontieres = _colonnes_depuis_fragments(lignes_etroites) if lignes_etroites else [0.0]
+    boites_ordonnees, _rangees = _ordonner_par_boites(toutes_boites)
 
     resultat = []
-    tampons = {i: [] for i in range(len(frontieres))}
+    for boite in boites_ordonnees:
+        resultat.extend(_grouper_par_ligne_tolerant(boite.mots))
 
-    def vider_tampons():
-        # On vide en triant (tolérance sur Y pour simuler la ligne)
-        for i in range(len(frontieres)):
-            resultat.extend(sorted(tampons[i], key=lambda w: (round(w.bbox.y0 / 3), w.bbox.x0)))
-            tampons[i] = []
-
-    # Nouvelle logique avec détection des lignes pleine largeur
-    for ligne in lignes:  # dans l'ordre y d'origine (fragments d'une même bande y restent adjacents)
-        if _est_pleine_largeur(ligne, largeur_max_observee):
-            # Termine la lecture des colonnes accumulées AVANT ce bloc --
-            # sinon il s'intercalerait au milieu d'une colonne en cours.
-            vider_tampons()
-            resultat.extend(sorted(ligne, key=lambda w: w.bbox.x0))
-        else:
-            idx = _colonne_de_fragment(ligne, frontieres)
-            tampons[idx].extend(ligne)
-
-    # Vider ce qu'il reste à la fin du document
-    vider_tampons()
-
-    # 3. RÉINTÉGRATION : Ajout des mots de tableau à la suite
-    # Triés simplement par position (y, x) car la structure interne du tableau 
-    # n'est pas encore reconstruite (réservé à resolved.tables dans la roadmap).
+    # 3. RÉINTÉGRATION : Ajout des mots de tableau à la suite (inchangé).
     if mots_dans_table:
         mots_dans_table_tries = sorted(mots_dans_table, key=lambda w: (w.bbox.y0, w.bbox.x0))
         resultat.extend(mots_dans_table_tries)
