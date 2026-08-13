@@ -20,7 +20,7 @@ def render_docx(doc: Document, output_path: str) -> str:
 
         mots = page.resolved.words
         if mots:
-            for ligne in _grouper_mots_en_lignes(mots):
+            for ligne in grouper_par_ligne(mots):
                 texte = " ".join(m.output_text for m in ligne)
                 if texte.strip():
                     docx_doc.add_paragraph(texte)
