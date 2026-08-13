@@ -1,11 +1,10 @@
-#!/usr/bin/env python3
-"""
-rebuild_pdf_v3.py — Prototype v3.
+"""rebuilt_pdf.py — Reconstruction fidèle d'un PDF neuf, texte VISIBLE et
+sélectionnable, à la même position que le source.
 
 Reprend et corrige _copier_images_et_dessins / _inserer_texte de
 faithful_pdf.py (clean_overlay), adaptées pour tourner directement sur le
-JSON (pas de package datacompiler dans ce bac à sable). Correctifs
-appliqués par rapport au faithful_pdf.py uploadé :
+modèle Document (pas de JSON brut). Correctifs appliqués par rapport au
+faithful_pdf.py :
 
   1. bug 'qu'/fitz.Quad : pts = item[1:] -> pts = list(item[1])
   2. fill_opacity=0.015 codé en dur dans _inserer_texte : ici le texte
@@ -23,7 +22,7 @@ appliqués par rapport au faithful_pdf.py uploadé :
      réduite aux seuls glyphes utilisés
 
 ORDRE DE LECTURE : reading_order.ordonner() directement sur native.words,
-pour LES TROIS PAGES, sans exception ni cas particulier par page.
+pour TOUTES les pages, sans exception ni cas particulier par page.
 
 Remplace deux choses de la version précédente, qui reproduisaient encore
 le bug qu'on venait de corriger :
@@ -40,100 +39,68 @@ le bug qu'on venait de corriger :
     font_size=0.0 -- une des deux causes du désalignement de la session
     précédente.
 
-`reading_order.ordonner()` prend `native.words` (qui porte déjà
+`reading_order.ordonner()` prend `page.native.words` (qui porte déjà
 font_size/font/bold/color/resolved_text) et rend une copie triée dans le
 bon ordre -- plus besoin de réappariement du tout, plus besoin de
-`simulate_reading_order.py`. Une seule source de vérité pour les 3 pages.
+`simulate_reading_order.py`. Une seule source de vérité pour toutes les
+pages.
 """
 
-import json
-import sys
+import logging
+from pathlib import Path
 
-import pymupdf as fitz
+import fitz
 
-sys.path.insert(0, '.')
-import reading_order as ro
+from datacompiler.compile.reading_order import ordonner
+from datacompiler.model.document import Document
 
-FONT_REGULAR = "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf"
-FONT_BOLD = "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf"
+logger = logging.getLogger(__name__)
 
-_polices = {}
+# --- Polices embarquées dans le package (backend/fonts/) ---
+# LiberationSans contient le glyphe '€', contrairement au Helvetica de base
+# intégré à PyMuPDF (bug déjà rencontré sur la couche invisible -- ici le
+# texte est VISIBLE, donc l'erreur serait visible aussi).
+_FONTS_DIR = Path(__file__).parent / "fonts"
+_FONT_REGULAR = _FONTS_DIR / "LiberationSans-Regular.ttf"
+_FONT_BOLD = _FONTS_DIR / "LiberationSans-Bold.ttf"
+# Repli si LiberationSans absent (ex. installation minimale) : DejaVuSans
+# contient aussi '€'.
+_FONT_FALLBACK = _FONTS_DIR / "DejaVuSans.ttf"
+
+_polices = {}  # cache global (chemin -> (fitz.Font, nom))
 
 
 def _font_objet(gras):
-    fichier = FONT_BOLD if gras else FONT_REGULAR
+    """Retourne (fitz.Font, nom) pour le style demandé, avec cache."""
+    fichier = _FONT_BOLD if gras else _FONT_REGULAR
     nom = "LiberationSans-Bold" if gras else "LiberationSans"
+    if not fichier.exists():
+        fichier = _FONT_FALLBACK
+        nom = "DejaVuSans"
     if fichier not in _polices:
-        _polices[fichier] = (fitz.Font(fontfile=fichier), nom)
+        _polices[fichier] = (fitz.Font(fontfile=str(fichier)), nom)
     return _polices[fichier]
 
 
 def _hex_to_rgb(hex_color):
-    hex_color = (hex_color or "#000000").lstrip("#")
-    if len(hex_color) != 6:
+    """Convertit '#RRGGBB' ou '#RRGGBBAA' en tuple RGB(A) normalisé 0..1."""
+    if not hex_color or not isinstance(hex_color, str):
         return (0, 0, 0)
-    return tuple(int(hex_color[i:i + 2], 16) / 255 for i in (0, 2, 4))
+    hex_color = hex_color.lstrip("#")
+    if len(hex_color) == 6:
+        r, g, b = int(hex_color[0:2], 16), int(hex_color[2:4], 16), int(hex_color[4:6], 16)
+        return (r / 255.0, g / 255.0, b / 255.0)
+    elif len(hex_color) == 8:
+        r, g, b, a = int(hex_color[0:2], 16), int(hex_color[2:4], 16), int(hex_color[4:6], 16), int(hex_color[6:8], 16)
+        return (r / 255.0, g / 255.0, b / 255.0, a / 255.0)
+    return (0, 0, 0)
 
 
-# --- Adaptateurs minimalistes dict JSON -> objets attendus par reading_order.py ---
-# reading_order.ordonner() attend des objets avec .bbox.x0/.y0/.x1/.y1,
-# .block, .is_vectorized, et page.native.words / page.graphics.tables.
-# On garde une référence au dict JSON d'origine (`_d`) pour ne rien perdre
-# des champs (font_size, font, bold, color, resolved_text...) dont
-# `inserer_mot` a besoin en aval -- ordonner() ne fait que réordonner,
-# jamais de recalcul de champs.
+def _copier_images_et_dessins(src_page, dst_page, report, exclure=None):
+    """Copie les images et dessins vectoriels du source vers la page de
+    destination.
 
-class _BBox:
-    def __init__(self, d):
-        self.x0, self.y0, self.x1, self.y1 = d["x0"], d["y0"], d["x1"], d["y1"]
-
-
-class _Word:
-    def __init__(self, d):
-        self._d = d
-        self.text = d.get("resolved_text") or d.get("text") or ""
-        self.bbox = _BBox(d["bbox"]) if d.get("bbox") else None
-        self.block = d.get("block")
-        self.is_vectorized = bool(d.get("is_vectorized"))
-
-
-class _Table:
-    def __init__(self, d):
-        self.bbox = _BBox(d["bbox"]) if d.get("bbox") else None
-
-
-class _Native:
-    def __init__(self, words):
-        self.words = words
-
-
-class _Graphics:
-    def __init__(self, tables):
-        self.tables = tables
-
-
-class _Page:
-    def __init__(self, page_json):
-        self.native = _Native([_Word(w) for w in page_json["native"]["words"]])
-        self.graphics = _Graphics([_Table(t) for t in page_json["graphics"]["tables"]])
-
-
-def ordre_page(document_json, numero):
-    """Ordre de lecture réel d'une page, directement depuis native.words --
-    remplace à la fois `resolved.words tel quel` (ancien moteur, pages 1/3)
-    et `simulate_reading_order` + réappariement par position (page 2) de la
-    version précédente. Retourne les dicts JSON d'origine (mêmes clés que
-    resolved.words : bbox, font_size, font, bold, color, resolved_text...),
-    juste réordonnés -- `inserer_mot` n'a besoin d'aucun changement."""
-    page_json = next(p for p in document_json["pages"] if p["number"] == numero)
-    mots_ordonnes = ro.ordonner(_Page(page_json))
-    return [w._d for w in mots_ordonnes]
-
-
-def copier_images_et_dessins(src_page, dst_page, report, exclure=None):
-    """Version corrigée de _copier_images_et_dessins (faithful_pdf.py).
-
-    `exclure` : liste de bbox (dict x0/y0/x1/y1) des mots reconstruits/
+    `exclure` : liste de bbox (objets BBox) des mots reconstruits/
     vectorisés (is_vectorized/reconstructed). Un groupe de dessin dont le
     rectangle englobant tombe majoritairement dans une de ces bbox est un
     tracé de GLYPHE (le mot a été vectorisé puis OCRisé, donc ce n'est pas
@@ -149,12 +116,13 @@ def copier_images_et_dessins(src_page, dst_page, report, exclure=None):
         if rect is None:
             return False
         for b in exclure:
-            zone = fitz.Rect(b["x0"], b["y0"], b["x1"], b["y1"])
+            zone = fitz.Rect(b.x0, b.y0, b.x1, b.y1)
             inter = rect & zone
             if not inter.is_empty and inter.get_area() >= 0.6 * rect.get_area():
                 return True
         return False
 
+    # --- Images ---
     for img in src_page.get_images():
         xref = img[0]
         rects = src_page.get_image_rects(xref)
@@ -171,9 +139,10 @@ def copier_images_et_dessins(src_page, dst_page, report, exclure=None):
             else:
                 report["images_ignorees"] += 1
         except Exception as e:
-            print(f"  échec copie image xref {xref}: {e}", file=sys.stderr)
+            logger.warning("Échec copie image xref %s : %s", xref, e)
             report["images_ignorees"] += 1
 
+    # --- Dessins vectoriels ---
     shape = dst_page.new_shape()
     dessins_ignores = 0
     dessins_exclus_glyphes = 0
@@ -215,7 +184,7 @@ def copier_images_et_dessins(src_page, dst_page, report, exclure=None):
     report["dessins_exclus_glyphes"] = report.get("dessins_exclus_glyphes", 0) + dessins_exclus_glyphes
 
 
-def inserer_mot(etat, page_rect, mot, report):
+def _inserer_mot(etat, page_rect, mot, report):
     """Ajoute le mot à un fitz.TextWriter. insert_text() crée un NOUVEAU
     content stream à chaque appel (confirmé : 322 objets stream rien que
     pour les ~317 mots de la page 1) -- TextWriter accumule en mémoire et
@@ -231,79 +200,93 @@ def inserer_mot(etat, page_rect, mot, report):
     quand la couleur CHANGE dans la séquence -- l'ordre est préservé, et
     comme la couleur change rarement (2 couleurs sur tout le document,
     quelques transitions par page), le nombre de streams reste bas.
-
-    NOTE (désalignement Numéro/fiscal, session précédente) : pas touché
-    ici volontairement -- pris en charge séparément.
     """
-    texte = mot.get("resolved_text") or mot.get("text") or ""
+    texte = mot.resolved_text or mot.text or ""
     if not texte.strip():
         return
-    bbox = mot["bbox"]
-    gras = bool(mot.get("bold")) or "bold" in (mot.get("font") or "").lower()
+    bbox = mot.bbox
+    if bbox is None:
+        return
+    gras = bool(mot.bold) or "bold" in (mot.font or "").lower()
     police, nom_police = _font_objet(gras)
 
-    taille_nominale = mot.get("font_size") or 0.0
+    taille_nominale = mot.font_size or 0.0
     if not taille_nominale:
-        taille_nominale = max(4.0, bbox["y1"] - bbox["y0"])
+        taille_nominale = max(4.0, bbox.y1 - bbox.y0)
         report["taille_heuristique"] += 1
 
-    largeur_cible = max(bbox["x1"] - bbox["x0"], 0.1)
+    largeur_cible = max(bbox.x1 - bbox.x0, 0.1)
     largeur_rendue = police.text_length(texte, fontsize=taille_nominale)
     taille = (taille_nominale * (largeur_cible / largeur_rendue)
               if largeur_rendue else taille_nominale)
 
-    couleur_cle = mot.get("color") or "#000000"
+    couleur_cle = mot.color or "#000000"
     if couleur_cle != etat["couleur_cle"]:
         etat["segments"].append((etat["couleur_cle"], etat["tw"]))
         etat["tw"] = fitz.TextWriter(page_rect)
         etat["couleur_cle"] = couleur_cle
 
-    point = fitz.Point(bbox["x0"], bbox["y1"])
+    point = fitz.Point(bbox.x0, bbox.y1)
     etat["tw"].append(point, texte, font=police, fontsize=taille)
     report["mots_inseres"] += 1
 
 
-def main():
-    with open("/mnt/user-data/uploads/test-impots-revenu_document.json", encoding="utf-8") as f:
-        document_json = json.load(f)
+def render_rebuilt_pdf(doc: Document, output_path: str, source_pdf: str = None, dpi: int = 300) -> str:
+    """Reconstruit un PDF neuf, texte visible et sélectionnable, à la même
+    position que le source.
 
-    source = fitz.open("/mnt/user-data/uploads/test-impots-revenu.pdf")
+    - Copie les images et dessins du PDF source (en excluant les tracés de
+      glyphes des mots vectorisés/OCRisés, pour éviter la double impression).
+    - Réinjecte le texte résolu dans l'ordre de lecture réel
+      (reading_order.ordonner sur native.words), à la même position.
+    - Utilise LiberationSans (embarquée dans le package) pour couvrir '€'.
+
+    Retourne le chemin du fichier écrit.
+    """
+    source_path = source_pdf or doc.metadata.source_pdf
+    if not source_path:
+        raise ValueError("Le chemin du PDF source est requis (doc.metadata.source_pdf).")
+
+    source = fitz.open(source_path)
+    if len(source) != len(doc.pages):
+        source.close()
+        raise ValueError("Le PDF source et Document n'ont pas le même nombre de pages.")
+
     output = fitz.open()
+    try:
+        for src_page, model_page in zip(source, doc.pages):
+            dst_page = output.new_page(width=src_page.rect.width, height=src_page.rect.height)
 
-    for src_page, page_json in zip(source, document_json["pages"]):
-        num = page_json["number"]
-        dst_page = output.new_page(width=src_page.rect.width, height=src_page.rect.height)
+            report = {"images_copiees": 0, "images_ignorees": 0, "dessins_ignores": 0,
+                      "mots_inseres": 0, "taille_heuristique": 0}
 
-        report = {"images_copiees": 0, "images_ignorees": 0, "dessins_ignores": 0,
-                   "mots_inseres": 0, "taille_heuristique": 0}
+            # Bbox des mots reconstruits/vectorisés : leurs tracés de glyphes
+            # dans le source ne doivent pas être recopiés (double impression).
+            bbox_vectorisees = [w.bbox for w in model_page.resolved.words
+                                if w.bbox and (w.reconstructed or w.is_vectorized
+                                               or w.source == "ocr_vectoriel")]
+            _copier_images_et_dessins(src_page, dst_page, report, exclure=bbox_vectorisees)
 
-        bbox_vectorisees = [w["bbox"] for w in page_json["resolved"]["words"]
-                            if w.get("reconstructed") or w.get("is_vectorized")
-                            or w.get("source") == "ocr_vectoriel"]
-        copier_images_et_dessins(src_page, dst_page, report, exclure=bbox_vectorisees)
+            # Ordre de lecture réel, directement depuis native.words.
+            ordre = ordonner(model_page)
 
-        ordre = ordre_page(document_json, num)
+            writers = {"tw": fitz.TextWriter(dst_page.rect), "couleur_cle": "#000000",
+                       "segments": []}
+            for mot in ordre:
+                _inserer_mot(writers, dst_page.rect, mot, report)
+            writers["segments"].append((writers["couleur_cle"], writers["tw"]))
+            for couleur_cle, tw in writers["segments"]:
+                tw.write_text(dst_page, color=_hex_to_rgb(couleur_cle), render_mode=0, opacity=1.0)
 
-        writers = {"tw": fitz.TextWriter(dst_page.rect), "couleur_cle": "#000000",
-                   "segments": []}
-        for mot in ordre:
-            inserer_mot(writers, dst_page.rect, mot, report)
-        writers["segments"].append((writers["couleur_cle"], writers["tw"]))
-        for couleur_cle, tw in writers["segments"]:
-            tw.write_text(dst_page, color=_hex_to_rgb(couleur_cle), render_mode=0, opacity=1.0)
+            logger.info("page %s : %s", model_page.number, report)
 
-        print(f"page {num}: {report}", file=sys.stderr)
+        Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+        output.set_metadata({"producer": "DataCompiler rebuilt_pdf",
+                             "title": doc.metadata.filename})
+        output.subset_fonts()  # police embarquée réduite aux seuls glyphes utilisés
+        output.save(output_path, garbage=4, deflate=True)
+    finally:
+        output.close()
+        source.close()
 
-    output.set_metadata({"producer": "DataCompiler rebuild_pdf_v3 (prototype)",
-                         "title": "test-impots-revenu"})
-    output.subset_fonts()  # vérifié empiriquement : texte identique avant/après
-                           # (get_text() comparé sur les 3 pages), -63% -> -10%
-                           # de la part police dans le budget total du fichier
-    output.save("/home/claude/rebuild_v3.pdf", garbage=4, deflate=True)
-    source.close()
-    output.close()
-    print("écrit rebuild_v3.pdf", file=sys.stderr)
-
-
-if __name__ == "__main__":
-    main()
+    return output_path
