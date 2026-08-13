@@ -9,8 +9,7 @@ import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
-from . import reading_order as ro
-
+import reading_order as ro
 
 class BBox:
     def __init__(self, x0, y0, x1, y1):
