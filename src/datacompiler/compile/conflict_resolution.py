@@ -146,7 +146,7 @@ def resoudre_page(unites: list) -> list:
             # PROBLÈME OUVERT, documenté plutôt que masqué : ce mot n'existe
             # que côté OCR, donc SANS bbox (Mistral ne fournit pas de bbox
             # au niveau mot, cf. ocr.py). Tous les renderers actuels
-            # (faithful_pdf via _grouper_mots_en_lignes, markdown, html)
+            # (faithful_pdf via grouper_par_ligne, markdown, html)
             # filtrent sur `if w.bbox` -- un Word sans bbox y est donc
             # aujourd'hui silencieusement invisible. On l'ajoute quand même
             # à resolved.words pour ne pas perdre l'information dans le
