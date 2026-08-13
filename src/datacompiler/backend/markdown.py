@@ -1,20 +1,20 @@
 """markdown.py — Rendu Markdown, EXCLUSIVEMENT depuis page.resolved (jamais
 native/ocr directement). Extrait de l'ancien render.py, logique inchangée à
-part l'import de _grouper_mots_en_lignes (désormais output/layout.py, avec
+part l'import de grouper_par_ligne (désormais output/layout.py, avec
 le correctif de tri décrit dans ce module)."""
 
 from datacompiler.model.document import Document
 from datacompiler.compile.layout import grouper_par_ligne
 
 
-def rendre_markdown(doc: Document) -> str:
+def render_markdown(doc: Document) -> str:
     morceaux = ["<!-- rendu depuis : resolved -->\n"]
 
     for page in doc.pages:
         morceaux.append(f"\n## Page {page.number}\n")
         mots = page.resolved.words
         if mots:
-            lignes = _grouper_mots_en_lignes(mots)
+            lignes = grouper_par_ligne(mots)
             for ligne in lignes:
                 morceaux.append(" ".join(w.output_text for w in ligne))
             morceaux.append("")
