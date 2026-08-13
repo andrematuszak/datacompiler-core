@@ -34,7 +34,7 @@ INTERLIGNE = 14.0
 _LARGEUR_PAGE, _HAUTEUR_PAGE = fitz.paper_size("a4")
 
 
-def render_rebuilt_pdf(doc: Document, output_path: str) -> str:
+def render_flow_pdf(doc: Document, output_path: str) -> str:
     output = fitz.open()
     _font_objet(_FALLBACK_FONTNAME, _FALLBACK_FONTFILE)  # charge/vérifie la police avant d'écrire
 
@@ -57,7 +57,7 @@ def render_rebuilt_pdf(doc: Document, output_path: str) -> str:
         ecrire(f"Page {page.number}", fontsize=TAILLE_TITRE)
         etat["y"] += INTERLIGNE * 0.4
 
-        for ligne in _grouper_mots_en_lignes(page.resolved.words):
+        for ligne in grouper_par_ligne(page.resolved.words):
             ecrire(" ".join(m.output_text for m in ligne))
 
         for table in page.resolved.tables:
