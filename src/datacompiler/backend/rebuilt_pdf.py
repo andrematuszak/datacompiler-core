@@ -20,6 +20,15 @@ faithful_pdf.py :
      `inserer_mot`, ça détruirait l'ordre de lecture)
   5. output.subset_fonts() juste avant la sauvegarde -- police embarquée
      réduite aux seuls glyphes utilisés
+  6. calibrage de ligne de base par ligne visuelle (`_calibrer_lignes_de_base`,
+     repris de rebuild_pdf_2.py, adapté : `is_vectorized` plutôt que
+     `source == "native"`, ce dernier n'étant peuplé que sur resolved.words
+     et pas encore sur native.words à ce stade) -- corrige le flottement
+     mot par mot des libellés OCR vectorisés (bbox d'encre, pas de métrique
+     de ligne partagée). Ne corrige PAS la sous-estimation de taille de
+     police des mots reconstruits (heuristique bbox_height dans
+     `_inserer_mot`, toujours en l'état) -- problème distinct, pas encore
+     traité ici.
 
 ORDRE DE LECTURE : reading_order.ordonner() directement sur native.words,
 pour TOUTES les pages, sans exception ni cas particulier par page.
@@ -94,6 +103,72 @@ def _hex_to_rgb(hex_color):
         r, g, b, a = int(hex_color[0:2], 16), int(hex_color[2:4], 16), int(hex_color[4:6], 16), int(hex_color[6:8], 16)
         return (r / 255.0, g / 255.0, b / 255.0, a / 255.0)
     return (0, 0, 0)
+
+
+def _calibrer_lignes_de_base(ordre, tolerance=3.0):
+    """Calcule une ligne de base COMMUNE par ligne visuelle, au lieu
+    d'utiliser bbox.y1 de chaque mot individuellement.
+
+    Diagnostic (confirmé sur "Avis d'impôt établi en 2021" et "Numéro
+    fiscal (C) : 13...") : les bbox des mots vectorisés/OCR sont des
+    boîtes d'encre SERRÉES -- leur hauteur dépend de si LE MOT LUI-MÊME
+    contient une descendante (ex. le 'p' de "impôt") ou une ascendante,
+    pas d'une métrique de ligne partagée. Résultat : au sein d'une même
+    ligne visuelle, des mots sans descendante ("Avis", "établi") ont un
+    y1 significativement plus petit (~2pt, soit 20-25% de la taille de
+    police) qu'un mot avec descendante ("d'impôt") -- d'où le "flottement"
+    mot par mot observé.
+
+    ATTENTION (bug rencontré et corrigé) : un premier essai groupait par
+    simple proximité y0 sur TOUTE la page, sans notion de colonne -- "011"
+    (colonne de gauche) s'est retrouvé fusionné avec "Somme qui vous est
+    remboursée" (bandeau bleu à droite, y0 quasi identique mais colonne
+    totalement différente), lui collant une ligne de base aberrante.
+    Correctif : parcourir `ordre` (déjà dans l'ordre de lecture, qui
+    respecte les colonnes/blocs) SÉQUENTIELLEMENT plutôt que trier par y0
+    global -- deux mots consécutifs dans l'ordre de lecture appartiennent
+    quasi toujours à la même ligne visuelle ; deux mots coïncidant en y0
+    mais dans des blocs différents ne seront jamais adjacents dans `ordre`.
+
+    ADAPTATION par rapport à rebuild_pdf_2.py (JSON) : cette version opère
+    sur `ordre` = retour de `ordonner(model_page)`, donc des mots issus de
+    `native.words` -- `source` n'y est PAS encore peuplé ("native"/
+    "ocr_vectoriel" n'existe que sur resolved.words, après résolution).
+    Utilise `is_vectorized` (peuplé dès l'extraction) à la place --
+    équivalent logique, fiable aux deux stades.
+
+    Retourne un dict id(mot) -> y_ligne_de_base.
+    """
+    candidats = [w for w in ordre if w.bbox]
+
+    lignes = []
+    ligne_courante = None
+    for w in candidats:
+        b = w.bbox
+        meme_ligne = (
+            ligne_courante is not None
+            and abs(b.y0 - ligne_courante["y0_ref"]) <= tolerance
+            and b.x0 >= ligne_courante["x1_max"] - 5.0  # évite de rattacher
+        )                                                # un retour à la
+        if meme_ligne:                                   # ligne suivante
+            ligne_courante["mots"].append(w)
+            ligne_courante["x1_max"] = max(ligne_courante["x1_max"], b.x1)
+        else:
+            ligne_courante = {"y0_ref": b.y0, "x1_max": b.x1, "mots": [w]}
+            lignes.append(ligne_courante)
+
+    baseline_par_id = {}
+    for ligne in lignes:
+        mots_ligne = ligne["mots"]
+        natifs = [w for w in mots_ligne if not w.is_vectorized]
+        if natifs:
+            y1s = sorted(w.bbox.y1 for w in natifs)
+            baseline = y1s[len(y1s) // 2]  # médiane
+        else:
+            baseline = max(w.bbox.y1 for w in mots_ligne)
+        for w in mots_ligne:
+            baseline_par_id[id(w)] = baseline
+    return baseline_par_id
 
 
 def _copier_images_et_dessins(src_page, dst_page, report, exclure=None):
@@ -184,7 +259,7 @@ def _copier_images_et_dessins(src_page, dst_page, report, exclure=None):
     report["dessins_exclus_glyphes"] = report.get("dessins_exclus_glyphes", 0) + dessins_exclus_glyphes
 
 
-def _inserer_mot(etat, page_rect, mot, report):
+def _inserer_mot(etat, page_rect, mot, baseline_par_id, report):
     """Ajoute le mot à un fitz.TextWriter. insert_text() crée un NOUVEAU
     content stream à chaque appel (confirmé : 322 objets stream rien que
     pour les ~317 mots de la page 1) -- TextWriter accumule en mémoire et
@@ -226,7 +301,7 @@ def _inserer_mot(etat, page_rect, mot, report):
         etat["tw"] = fitz.TextWriter(page_rect)
         etat["couleur_cle"] = couleur_cle
 
-    point = fitz.Point(bbox.x0, bbox.y1)
+    point = fitz.Point(bbox.x0, baseline_par_id.get(id(mot), bbox.y1))
     etat["tw"].append(point, texte, font=police, fontsize=taille)
     report["mots_inseres"] += 1
 
@@ -269,11 +344,12 @@ def render_rebuilt_pdf(doc: Document, output_path: str, source_pdf: str = None, 
 
             # Ordre de lecture réel, directement depuis native.words.
             ordre = ordonner(model_page)
+            baseline_par_id = _calibrer_lignes_de_base(ordre)
 
             writers = {"tw": fitz.TextWriter(dst_page.rect), "couleur_cle": "#000000",
                        "segments": []}
             for mot in ordre:
-                _inserer_mot(writers, dst_page.rect, mot, report)
+                _inserer_mot(writers, dst_page.rect, mot, baseline_par_id, report)
             writers["segments"].append((writers["couleur_cle"], writers["tw"]))
             for couleur_cle, tw in writers["segments"]:
                 tw.write_text(dst_page, color=_hex_to_rgb(couleur_cle), render_mode=0, opacity=1.0)
