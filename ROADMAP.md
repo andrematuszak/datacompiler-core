@@ -1,45 +1,103 @@
-Priorisation de liste
-À faire en premier (P0 — bloquant pour la suite)
-Layout & reading order (_colonnes_depuis_fragments) — c'est le seul bug de correction encore confirmé et non corrigé de toute la session. Tant qu'il traîne, chaque nouveau test sur un fichier différent va potentiellement re-déclencher la même confusion qu'on a eue aujourd'hui (bug de tri vs bug de contenu). Je le remettrais en tête, précisément parce qu'on sait maintenant l'isoler proprement (simulation + comparaison à resolved.words).
-Continuer les tests sur le corpus — c'est la méthode qui a produit tous les résultats de cette session. Vu l'échéance d'octobre, chaque heure de test structuré sur un nouveau fichier du corpus vaut probablement plus qu'une heure de nouvelle fonctionnalité.
-Ensuite (P1 — sert directement la suite proche)
-Comprendre l'architecture de tests/ (conftest, les différents test_*) — tant que tu ne sais pas ce que ces tests couvrent déjà, tu risques de dupliquer du travail ou de rater une régression qu'un test existant aurait attrapée.
-Gestion d'erreurs (try/except) — utile, mais je la mettrais après la stabilisation des tests : ajouter des try maintenant, avant de savoir ce qui doit lever une erreur vs. être toléré, risque de masquer de nouveaux bugs plutôt que de les rendre visibles.
-P2 — utile mais peut attendre
-Fix du lien Tesseract macOS ancien (/usr/local) — trivial, deux lignes, à faire dès que tu y penses, pas besoin de bloc dédié.
-Diagnostic texte-dans-image (ex. "Liberté Égalité Fraternité") — intéressant, mais c'est un nouvel axe de détection, pas une correction : à traiter une fois que layout/reading-order est stable, sinon tu superposes un nouveau signal sur une base encore mouvante.
-Comparaison d'OCR (PaddleOCR, merge.py) — bon pour l'article (une vraie section "comparaison" est un plus pour un papier), mais ce n'est utile qu'une fois que le pipeline actuel est fiable — comparer des moteurs OCR sur un pipeline qui a encore un bug de tri connu va brouiller les résultats.
-Refacto architecture backend/__init__.py — je la reporterais après le test d'un deuxième moteur OCR : refactoriser pour "mieux accueillir plusieurs backends" avant d'en avoir un deuxième réel, c'est概evenir de la sur-ingénierie sur une hypothèse.
-P3 — vraiment plus tard
-Perf (5s/23s Mac, beaucoup plus long Windows) — pas urgent tant que ça reste utilisable pour toi en dev, mais voir piste ci-dessous.
-Zones ombragées (Polygon, List dans mistral.py) — à explorer en fond de tiroir, pas de deadline.
-Une petite correction sur un point de ta liste
-Sur "232 Ko → 130 Ko, supprimer les vecteurs ou compresser" : je ne pense pas que ce soit les vecteurs le coupable. Les vecteurs appartiennent au PDF source — on ne les touche pas, render_faithful_pdf en mode overlay ouvre le PDF tel quel et rajoute une couche par-dessus. Le surpoids vient presque certainement de deux choses ajoutées par nous : (1) le contenu du flux de page pour chaque objet texte invisible inséré (potentiellement des centaines d'appels insert_text, un par mot + un par espace), et (2) le sous-ensemble de police DejaVu Sans embarqué (subset_fonts() réduit déjà, mais une police Unicode même sous-ensemblée pour du français accentué + € pèse son poids). Avant de choisir "supprimer" vs "compresser", je testerais isolément : rendre un PDF avec la couche invisible désactivée entièrement, comparer sa taille au 130 Ko d'origine — si l'écart est déjà là, la police est en cause plus que le texte lui-même.
-Nouveaux axes que je rajouterais
-Un test de non-régression pour le bug qu'on vient de corriger. Concrètement : ouvrir test-impots-revenu_propre.pdf, extraire le texte avec pdfplumber/PyMuPDF, et vérifier que le nombre de mots extraits du PDF de sortie correspond à len(page.resolved.words) — pas plus. C'est un test cheap à écrire et qui aurait détecté ce bug précis en une exécution, avant même le copier-coller manuel.
-Généraliser ce test en garde-fou systématique, au-delà de ce seul fichier : un check qui compare, pour chaque page de chaque fichier du corpus, "nombre de mots dans resolved.words" vs "nombre de mots extractibles du PDF rendu". Ça attrape toute la classe de bug (JSON juste / rendu qui ment), pas seulement ce cas précis — utile pour la suite, vu que faithful_pdf.py va probablement encore évoluer.
-L'écart de perf Windows/Mac (23s → 2min) a une piste concrète à tester avant de conclure "il faut un GPU". ocraliser_zone est appelée une fois par zone détectée (potentiellement des dizaines par page dense), et chaque appel spawn un sous-processus tesseract via pytesseract. La création de processus est structurellement bien plus lente sur Windows que sur macOS/Linux (pas de fork, overhead du loader Win32) — ça peut suffire à expliquer un facteur x5 sans qu'aucune ligne de code ne soit "mauvaise". Avant d'investir dans un GPU, je mesurerais le nombre d'appels ocraliser_zone sur ce fichier et le temps par appel isolément des deux côtés — si c'est bien l'overhead de spawn, la solution est de regrouper plusieurs zones en un seul appel Tesseract (une image composite), pas du matériel.
-Vu ton contexte pro (traduction pharma/médical/juridique, confidentialité client) : un garde-fou explicite qui empêche un appel Mistral accidentel sur un document client réel — par exemple un test qui vérifie qu'aucune requête réseau sortante n'est faite quand MISTRAL_API_KEY n'est pas définie, ou un flag --local-only qui lève une erreur plutôt que de silencieusement basculer sur Mistral si la clé traîne dans l'environnement. Ce n'est pas un axe technique passionnant, mais une fuite accidentelle vers une API tierce sur un document confidentiel serait un vrai problème professionnel, pas juste un bug.
-Ne pas perdre la limite connue sur page.rotation (signalée il y a plusieurs tours : rendre_zone_image clippe en coordonnées brutes sans tenir compte de la rotation). Ce n'est pas urgent tant qu'aucun fichier test n'a ce cas, mais vu que tu élargis le corpus, ça vaut la peine de la garder visible dans ta liste plutôt que dans un coin de mémoire — sinon elle ressort comme "nouveau bug mystère" dans six mois.
+# ROADMAP — Priorités du projet
 
-La liste est solide dans l'ensemble, et je suis d'accord avec la structure générale. Deux ajustements avant de foncer, et une réponse directe à ta question à la fin.
-Un point qui mérite d'être remonté : le garde-fou Mistral
-Il est en P2/nouveaux axes dans la liste, mais je le remonterais en P1, voire juste après _colonnes_depuis_fragments. Pas pour une raison technique — pour une raison de risque asymétrique : c'est le seul point de toute la liste où une régression silencieuse a une conséquence hors code (fuite d'un document client confidentiel vers une API tierce), pas juste un bug à corriger au prochain test. Le coût de l'ajouter est trivial (un check d'environnement au démarrage), le coût de ne pas l'avoir le jour où ça arrive ne l'est pas. Vu ton contexte pro cité dans la liste, je ne le laisserais pas traîner en bas de pile.
-Sur le test de non-régression proposé : bon réflexe, mais il ne couvre qu'une moitié du problème
-Le test "nombre de mots dans resolved.words == nombre de mots extractibles du PDF rendu" attrape exactement le bug qu'on vient de corriger (duplication par couche invisible superposée). Mais il ne peut pas attraper un bug d'ordre — si _colonnes_depuis_fragments remet du texte dans le mauvais ordre, le compte de mots reste identique, ce test resterait vert. Ce sont deux classes de bug différentes qui ont besoin de deux tests différents :
-Comptage (déjà proposé) → attrape les doublons/pertes.
-Séquence (à esquisser une fois la correction faite) → comparerait l'ordre relatif d'un petit jeu de mots-repères connus (ex. vérifier que "CTIOI/DIRECTION" sort bien avant "particulier" dans le flux, pas après) plutôt que le compte brut.
-Je ferais le test de comptage maintenant (rapide, verrouille la victoire du jour), et je noterais le test de séquence comme suite logique une fois qu'on aura confirmé la correction de l'ordre — pas besoin de l'écrire avant d'avoir un comportement stable à figer.
-Sur _colonnes_depuis_fragments : on ne sait pas encore si le correctif proposé a réellement été validé
-Petit rappel important avant de foncer : je t'avais proposé un correctif (frequence_min dans _colonnes_depuis_fragments) il y a plusieurs échanges. Ta réponse "nope toujours le même constat" concernait en réalité le faux problème de duplication — pas ce correctif-là spécifiquement, puisqu'on s'est fait piéger sur la mauvaise piste entre-temps. Donc à ce stade, je ne sais pas avec certitude si ce correctif est appliqué dans ton reading_order.py actuel, ni s'il a réglé le problème d'ordre observé au tout début ("CTIOI GÉNÉRALE... après 28 548").
-Avant de considérer ce point "en cours de correction", il faut revérifier avec le même script de diagnostic qu'on avait déjà construit (celui qui affiche colonne=X y0=Y "texte").
-Envoi de reading order
+## 🚨 URGENT
 
-Me confirmer/renvoyer le reading_order.py tel qu'il est chez toi maintenant,
-Relancer ce script de diagnostic dessus,
-pour qu'on sache si on part d'une correction à appliquer, ou d'une correction à valider ?
-Réponse à ta question
-Oui pour les deux, dans cet ordre précis :
-Vérifier l'état réel de _colonnes_depuis_fragments (via le script diagnostic) avant de toucher au code — pour ne pas corriger un fichier qui l'est peut-être déjà, ou l'inverse.
-Écrire le test de comptage pendant que le sujet "faithful_pdf" est encore frais, pour verrouiller la victoire d'aujourd'hui avant de changer de fichier.
+### 1. Améliorer le rendu sur `rebuilt`
+- Travailler la qualité du rendu du PDF reconstruit (`rebuilt_pdf.py`).
+- Vérifier la fidélité visuelle et la cohérence du flux par rapport au document source.
 
+### 2. Refaire ce ROADMAP.md
+- Intégrer les nouveaux changements et refléter les priorités actuelles du projet.
+- (Ce point est la tâche en cours — le document est mis à jour.)
+
+### 3. Débogage : images non extraites
+- Comprendre pourquoi certaines images ne sont pas extraites du PDF source.
+- Isoler le cas (images encodées, formats, surfaces, etc.) et corriger l'extraction.
+
+### 4. Diagnostic texte-dans-image + raffinement
+- **Objectif :** "Liberté Égalité Fraternité" dans `test-impots-revenu.pdf` doit être détecté.
+- Développer le diagnostic texte-dans-image (`image_text_probe.py`).
+- Raffiner le diagnostic selon les résultats des tests.
+- Étendre aux autres outils de diagnostic.
+- Enchaîner sur la **reconnaissance OCR des images** une fois le diagnostic stable.
+
+### 5. Comparaison d'OCR + merge
+- Comparer les moteurs OCR entre eux (Tesseract, PaddleOCR, Mistral).
+- Utiliser la fonction `merge.py` pour une correction croisée des résultats.
+- Bénéfice direct pour l'article (section "comparaison" d'OCR).
+
+### 6. Outil de niveau de confiance
+- Développer l'outil de niveau de confiance (`confidence.py`).
+- Réfléchir et implémenter l'UI associée pour présenter ce niveau à l'utilisateur.
+
+### 7. Détection de tableaux
+- Développer et consolider la détection de tableaux (`table_reconstruction.py`).
+
+### 8. Axe JSON central
+- Définir le **format entrant** et le **format sortant** du JSON.
+- Organiser la structure du JSON.
+- Intégrer le **diagnostic** dans le JSON.
+- Définir la structure globale de l'axe JSON central.
+
+---
+
+## ✏️ TYPO
+
+### 1. Refaire les `__init__.py`
+- Nettoyer et harmoniser les fichiers `__init__.py` de tous les modules.
+
+### 2. Zones "ombragées" inutilisées
+- Regarder toutes les zones ombragées dans tous les fichiers et voir comment les utiliser :
+  - `Polygon` dans `document.py`
+  - `List` dans `mistral.py`
+- (Ex-zone "P3" de l'ancien roadmap, remontée en priorité.)
+
+### 3. Confidentialité des fonctions
+- Ajouter un `_` devant les fonctions devant rester privées.
+- Normaliser la visibilité des méthodes à travers le code.
+
+---
+
+## 🛡️ Garde-fous & points de vigilance (à ne pas perdre)
+
+### Garde-fou Mistral / confidentialité client
+- **Priorité haute** (risque asymétrique) : empêcher tout appel Mistral accidentel sur un document client réel.
+- Test : vérifier qu'aucune requête réseau sortante n'est faite quand `MISTRAL_API_KEY` n'est pas définie.
+- Ajouter un flag `--local-only` qui lève une erreur plutôt que basculer silencieusement sur Mistral si la clé traîne dans l'environnement.
+- *Contexte : traduction pharma/médical/juridique — une fuite serait un vrai problème professionnel, pas un bug.*
+
+### Test de non-régression (comptage) — à écrire
+- Ouvrir `test-impots-revenu_propre.pdf`, extraire le texte (pdfplumber/PyMuPDF),
+- Vérifier que le nombre de mots extraits du PDF de sortie == `len(page.resolved.words)`.
+- Généraliser ensuite : check systématique "nb de mots dans `resolved.words`" vs "nb de mots extractibles du PDF rendu" sur tout le corpus.
+
+### Test de séquence (suite logique)
+- Le test de comptage ne détecte pas les bugs d'**ordre**.
+- Comparer l'ordre relatif de mots-repères connus (ex. "CTIOI/DIRECTION" avant "particulier").
+- À écrire une fois le comportement d'ordre stabilisé.
+
+### Limite connue — `page.rotation`
+- `render_zone_image` clippe en coordonnées brutes sans tenir compte de la rotation.
+- Pas urgent tant qu'aucun fichier du corpus ne présente ce cas, mais à garder visible.
+
+### Layout & reading order (`_colonnes_depuis_fragments`)
+- Dernier bug de correction confirmé. À traiter en priorité car il fausse tous les tests suivants.
+- À revérifier avec le script de diagnostic (affichage `colonne=X y0=Y "texte"`) avant toute modification.
+
+---
+
+## 📈 Pistes & observations (contexte)
+
+### Perf OCR (Windows vs Mac)
+- Piste : `ocralliser_zone` appelée une fois par zone, chaque appel spawn un sous-processus Tesseract.
+- La création de processus est structurellement plus lente sur Windows (pas de fork) — peut expliquer un facteur x5.
+- Avant d'investir dans un GPU : mesurer le nombre d'appels `ocralliser_zone` et le temps par appel isolément.
+- Solution possible si confirmé : regrouper plusieurs zones en un seul appel Tesseract (image composite).
+
+### Taille des PDF (232 Ko → 130 Ko)
+- Les vecteurs ne sont pas le coupable (ils appartiennent au PDF source).
+- Le surpoids vient probablement : (1) du contenu du flux de page pour chaque objet texte invisible inséré, (2) du sous-ensemble de police DejaVu Sans embarqué.
+- Tester isolément : rendre un PDF avec la couche invisible désactivée, comparer la taille.
+
+### Architecture backend
+- Refactoriser `backend/__init__.py` seulement après l'intégration d'un deuxième moteur OCR réel (éviter la sur-ingénierie sur hypothèse).
