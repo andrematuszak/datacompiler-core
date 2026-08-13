@@ -15,10 +15,11 @@ pas -- pipeline.py continue à l'appeler à part, comme avant.
 from pathlib import Path
 
 from .docx import render_docx
-from .html import rendre_html
-from .markdown import rendre_markdown
+from .html import render_html
+from .markdown import render_markdown
 from .rebuilt_pdf import render_rebuilt_pdf
-
+from .flow_pdf import render_flow_pdf
+from .rebuilt_pdf import render_rebuilt_pdf
 
 def _ecrire_texte(fonction_rendu):
     def wrapper(doc, output_path):
@@ -28,16 +29,26 @@ def _ecrire_texte(fonction_rendu):
     return wrapper
 
 
-FORMATS = {
-    "markdown": _ecrire_texte(rendre_markdown),
-    "html": _ecrire_texte(rendre_html),
-    "docx": render_docx,
-    "rebuilt-pdf": render_rebuilt_pdf,
-}
-
 EXTENSIONS = {
+    "overlay": "pdf",
+    "clean_overlay": "pdf",
+    "rasterized": "pdf",
+    "flow": "pdf",
+    "rebuilt": "pdf",
     "markdown": "md",
     "html": "html",
     "docx": "docx",
-    "rebuilt-pdf": "pdf",
 }
+
+FORMATS = {
+    "overlay": lambda doc, path: render_faithful_pdf(doc, path, strategy="overlay"),
+    "clean_overlay": lambda doc, path: render_faithful_pdf(doc, path, strategy="clean_overlay"),
+    "rasterized": lambda doc, path: render_faithful_pdf(doc, path, strategy="rasterized"),
+    "flow": render_flow_pdf,
+    "rebuilt": render_rebuilt_pdf,
+    "markdown": render_markdown,
+    "html": render_html,
+    "docx": render_docx,
+}
+
+FORMATS["faithful-pdf"] = FORMATS["overlay"]
