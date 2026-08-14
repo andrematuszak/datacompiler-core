@@ -3,8 +3,12 @@ venv/
 .venv/
 env/
 ENV/
+venv-deepseek/
+.env/
+.envexperiments/
 
 # --- Python & Caches ---
+*.pyc
 __pycache__/
 *.py[cod]
 *$py.class
@@ -21,6 +25,7 @@ ehthumbs.db
 Thumbs.db
 .vscode/
 .idea/
+resultats/
 
 # --- Build, Packaging & Distribution ---
 build/
@@ -40,14 +45,15 @@ eggs/
 *_propre.json
 *document.json
 *repomap.json
+*.json
 
 # --- Sensible & Secrets ---
 anciens/
 apps/
 experiments/
+resultats/
 sources/
 utils/
-.envexperiments/
 .aider*
 .editorconfig
 .continue.ctx
