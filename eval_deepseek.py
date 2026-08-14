@@ -3,7 +3,18 @@ import json
 import os
 from datetime import datetime
 from lm_eval import evaluator, tasks
-from lm_eval.models.ollama import OllamaLM
+# eval_deepseek.py
+from lm_eval import evaluator, tasks
+from lm_eval.models.huggingface import HFLM
+
+# Utiliser HFLM avec Ollama comme backend
+model = HFLM(
+    pretrained="deepseek-ai/deepseek-coder-6.7b-instruct",
+    device="cpu"  # ou "mps" si vous avez un Mac M1/M2/M3
+)
+
+# Ou si vous voulez vraiment utiliser le modèle Ollama
+# Il faut d'abord installer transformers
 
 # Configuration
 MODEL_NAME = "deepseek-coder:6.7b"
