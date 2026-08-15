@@ -315,7 +315,7 @@ def render_rebuilt_pdf(doc: Document, output_path: str, source_pdf: str = None,
             )
 
             # Ordre de lecture réel, directement depuis native.words
-            ordre = ordonner(model_page, simple_sort=True)  # copies, ordre correct
+            ordre = ordonner(model_page)
             baseline_par_id = _calibrer_lignes(ordre)
 
             # Insérer les mots avec TextWriter (un writer par couleur)
