@@ -264,7 +264,7 @@ def _inserer_mot(etat, page_rect, mot, baseline_par_id, report):
 
 
 def render_rebuilt_pdf(doc: Document, output_path: str, source_pdf: str = None,
-                       dpi: int = 300) -> str:
+                       dpi: int = 300, simple_sort=False) -> str:
     """
     Reconstruit un PDF neuf, texte visible et sélectionnable, à la même
     position que le source.
@@ -315,7 +315,7 @@ def render_rebuilt_pdf(doc: Document, output_path: str, source_pdf: str = None,
             )
 
             # Ordre de lecture réel, directement depuis native.words
-            ordre = ordonner(model_page)
+            ordre = ordonner(model_page, simple_sort=True)  # copies, ordre correct
             baseline_par_id = _calibrer_lignes(ordre)
 
             # Insérer les mots avec TextWriter (un writer par couleur)
