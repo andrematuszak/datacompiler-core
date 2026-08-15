@@ -12,7 +12,7 @@ modèle Document (pas de JSON brut). Correctifs appliqués :
   4. fitz.TextWriter au lieu d'insert_text() mot par mot — un writer par
      segment de couleur contiguë, pas un writer par couleur globale
   5. output.subset_fonts() juste avant la sauvegarde
-  6. calibrage de ligne de base par ligne visuelle (`_calibrer_lignes_de_base`)
+  6. calibrage de ligne de base par ligne visuelle (`_calibrer_lignes`)
   7. échantillonnage des couleurs des glyphes vectoriels pour les mots
      blancs sur fond bleu (les mots vectorisés ont `color="#000000"` dans
      le JSON, mais sont en réalité blancs)
@@ -67,7 +67,7 @@ def _hex_to_rgb(hex_color):
     return (0, 0, 0)
 
 
-def _calibrer_lignes_de_base(ordre, tolerance=3.0):
+def _calibrer_lignes(ordre, tolerance=3.0):
     """
     Calcule une ligne de base COMMUNE par ligne visuelle, au lieu
     d'utiliser bbox.y1 de chaque mot individuellement.
@@ -316,7 +316,7 @@ def render_rebuilt_pdf(doc: Document, output_path: str, source_pdf: str = None,
 
             # Ordre de lecture réel, directement depuis native.words
             ordre = ordonner(model_page)
-            baseline_par_id = _calibrer_lignes_de_base(ordre)
+            baseline_par_id = _calibrer_lignes(ordre)
 
             # Insérer les mots avec TextWriter (un writer par couleur)
             writers = {
