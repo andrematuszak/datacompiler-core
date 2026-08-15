@@ -310,12 +310,16 @@ def _ordonner_par_boites(boites, seuil=SEUIL_CHEVAUCHEMENT_RANGEE):
     return resultat, rangees
 
 
-def ordonner(page) -> list:
+def ordonner(page, simple_sort=False) -> list:
     """Retourne des COPIES des mots natifs de `page`, dans l'ordre de
     lecture réel : tableaux exclus du tri par boîtes/rangées, mais
     réintégrés à la fin pour ne jamais perdre de contenu.
     """
     tables = page.graphics.tables
+
+    if simple_sort:
+    # Tri géographique de base : haut → bas, gauche → droite
+        return sorted(page.native.words, key=lambda w: (w.bbox.y0, w.bbox.x0))
 
     # 1. Séparation : mots hors table (pour tri complexe) vs mots dans table
     #    (sauvegarde) -- inchangé par rapport à l'ancienne version.

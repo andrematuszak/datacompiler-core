@@ -96,7 +96,7 @@ def _snapshot(etape, page, mots, max_exemples=6):
 
 def _resoudre_page(page):
     n_page = getattr(page, "number", "?")
-    mots_ordonnes = reading_order.ordonner(page)
+    mots_ordonnes = reading_order.ordonner(page, simple_sort=True)
     _snapshot("reading_order.ordonner", page, mots_ordonnes)
 
     mots_normalises = typography.normaliser(mots_ordonnes)    # ligatures + césures
