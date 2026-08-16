@@ -302,10 +302,14 @@ def render_rebuilt_pdf(doc: Document, output_path: str, source_pdf: str = None,
                 "taille_heuristique": 0,
             }
 
+            # Ordre de lecture réel, directement depuis native.words
+            ordre = model_page.resolved.words
+            baseline_par_id = _calibrer_lignes(ordre)
+
             # Bbox des mots reconstruits/vectorisés : leurs tracés de glyphes
             # dans le source ne doivent pas être recopiés (double impression).
             mots_exclus = [
-                w for w in model_page.resolved.words
+                w for w in ordre
                 if w.bbox and (w.reconstructed or w.is_vectorized or w.source == "ocr_vectoriel")
             ]
 
@@ -313,10 +317,6 @@ def render_rebuilt_pdf(doc: Document, output_path: str, source_pdf: str = None,
             couleurs_echantillonnees = _copier_images_et_dessins(
                 src_page, dst_page, report, exclure=mots_exclus
             )
-
-            # Ordre de lecture réel, directement depuis native.words
-            ordre = ordonner(model_page)
-            baseline_par_id = _calibrer_lignes(ordre)
 
             # Insérer les mots avec TextWriter (un writer par couleur)
             writers = {
