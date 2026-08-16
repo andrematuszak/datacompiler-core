@@ -45,6 +45,20 @@ _PSM_BLOC_UNIFORME = 6    # traite l'image comme un bloc de texte uniforme -- me
 _CARACTERES_BRUIT_BORDURE = set("|[]{}_\\/~")
 _CONFIANCE_MIN = 0.30  # filtre le bruit restant (texte réellement illisible)
 
+# Empiriquement (test-impots-revenu.pdf, ~140 mots ocr_vectoriel inspectés
+# via diagnostic_ocr_zone_reel.py) : aucun token légitime de 1-2 caractères
+# ne dépasse ~3.9pt de largeur par caractère (chiffres isolés, ponctuation,
+# lettres seules -- ex. "0", "*", "«", "R*"). Un pictogramme lu comme un
+# seul glyphe "fusionné" est nettement plus large -- cas confirmé : une
+# icône téléphone lue "Î" à 10.6pt/car., avec une confiance (0.57) qui ne
+# déclenche PAS _CONFIANCE_MIN : la géométrie est le seul signal qui
+# distingue ce cas, la confiance ne suffit pas.
+# ⚠️ Seuil validé sur UN SEUL document pour l'instant -- à surveiller si
+# des faux positifs apparaissent sur un corpus plus large (ex. un sigle ou
+# une initiale isolée dans une police très grasse/large).
+_LARGEUR_MAX_PT_PAR_CARACTERE_TOKEN_COURT = 7.0
+_LONGUEUR_MAX_TOKEN_COURT = 2  # ne s'applique qu'aux tokens courts, seuls testés empiriquement
+
 
 def _extraire_tesseract(image, lang, psm):
     donnees = pytesseract.image_to_data(image, lang=lang, config=f"--psm {psm}", output_type=pytesseract.Output.DICT)
@@ -74,6 +88,22 @@ def _bruit_bordure(texte):
     ponctuation isolée -- quasi toujours une ligne de grille de tableau mal
     lue par PSM 6, pas un vrai mot. Exclu indépendamment de la confiance."""
     return all(c in _CARACTERES_BRUIT_BORDURE for c in texte)
+
+
+def _glyphe_isole_suspect(texte: str, largeur_pt: float) -> bool:
+    """True si `texte` est un token court (<= 2 caractères) dont la
+    largeur (en points PDF, déjà convertie depuis les pixels) par
+    caractère dépasse la fourchette observée sur du texte réel -- signe
+    probable d'un pictogramme/icône lu comme un seul glyphe plutôt que du
+    texte. Exclu indépendamment de la confiance, même logique que
+    _bruit_bordure : la géométrie prime sur la confiance ici.
+
+    Appliqué uniquement côté OCR de zone ciblée (_ocraliser_zone_image) --
+    pas côté OCR page entière (_parser_image), ce dernier n'ayant pas été
+    testé avec ce filtre."""
+    if not texte or len(texte) > _LONGUEUR_MAX_TOKEN_COURT:
+        return False
+    return (largeur_pt / len(texte)) > _LARGEUR_MAX_PT_PAR_CARACTERE_TOKEN_COURT
 
 
 def _extraire_deux_passes(image, lang):
@@ -125,6 +155,12 @@ def _ocraliser_zone_image(image, lang: str, dpi: int, offset: tuple = (0.0, 0.0)
         y = dy + m["y0"] / scale
         largeur = (m["x1"] - m["x0"]) / scale
         hauteur = (m["y1"] - m["y0"]) / scale
+        # Filtre géométrique (pictogrammes lus comme texte, ex. "Î") --
+        # cf. docstring de _glyphe_isole_suspect. Indépendant de la
+        # confiance : un mot comme "Î" peut avoir une confiance normale
+        # (0.57 observé) tout en étant un faux positif géométrique.
+        if _glyphe_isole_suspect(m["text"], largeur):
+            continue
         mots.append(Word(
             id=-1,  # renumérotation finale par compile/compiler.py
             text=m["text"],
@@ -143,7 +179,12 @@ def _parser_image(image, lang: str, scale: float) -> list:
     """Fait tourner Tesseract sur UNE image déjà rendue (stratégie à deux
     passes, cf. _extraire_deux_passes) et retourne une liste de Word --
     séparé de ocraliser() pour être testable directement avec une image
-    (PNG/PIL), sans dépendre de fitz pour la conversion PDF -> image."""
+    (PNG/PIL), sans dépendre de fitz pour la conversion PDF -> image.
+
+    N'applique PAS le filtre _glyphe_isole_suspect (contrairement à
+    _ocraliser_zone_image) : ce filtre n'a été validé que sur l'OCR de
+    zone ciblée, pas sur l'OCR page entière -- à évaluer séparément si des
+    artefacts similaires apparaissent sur ce chemin de code."""
     mots_bruts = _extraire_deux_passes(image, lang)
     mots = []
     for m in mots_bruts:
@@ -192,4 +233,3 @@ class TesseractBackend(OcrBackend):
       
     def ocraliser_zone(self, image, offset: tuple = (0.0, 0.0), lang: str = None, dpi: int = None, **kwargs) -> list:
         return _ocraliser_zone_image(image, lang or self.lang, dpi or self.dpi, offset)
-    
