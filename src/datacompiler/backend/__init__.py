@@ -14,12 +14,11 @@ pas -- pipeline.py continue à l'appeler à part, comme avant.
 
 from pathlib import Path
 
-from .docx import render_docx
-from .html import render_html
-from .markdown import render_markdown
-from .rebuilt_pdf import render_rebuilt_pdf
-from .flow_pdf import render_flow_pdf
-from .rebuilt_pdf import render_rebuilt_pdf
+from datacompiler.backend.rebuilt_docx import render_docx
+from datacompiler.backend.rebuilt_html import render_html
+from datacompiler.backend.rebuilt_markdown import render_markdown
+from datacompiler.backend.rebuilt_pdf import render_rebuilt_pdf
+from datacompiler.backend.flow_pdf import render_flow_pdf
 
 def _ecrire_texte(fonction_rendu):
     def wrapper(doc, output_path):
