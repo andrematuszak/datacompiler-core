@@ -3,7 +3,6 @@ compile (arbitrage native/OCR), backend (rendu)."""
 
 import argparse
 import logging
-import os
 from pathlib import Path
 
 from datacompiler.frontend.diagnostic.vector_text import zones_texte_vectorise_probable
@@ -36,15 +35,13 @@ def executer_pipeline(pdf_path, strategy="overlay", sauver_json=True,
         getattr(doc.diagnostic, "recommend_ocr", False)
     )
 
-    if doc.diagnostic.recommend_ocr and (api_key := os.getenv("MISTRAL_API_KEY")):
-        logger.info("[3/6] Appel OCR...")
-        ocraliser(doc, pdf_path, backend_name="mistral", api_key=api_key)
-    elif doc.diagnostic.recommend_ocr:
-        logger.warning("[3/6] OCR recommandé, mais MISTRAL_API_KEY absent : poursuite avec le texte natif.")
+    if doc.diagnostic.recommend_ocr:
+        logger.info("[3/6] OCR page entière (Tesseract)...")
+        ocraliser(doc, pdf_path, backend_name="tesseract", lang=tesseract_lang, dpi=dpi)
     else:
         logger.info("[3/6] OCR non nécessaire.")
 
-    # Indépendant de MISTRAL_API_KEY et de recommend_ocr (page-entière) :
+    # Indépendant de recommend_ocr (page-entière) :
     # cible uniquement les zones de texte vectorisé repérées par
     # diagnostic/vector_text.py, comble un vide géométrique plutôt
     # qu'arbitrer un désaccord natif/OCR. No-op silencieux si aucune zone
