@@ -1,0 +1,235 @@
+"""tesseract_backend.py — OCR local (Tesseract), utile pour un client qui
+refuse d'envoyer ses documents à un tiers (Mistral = API distante). Qualité
+généralement inférieure à Mistral sur mise en page complexe/polices
+inhabituelles, mais aucune dépendance réseau ni exposition du document.
+
+Différence structurelle IMPORTANTE avec Mistral : Tesseract donne une bbox
+ET une confiance PAR MOT (via pytesseract.image_to_data), alors que Mistral
+ne donne de bbox qu'au niveau bloc/paragraphe (cf. resolve/alignment.py,
+qui documente cette limite pour Mistral). Avec ce backend, un vrai
+alignement GÉOMÉTRIQUE mot-à-mot devient possible -- pas implémenté ici
+(alignment.py actuel aligne par texte/séquence, ce qui reste valide avec ce
+backend aussi), mais c'est une direction à explorer si la précision de
+repositionnement des corrections devient un besoin.
+
+Dépendances : pytesseract, Pillow, et le binaire `tesseract` installé sur
+le système (PAS un paquet pip -- `apt install tesseract-ocr` ou équivalent).
+"""
+
+import io
+
+import fitz
+import pytesseract
+from PIL import Image
+
+from datacompiler.model.document import BBox, Document, Word
+from datacompiler.frontend.ocr.base import OcrBackend
+
+import sys
+import shutil   
+
+# Ne définir le chemin manuellement QUE si Tesseract n'est pas trouvé dans le PATH
+if not shutil.which("tesseract"):
+    if sys.platform == "win32":
+        pytesseract.pytesseract.tesseract_cmd = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
+    elif sys.platform == "darwin":
+        pytesseract.pytesseract.tesseract_cmd = "/opt/homebrew/bin/tesseract"
+
+_PSM_LAYOUT_GENERAL = 3   # défaut Tesseract : segmentation automatique de page -- bonne mise en page générale
+_PSM_BLOC_UNIFORME = 6    # traite l'image comme un bloc de texte uniforme -- meilleur sur les tableaux denses de chiffres
+
+# Tokens purement ponctuation/bordure, quasi toujours des artefacts de
+# grille de tableau mal lue plutôt que du vrai contenu -- exclus
+# INDÉPENDAMMENT de la confiance : certains ont une confiance élevée malgré
+# tout (confirmé en pratique sur un vrai scan : des "|" à plus de 90%).
+_CARACTERES_BRUIT_BORDURE = set("|[]{}_\\/~")
+_CONFIANCE_MIN = 0.30  # filtre le bruit restant (texte réellement illisible)
+
+# Empiriquement (test-impots-revenu.pdf, ~140 mots ocr_vectoriel inspectés
+# via diagnostic_ocr_zone_reel.py) : aucun token légitime de 1-2 caractères
+# ne dépasse ~3.9pt de largeur par caractère (chiffres isolés, ponctuation,
+# lettres seules -- ex. "0", "*", "«", "R*"). Un pictogramme lu comme un
+# seul glyphe "fusionné" est nettement plus large -- cas confirmé : une
+# icône téléphone lue "Î" à 10.6pt/car., avec une confiance (0.57) qui ne
+# déclenche PAS _CONFIANCE_MIN : la géométrie est le seul signal qui
+# distingue ce cas, la confiance ne suffit pas.
+# ⚠️ Seuil validé sur UN SEUL document pour l'instant -- à surveiller si
+# des faux positifs apparaissent sur un corpus plus large (ex. un sigle ou
+# une initiale isolée dans une police très grasse/large).
+_LARGEUR_MAX_PT_PAR_CARACTERE_TOKEN_COURT = 7.0
+_LONGUEUR_MAX_TOKEN_COURT = 2  # ne s'applique qu'aux tokens courts, seuls testés empiriquement
+
+
+def _extraire_tesseract(image, lang, psm):
+    donnees = pytesseract.image_to_data(image, lang=lang, config=f"--psm {psm}", output_type=pytesseract.Output.DICT)
+    mots = []
+    for j in range(len(donnees["text"])):
+        texte = donnees["text"][j].strip()
+        if not texte:
+            continue
+        conf_brute = float(donnees["conf"][j])
+        confiance = conf_brute / 100.0 if conf_brute >= 0 else None
+        mots.append({
+            "text": texte,
+            "x0": donnees["left"][j], "y0": donnees["top"][j],
+            "x1": donnees["left"][j] + donnees["width"][j],
+            "y1": donnees["top"][j] + donnees["height"][j],
+            "confidence": confiance,
+        })
+    return mots
+
+
+def _chevauche(a, b):
+    return not (a["x1"] <= b["x0"] or b["x1"] <= a["x0"] or a["y1"] <= b["y0"] or b["y1"] <= a["y0"])
+
+
+def _bruit_bordure(texte):
+    """True si le token n'est composé QUE de caractères de bordure/
+    ponctuation isolée -- quasi toujours une ligne de grille de tableau mal
+    lue par PSM 6, pas un vrai mot. Exclu indépendamment de la confiance."""
+    return all(c in _CARACTERES_BRUIT_BORDURE for c in texte)
+
+
+def _glyphe_isole_suspect(texte: str, largeur_pt: float) -> bool:
+    """True si `texte` est un token court (<= 2 caractères) dont la
+    largeur (en points PDF, déjà convertie depuis les pixels) par
+    caractère dépasse la fourchette observée sur du texte réel -- signe
+    probable d'un pictogramme/icône lu comme un seul glyphe plutôt que du
+    texte. Exclu indépendamment de la confiance, même logique que
+    _bruit_bordure : la géométrie prime sur la confiance ici.
+
+    Appliqué uniquement côté OCR de zone ciblée (_ocraliser_zone_image) --
+    pas côté OCR page entière (_parser_image), ce dernier n'ayant pas été
+    testé avec ce filtre."""
+    if not texte or len(texte) > _LONGUEUR_MAX_TOKEN_COURT:
+        return False
+    return (largeur_pt / len(texte)) > _LARGEUR_MAX_PT_PAR_CARACTERE_TOKEN_COURT
+
+
+def _extraire_deux_passes(image, lang):
+    """Fusionne deux passes Tesseract : PSM 3 en base, complété par tout ce
+    que PSM 6 trouve dans les zones où PSM 3 n'a RIEN détecté du tout (pas
+    de chevauchement de bbox).
+
+    Découvert sur un vrai scan (test8, compte de copropriété) : PSM 3 seul
+    rate systématiquement les colonnes de montants d'un tableau de charges
+    -- visibles à l'œil nu dans le scan, absentes du résultat par défaut,
+    pas un problème de qualité d'image. PSM 6 seul les récupère mais perd
+    certains éléments de mise en page générale (ex. un titre en bandeau
+    "RESIDENCE ..." disparaît). Fusionner plutôt que choisir un seul mode --
+    même principe que le seuil adaptatif de reading_order.py : une seule
+    stratégie globale ne suffit pas partout sur la page."""
+    mots_a = _extraire_tesseract(image, lang, psm=_PSM_LAYOUT_GENERAL)
+    mots_b = _extraire_tesseract(image, lang, psm=_PSM_BLOC_UNIFORME)
+
+    ajouts = [b for b in mots_b if not any(_chevauche(a, b) for a in mots_a)]
+    fusion = mots_a + ajouts
+
+    fusion = [
+        m for m in fusion
+        if not _bruit_bordure(m["text"])
+        and (m["confidence"] is None or m["confidence"] >= _CONFIANCE_MIN)
+    ]
+
+    # Retrié par position (haut->bas, gauche->droite) : les ajouts PSM 6
+    # sont sinon en vrac à la fin de la liste, ce qui nuirait à
+    # l'alignement séquentiel natif<->OCR de resolve/alignment.py (qui
+    # suppose les deux flux dans un ordre de lecture approximativement
+    # comparable). Tri simple, pas la logique de colonnes de
+    # reading_order.py -- suffisant ici, l'alignement se fait par texte
+    # pas par position exacte.
+    fusion.sort(key=lambda m: (round(m["y0"] / 10), m["x0"]))
+    return fusion
+
+
+def _ocraliser_zone_image(image, lang: str, dpi: int, offset: tuple = (0.0, 0.0)) -> list:
+    """OCRise UNE image déjà croppée (zone précise, pas la page) et
+    translate les bbox résultantes dans le repère de la PAGE COMPLÈTE,
+    pas celui du crop -- `offset` = (x0, y0) de la zone dans la page, en
+    points PDF, tel que fourni par vector_text.py."""
+    scale = dpi / 72.0
+    dx, dy = offset
+    mots = []
+    for m in _extraire_deux_passes(image, lang):
+        x = dx + m["x0"] / scale
+        y = dy + m["y0"] / scale
+        largeur = (m["x1"] - m["x0"]) / scale
+        hauteur = (m["y1"] - m["y0"]) / scale
+        # Filtre géométrique (pictogrammes lus comme texte, ex. "Î") --
+        # cf. docstring de _glyphe_isole_suspect. Indépendant de la
+        # confiance : un mot comme "Î" peut avoir une confiance normale
+        # (0.57 observé) tout en étant un faux positif géométrique.
+        if _glyphe_isole_suspect(m["text"], largeur):
+            continue
+        mots.append(Word(
+            id=-1,  # renumérotation finale par compile/compiler.py
+            text=m["text"],
+            resolved_text=m["text"],
+            bbox=BBox(x, y, x + largeur, y + hauteur),
+            confidence=m["confidence"],
+            source="ocr_vectoriel",
+            is_vectorized=True,
+            reconstructed=True,
+            notes=["texte vectorisé récupéré par OCR ciblé (zone crop)"],
+        ))
+    return mots
+
+
+def _parser_image(image, lang: str, scale: float) -> list:
+    """Fait tourner Tesseract sur UNE image déjà rendue (stratégie à deux
+    passes, cf. _extraire_deux_passes) et retourne une liste de Word --
+    séparé de ocraliser() pour être testable directement avec une image
+    (PNG/PIL), sans dépendre de fitz pour la conversion PDF -> image.
+
+    N'applique PAS le filtre _glyphe_isole_suspect (contrairement à
+    _ocraliser_zone_image) : ce filtre n'a été validé que sur l'OCR de
+    zone ciblée, pas sur l'OCR page entière -- à évaluer séparément si des
+    artefacts similaires apparaissent sur ce chemin de code."""
+    mots_bruts = _extraire_deux_passes(image, lang)
+    mots = []
+    for m in mots_bruts:
+        x = m["x0"] / scale
+        y = m["y0"] / scale
+        largeur = (m["x1"] - m["x0"]) / scale
+        hauteur = (m["y1"] - m["y0"]) / scale
+        mots.append(Word(
+            id=len(mots) + 1,
+            text=m["text"],
+            bbox=BBox(x, y, x + largeur, y + hauteur),  # bbox réelle, contrairement à Mistral
+            confidence=m["confidence"],
+            source="tesseract",
+        ))
+    return mots
+
+
+class TesseractBackend(OcrBackend):
+    name = "tesseract"
+
+    def __init__(self, lang: str = "fra", dpi: int = 300):
+        self.lang = lang
+        self.dpi = dpi
+
+    def ocraliser(self, doc: Document, pdf_path: str, pages: list = None, **kwargs) -> Document:
+        source = fitz.open(pdf_path)
+        scale = self.dpi / 72.0
+        matrix = fitz.Matrix(scale, scale)
+
+        try:
+            for i, page_obj in enumerate(doc.pages):
+                # Contrairement à Mistral, Tesseract tourne PAGE PAR PAGE --
+                # `pages` est ici un VRAI filtre, pas juste indicatif.
+                if pages is not None and page_obj.number not in pages:
+                    continue
+
+                pix = source[i].get_pixmap(matrix=matrix, alpha=False)
+                image = Image.open(io.BytesIO(pix.tobytes("png")))
+
+                page_obj.ocr.engine = f"tesseract-{self.lang}"
+                page_obj.ocr.words = _parser_image(image, self.lang, scale)  # ré-appel idempotent : remplace, n'accumule pas
+        finally:
+            source.close()
+    
+        return doc
+      
+    def ocraliser_zone(self, image, offset: tuple = (0.0, 0.0), lang: str = None, dpi: int = None, **kwargs) -> list:
+        return _ocraliser_zone_image(image, lang or self.lang, dpi or self.dpi, offset)
