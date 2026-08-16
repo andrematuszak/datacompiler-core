@@ -303,7 +303,7 @@ def render_rebuilt_pdf(doc: Document, output_path: str, source_pdf: str = None,
             }
 
             # Ordre de lecture réel, directement depuis native.words
-            ordre = model_page.resolved.words
+            ordre = ordonner(model_page)
             baseline_par_id = _calibrer_lignes(ordre)
 
             # Bbox des mots reconstruits/vectorisés : leurs tracés de glyphes
