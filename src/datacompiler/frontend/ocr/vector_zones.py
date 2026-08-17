@@ -1,8 +1,8 @@
 """vector_zones.py — Orchestration de l'OCR ciblé sur les zones de texte
 vectorisé détectées par diagnostic/vector_text.py.
 
-Différence avec ocr/tesseract.py en mode page entière :
-celui-ci fait remplir page.ocr, en attente d'un arbitrage dans compile/
+Différence avec ocr/tesseract.py et ocr/mistral.py en mode page entière :
+ceux-là remplissent page.ocr, en attente d'un arbitrage dans compile/
 (alignment.py + conflict_resolution.py) contre page.native.words existant.
 Ici il n'y a RIEN à arbitrer -- pas de désaccord, un vide géométrique à
 combler. Les mots produits sont donc injectés directement dans
@@ -11,7 +11,8 @@ du pipeline compile/ : ils traversent reading_order/typography comme
 n'importe quel mot natif, sans jamais passer par alignment.py.
 
 Nécessite un backend exposant ocraliser_zone() (cf. ocr/base.py) --
-aujourd'hui seul TesseractBackend le fait (bbox par mot).
+aujourd'hui seul TesseractBackend le fait (bbox par mot). Fonctionne donc
+indépendamment de MISTRAL_API_KEY.
 """
 
 import fitz
