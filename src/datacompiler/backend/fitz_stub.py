@@ -68,10 +68,13 @@ class TextWriter:
     def append(self, point, text, font=None, fontsize=None):
         self.appended.append((point, text, font, fontsize))
 
-    def write_text(self, page, color=None, render_mode=None, opacity=None):
+    def write_text(self, page, color=None, render_mode=None, opacity=None, morph=None):
         page.writes.append({
-            "color": color, "render_mode": render_mode,
-            "opacity": opacity, "items": list(self.appended),
+            "color": color,
+            "render_mode": render_mode,
+            "opacity": opacity,
+            "morph": morph,
+            "items": list(self.appended),
         })
 
 
