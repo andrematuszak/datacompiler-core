@@ -8,7 +8,7 @@ Usage :
     backend.ocraliser(doc, pdf_path, pages=[3, 4])
 
     # Ou via le helper direct :
-    ocraliser(doc, pdf_path, backend_name="tesseract")
+    ocraliser(doc, pdf_path, backend_name="mistral")
 """
 
 from datacompiler.frontend.ocr.base import OcrBackend
@@ -29,7 +29,7 @@ def get_backend(name: str, **kwargs) -> OcrBackend:
     return BACKENDS[name](**kwargs)
 
 
-def ocraliser(doc, pdf_path: str, backend_name: str = "tesseract", pages: list = None, **kwargs):
+def ocraliser(doc, pdf_path: str, backend_name: str = "mistral", pages: list = None, **kwargs):
     """Point d'entrée global pour exécuter l'OCR sur un document."""
     backend = get_backend(backend_name, **kwargs)
     return backend.ocraliser(doc, pdf_path, pages=pages, **kwargs)
