@@ -16,8 +16,13 @@ modèle Document (pas de JSON brut). Correctifs appliqués :
   7. échantillonnage des couleurs des glyphes vectoriels pour les mots
      blancs sur fond bleu (les mots vectorisés ont `color="#000000"` dans
      le JSON, mais sont en réalité blancs)
-  8. Ordre de lecture : reading_order.ordonner() sur native.words pour
-     TOUTES les pages (une seule source de vérité)
+  8. Ordre de lecture et texte final : lus depuis page.resolved.words (la
+     sortie de compile/compiler.py -- déjà en ordre de lecture, césures et
+     ligatures fusionnées, arbitrage natif/OCR appliqué), PAS recalculés
+     ici. Auparavant ce module rappelait reading_order.ordonner()
+     directement sur native.words, un jeu de mots différent de
+     resolved.words -- corrigé, cf. commentaire inline dans
+     render_rebuilt_pdf() pour le détail du bug que ça causait.
 
 La fonction render_rebuilt_pdf() est l'entrée principale, appelée depuis pipeline.py.
 """
@@ -27,7 +32,6 @@ from pathlib import Path
 
 import fitz
 
-from datacompiler.compile.reading_order import ordonner
 from datacompiler.model.document import Document
 
 logger = logging.getLogger(__name__)
@@ -271,8 +275,9 @@ def render_rebuilt_pdf(doc: Document, output_path: str, source_pdf: str = None,
 
     - Copie les images et dessins du PDF source (en excluant les tracés de
       glyphes des mots vectorisés/OCRisés).
-    - Réinjecte le texte résolu dans l'ordre de lecture réel
-      (reading_order.ordonner sur native.words), à la même position.
+    - Réinjecte page.resolved.words (sortie de compile/compiler.py --
+      déjà en ordre de lecture, césures/ligatures fusionnées, arbitrage
+      natif/OCR appliqué), à la même position.
     - Calibre les lignes de base pour un alignement vertical parfait.
     - Échantillonne les couleurs des glyphes vectoriels.
     - Utilise LiberationSans (embarquée) pour couvrir '€'.
@@ -302,8 +307,26 @@ def render_rebuilt_pdf(doc: Document, output_path: str, source_pdf: str = None,
                 "taille_heuristique": 0,
             }
 
-            # Ordre de lecture réel, directement depuis native.words
-            ordre = ordonner(model_page)
+            # Source unique : page.resolved.words, la sortie de
+            # compile/compiler.py (resoudre(doc), appelé en amont dans
+            # pipeline.py avant le rendu). DÉJÀ en ordre de lecture
+            # (reading_order.ordonner tourne en premier dans
+            # compiler._resoudre_page), césures fusionnées et ligatures
+            # normalisées (typography.normaliser), et arbitrage natif/OCR
+            # appliqué (alignment + conflict_resolution) si de l'OCR
+            # page-entière était disponible.
+            #
+            # AVANT : ce module rappelait reading_order.ordonner()
+            # directement sur page.native.words -- un jeu de mots
+            # DIFFÉRENT de resolved.words (qui les copie puis les modifie
+            # en aval). Le PDF rendu ne reflétait alors AUCUNE correction
+            # produite par compile/ (fusion de césure en particulier :
+            # resolved.words a moins de mots que native.words dès qu'une
+            # ligne se termine par un trait d'union), d'où un écart de
+            # contenu entre le PDF et le JSON, détecté par
+            # test_regression_word_count.py sur pratiquement tout document
+            # contenant au moins une césure de fin de ligne.
+            ordre = model_page.resolved.words
             baseline_par_id = _calibrer_lignes(ordre)
 
             # Bbox des mots reconstruits/vectorisés : leurs tracés de glyphes
