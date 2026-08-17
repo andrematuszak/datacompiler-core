@@ -1,0 +1,1265 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Organigramme de Programmation — DataCompiler</title>
+<style>
+  :root {
+    --couleur-fond: #0f172a;
+    --couleur-carte: #1e293b;
+    --couleur-bordure: #334155;
+    --couleur-texte: #e2e8f0;
+    --couleur-texte-fonce: #94a3b8;
+    --couleur-accent: #38bdf8;
+    --couleur-entree: #34d399;
+    --couleur-sortie: #f472b6;
+    --couleur-frontend: #38bdf8;
+    --couleur-compile: #a78bfa;
+    --couleur-backend: #fbbf24;
+    --couleur-model: #34d399;
+    --couleur-utils: #94a3b8;
+    --couleur-ocr: #fb7185;
+    --couleur-diagnostic: #2dd4bf;
+    --couleur-extract: #60a5fa;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    background: var(--couleur-fond);
+    color: var(--couleur-texte);
+    min-height: 100vh;
+    padding: 20px;
+  }
+
+  .header {
+    text-align: center;
+    padding: 30px 20px 20px;
+    border-bottom: 1px solid var(--couleur-bordure);
+    margin-bottom: 30px;
+  }
+
+  .header h1 {
+    font-size: 2.2em;
+    background: linear-gradient(135deg, var(--couleur-accent), var(--couleur-compile));
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    margin-bottom: 8px;
+  }
+
+  .header p {
+    color: var(--couleur-texte-fonce);
+    font-size: 1.1em;
+  }
+
+  .legende {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 12px;
+    margin: 20px 0 30px;
+    padding: 15px;
+    background: var(--couleur-carte);
+    border: 1px solid var(--couleur-bordure);
+    border-radius: 12px;
+  }
+
+  .legende-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 0.85em;
+    color: var(--couleur-texte-fonce);
+  }
+
+  .legende-couleur {
+    width: 14px;
+    height: 14px;
+    border-radius: 4px;
+    display: inline-block;
+  }
+
+  .pipeline {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0;
+    max-width: 1200px;
+    margin: 0 auto;
+  }
+
+  .etape {
+    width: 100%;
+    max-width: 900px;
+    background: var(--couleur-carte);
+    border: 1px solid var(--couleur-bordure);
+    border-radius: 12px;
+    padding: 20px;
+    margin: 8px 0;
+    position: relative;
+    transition: transform 0.2s, box-shadow 0.2s;
+  }
+
+  .etape:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 8px 24px rgba(0,0,0,0.3);
+  }
+
+  .etape-numero {
+    position: absolute;
+    top: -12px;
+    left: 20px;
+    background: var(--couleur-accent);
+    color: #0f172a;
+    font-weight: bold;
+    font-size: 0.8em;
+    padding: 3px 12px;
+    border-radius: 20px;
+  }
+
+  .etape-titre {
+    font-size: 1.3em;
+    font-weight: 600;
+    margin-bottom: 4px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .etape-titre .badge {
+    font-size: 0.6em;
+    padding: 3px 10px;
+    border-radius: 12px;
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+
+  .badge-frontend { background: rgba(56,189,248,0.15); color: var(--couleur-frontend); border: 1px solid rgba(56,189,248,0.3); }
+  .badge-compile { background: rgba(167,139,250,0.15); color: var(--couleur-compile); border: 1px solid rgba(167,139,250,0.3); }
+  .badge-backend { background: rgba(251,191,36,0.15); color: var(--couleur-backend); border: 1px solid rgba(251,191,36,0.3); }
+  .badge-model { background: rgba(52,211,153,0.15); color: var(--couleur-model); border: 1px solid rgba(52,211,153,0.3); }
+  .badge-ocr { background: rgba(251,113,133,0.15); color: var(--couleur-ocr); border: 1px solid rgba(251,113,133,0.3); }
+  .badge-diagnostic { background: rgba(45,212,191,0.15); color: var(--couleur-diagnostic); border: 1px solid rgba(45,212,191,0.3); }
+  .badge-extract { background: rgba(96,165,250,0.15); color: var(--couleur-extract); border: 1px solid rgba(96,165,250,0.3); }
+
+  .etape-desc {
+    color: var(--couleur-texte-fonce);
+    font-size: 0.9em;
+    margin-bottom: 12px;
+  }
+
+  .sous-modules {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 10px;
+  }
+
+  .sous-module {
+    background: rgba(255,255,255,0.05);
+    border: 1px solid var(--couleur-bordure);
+    border-radius: 8px;
+    padding: 8px 14px;
+    font-size: 0.85em;
+    cursor: pointer;
+    transition: all 0.2s;
+    position: relative;
+  }
+
+  .sous-module:hover {
+    background: rgba(255,255,255,0.1);
+    border-color: var(--couleur-accent);
+  }
+
+  .sous-module .nom {
+    font-weight: 600;
+    color: var(--couleur-texte);
+  }
+
+  .sous-module .fonction {
+    display: block;
+    color: var(--couleur-texte-fonce);
+    font-size: 0.8em;
+    margin-top: 2px;
+  }
+
+  .sous-module .detail {
+    display: none;
+    position: absolute;
+    bottom: calc(100% + 8px);
+    left: 0;
+    background: #0b1220;
+    border: 1px solid var(--couleur-accent);
+    border-radius: 8px;
+    padding: 12px;
+    width: 320px;
+    z-index: 100;
+    font-size: 0.8em;
+    line-height: 1.5;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+  }
+
+  .sous-module:hover .detail {
+    display: block;
+  }
+
+  .fleche {
+    color: var(--couleur-accent);
+    font-size: 1.5em;
+    text-align: center;
+    padding: 4px 0;
+    line-height: 1;
+  }
+
+  .fleche-texte {
+    display: block;
+    font-size: 0.6em;
+    color: var(--couleur-texte-fonce);
+    margin-top: 2px;
+  }
+
+  .entree, .sortie {
+    width: 100%;
+    max-width: 700px;
+    text-align: center;
+    padding: 20px;
+    border-radius: 12px;
+    margin: 8px 0;
+    font-weight: 600;
+    font-size: 1.1em;
+  }
+
+  .entree {
+    background: rgba(52,211,153,0.1);
+    border: 2px solid var(--couleur-entree);
+    color: var(--couleur-entree);
+  }
+
+  .sortie {
+    background: rgba(244,114,182,0.1);
+    border: 2px solid var(--couleur-sortie);
+    color: var(--couleur-sortie);
+  }
+
+  .sortie .formats {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 8px;
+    margin-top: 12px;
+  }
+
+  .format {
+    background: rgba(244,114,182,0.15);
+    border: 1px solid rgba(244,114,182,0.3);
+    padding: 4px 12px;
+    border-radius: 16px;
+    font-size: 0.75em;
+    font-weight: 400;
+  }
+
+  .branche {
+    display: flex;
+    gap: 12px;
+    width: 100%;
+    max-width: 900px;
+    margin: 8px 0;
+  }
+
+  .branche .etape {
+    flex: 1;
+    margin: 0;
+  }
+
+  .condition {
+    background: rgba(251,191,36,0.1);
+    border: 1px solid rgba(251,191,36,0.3);
+    border-radius: 8px;
+    padding: 8px 12px;
+    font-size: 0.8em;
+    color: var(--couleur-backend);
+    margin-top: 8px;
+  }
+
+  .condition code {
+    background: rgba(0,0,0,0.3);
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-size: 0.9em;
+  }
+
+  .flux-donnees {
+    max-width: 900px;
+    margin: 30px auto;
+    background: var(--couleur-carte);
+    border: 1px solid var(--couleur-bordure);
+    border-radius: 12px;
+    padding: 20px;
+  }
+
+  .flux-donnees h2 {
+    font-size: 1.2em;
+    margin-bottom: 15px;
+    color: var(--couleur-accent);
+  }
+
+  .flux-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.85em;
+  }
+
+  .flux-table th {
+    text-align: left;
+    padding: 8px;
+    border-bottom: 2px solid var(--couleur-bordure);
+    color: var(--couleur-texte-fonce);
+    font-weight: 600;
+  }
+
+  .flux-table td {
+    padding: 8px;
+    border-bottom: 1px solid rgba(51,65,85,0.5);
+    vertical-align: top;
+  }
+
+  .flux-table tr:hover td {
+    background: rgba(255,255,255,0.03);
+  }
+
+  .flux-table .module {
+    color: var(--couleur-accent);
+    font-weight: 600;
+    white-space: nowrap;
+  }
+
+  .flux-table .fichier {
+    color: var(--couleur-texte-fonce);
+    font-family: "SF Mono", "Fira Code", monospace;
+    font-size: 0.85em;
+  }
+
+  .detail-panel {
+    position: fixed;
+    top: 0;
+    right: -400px;
+    width: 380px;
+    height: 100vh;
+    background: #0b1220;
+    border-left: 1px solid var(--couleur-accent);
+    padding: 25px;
+    transition: right 0.3s ease;
+    z-index: 1000;
+    overflow-y: auto;
+  }
+
+  .detail-panel.ouvert {
+    right: 0;
+  }
+
+  .detail-panel h3 {
+    color: var(--couleur-accent);
+    margin-bottom: 10px;
+    font-size: 1.1em;
+  }
+
+  .detail-panel .fermer {
+    position: absolute;
+    top: 15px;
+    right: 15px;
+    background: none;
+    border: none;
+    color: var(--couleur-texte-fonce);
+    font-size: 1.5em;
+    cursor: pointer;
+  }
+
+  .detail-panel .fermer:hover {
+    color: var(--couleur-texte);
+  }
+
+  .detail-panel p {
+    color: var(--couleur-texte-fonce);
+    font-size: 0.9em;
+    line-height: 1.6;
+    margin-bottom: 12px;
+  }
+
+  .detail-panel .fichiers {
+    margin-top: 15px;
+  }
+
+  .detail-panel .fichiers h4 {
+    color: var(--couleur-texte);
+    font-size: 0.9em;
+    margin-bottom: 8px;
+  }
+
+  .detail-panel .fichier-item {
+    background: rgba(255,255,255,0.05);
+    border: 1px solid var(--couleur-bordure);
+    border-radius: 6px;
+    padding: 6px 10px;
+    margin-bottom: 6px;
+    font-family: "SF Mono", "Fira Code", monospace;
+    font-size: 0.8em;
+    color: var(--couleur-texte-fonce);
+  }
+
+  .detail-panel .fichier-item .fonction {
+    display: block;
+    color: var(--couleur-accent);
+    margin-top: 2px;
+  }
+
+  .overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0,0,0,0.5);
+    z-index: 999;
+    display: none;
+  }
+
+  .overlay.visible { display: block; }
+
+  @media (max-width: 768px) {
+    .branche { flex-direction: column; }
+    .detail-panel { width: 100%; right: -100%; }
+    .sous-module .detail { width: 260px; }
+  }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>📊 Organigramme de Programmation — DataCompiler</h1>
+  <p>Pipeline de compilation de PDF : extraction → diagnostic → OCR → arbitrage → rendu</p>
+</div>
+
+<div class="legende">
+  <div class="legende-item"><span class="legende-couleur" style="background:var(--couleur-frontend)"></span> Frontend</div>
+  <div class="legende-item"><span class="legende-couleur" style="background:var(--couleur-extract)"></span> Extraction</div>
+  <div class="legende-item"><span class="legende-couleur" style="background:var(--couleur-diagnostic)"></span> Diagnostic</div>
+  <div class="legende-item"><span class="legende-couleur" style="background:var(--couleur-ocr)"></span> OCR</div>
+  <div class="legende-item"><span class="legende-couleur" style="background:var(--couleur-compile)"></span> Compilation</div>
+  <div class="legende-item"><span class="legende-couleur" style="background:var(--couleur-backend)"></span> Backend / Rendu</div>
+  <div class="legende-item"><span class="legende-couleur" style="background:var(--couleur-model)"></span> Modèle de données</div>
+  <div class="legende-item"><span class="legende-couleur" style="background:var(--couleur-utils)"></span> Utilitaires</div>
+</div>
+
+<div class="pipeline">
+
+  <!-- ENTRÉE -->
+  <div class="entree">
+    📄 PDF Source<br>
+    <span style="font-size:0.7em;font-weight:400;color:var(--couleur-texte-fonce);">ex. test-impots-revenu.pdf</span>
+  </div>
+
+  <div class="fleche">▼<span class="fleche-texte">chemin du fichier</span></div>
+
+  <!-- ÉTAPE 1 : EXTRACTION -->
+  <div class="etape">
+    <div class="etape-numero">ÉTAPE 1/6</div>
+    <div class="etape-titre">
+      🔍 Extraction
+      <span class="badge badge-frontend">frontend/extract</span>
+    </div>
+    <div class="etape-desc">
+      Ouverture du PDF avec deux moteurs en parallèle (PyMuPDF + pdfplumber), extraction du texte, de la typographie, des images, des tableaux et des éléments vectoriels, puis fusion dans le modèle <code>Document</code>.
+    </div>
+    <div class="sous-modules">
+      <div class="sous-module" onclick="ouvrirDetail('extract-pymupdf')">
+        <span class="nom">PyMuPDF</span>
+        <span class="fonction">extraire_page_pymupdf()</span>
+        <div class="detail">
+          <strong>Moteur 1 — Texte & Typographie</strong><br>
+          Extrait les mots (texte + bbox), les polices, la couleur, le gras/italique, les métadonnées du document, et les zones vectorielles (lignes, rects, courbes).
+        </div>
+      </div>
+      <div class="sous-module" onclick="ouvrirDetail('extract-pdfplumber')">
+        <span class="nom">pdfplumber</span>
+        <span class="fonction">extraire_page_pdfplumber()</span>
+        <div class="detail">
+          <strong>Moteur 2 — Graphiques & Vecteurs</strong><br>
+          Extrait les images (avec sonde de texte), les tableaux (avec reconstruction avancée si dégénérés), et les lignes vectorielles.
+        </div>
+      </div>
+      <div class="sous-module" onclick="ouvrirDetail('extract-merge')">
+        <span class="nom">Fusion</span>
+        <span class="fonction">fusionner_page()</span>
+        <div class="detail">
+          <strong>Assemblage final</strong><br>
+          Fusionne les flux PyMuPDF (texte/typo) et pdfplumber (graphiques/tableaux) dans la structure <code>Page</code> du modèle.
+        </div>
+      </div>
+      <div class="sous-module" onclick="ouvrirDetail('extract-probe')">
+        <span class="nom">Sonde texte image</span>
+        <span class="fonction">sonder_images_page()</span>
+        <div class="detail">
+          <strong>Détection de texte dans les images</strong><br>
+          Passe Tesseract en mode "sparse text" sur chaque image pendant que le PDF est encore ouvert, pour signaler si une image contient du texte.
+        </div>
+      </div>
+      <div class="sous-module" onclick="ouvrirDetail('extract-tables')">
+        <span class="nom">Reconstruction tableaux</span>
+        <span class="fonction">reconstruire()</span>
+        <div class="detail">
+          <strong>Repli pour tableaux dégénérés</strong><br>
+          Reconstruit les colonnes d'un tableau que pdfplumber détecte comme une seule colonne, à partir des points de rupture récurrents des filets horizontaux.
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="fleche">▼<span class="fleche-texte">Document rempli (native + graphics)</span></div>
+
+  <!-- ÉTAPE 2 : DIAGNOSTIC -->
+  <div class="etape">
+    <div class="etape-numero">ÉTAPE 2/6</div>
+    <div class="etape-titre">
+      🩺 Diagnostic
+      <span class="badge badge-diagnostic">frontend/diagnostic</span>
+    </div>
+    <div class="etape-desc">
+      Analyse le document extrait (sans rouvrir le PDF) pour évaluer la qualité du texte natif, détecter les anomalies et décider si un OCR est nécessaire.
+    </div>
+    <div class="sous-modules">
+      <div class="sous-module" onclick="ouvrirDetail('diag-text')">
+        <span class="nom">Intégrité texte</span>
+        <span class="fonction">qualite_texte()</span>
+        <div class="detail">
+          <strong>Qualité du texte natif</strong><br>
+          Calcule un score de qualité basé sur les caractères suspects (mojibake, PUA) et les tokens anormaux (chiffres dans mots, casse irrégulière).
+        </div>
+      </div>
+      <div class="sous-module" onclick="ouvrirDetail('diag-blind')">
+        <span class="nom">Angles morts</span>
+        <span class="fonction">symboles_corrompus()</span>
+        <div class="detail">
+          <strong>Corruptions invisibles</strong><br>
+          Détecte les substitutions de caractères (€ → e, l → t) et les mots suspects par trigrammes internes au document.
+        </div>
+      </div>
+      <div class="sous-module" onclick="ouvrirDetail('diag-visual')">
+        <span class="nom">Intégrité visuelle</span>
+        <span class="fonction">couverture_image_max()</span>
+        <div class="detail">
+          <strong>Images & DPI</strong><br>
+          Calcule la couverture image pleine page, le DPI effectif des images, et détecte les images contenant du texte.
+        </div>
+      </div>
+      <div class="sous-module" onclick="ouvrirDetail('diag-geometry')">
+        <span class="nom">Géométrie</span>
+        <span class="fonction">score_ordre_lecture()</span>
+        <div class="detail">
+          <strong>Ordre, chevauchements, limites</strong><br>
+          Score l'ordre de lecture, détecte les paires de mots chevauchants et les mots hors des limites de la page.
+        </div>
+      </div>
+      <div class="sous-module" onclick="ouvrirDetail('diag-vector')">
+        <span class="nom">Texte vectorisé</span>
+        <span class="fonction">zones_texte_vectorise_probable()</span>
+        <div class="detail">
+          <strong>Glyphes dessinés</strong><br>
+          Regroupe les éléments vectoriels denses (lignes, courbes, rects fins) en zones suspectées de contenir du texte dessiné plutôt qu'écrit nativement.
+        </div>
+      </div>
+      <div class="sous-module" onclick="ouvrirDetail('diag-container')">
+        <span class="nom">Conteneur</span>
+        <span class="fonction">producteur_suspect()</span>
+        <div class="detail">
+          <strong>Métadonnées du PDF</strong><br>
+          Vérifie si le producteur/créateur du PDF est dans la liste des producteurs suspects (volontairement vide au départ).
+        </div>
+      </div>
+      <div class="sous-module" onclick="ouvrirDetail('diag-categorize')">
+        <span class="nom">Catégorisation</span>
+        <span class="fonction">categoriser()</span>
+        <div class="detail">
+          <strong>Catégorie unique</strong><br>
+          Dérive une catégorie : <code>natif_propre</code>, <code>natif_corrompu</code>, <code>natif_mixte</code> ou <code>scan</code>.
+        </div>
+      </div>
+      <div class="sous-module" onclick="ouvrirDetail('diag-report')">
+        <span class="nom">Rapport</span>
+        <span class="fonction">afficher()</span>
+        <div class="detail">
+          <strong>Interface humaine</strong><br>
+          Affiche un résumé lisible du diagnostic dans le terminal.
+        </div>
+      </div>
+    </div>
+    <div class="condition">
+      ⚡ <code>doc.diagnostic.recommend_ocr</code> = <code>True</code> si : pas de texte natif, qualité < 0.9, couverture native < 0.9, texte dans image, OCR embarqué détecté, symboles corrompus, ou échantillon trop court.
+    </div>
+  </div>
+
+  <div class="fleche">▼<span class="fleche-texte">Document diagnostiqué (diagnostic rempli)</span></div>
+
+  <!-- ÉTAPE 3 : OCR PAGE ENTIÈRE (conditionnelle) -->
+  <div class="etape">
+    <div class="etape-numero">ÉTAPE 3/6</div>
+    <div class="etape-titre">
+      🤖 OCR Page Entière
+      <span class="badge badge-ocr">frontend/ocr</span>
+    </div>
+    <div class="etape-desc">
+      Si le diagnostic recommande un OCR <em>et</em> que la clé API Mistral est disponible, appelle l'API Mistral pour OCRiser le document entier.
+    </div>
+    <div class="condition">
+      🔀 Condition : <code>doc.diagnostic.recommend_ocr == True</code> <strong>ET</strong> <code>MISTRAL_API_KEY</code> présente<br>
+      ⚠️ Si OCR recommandé mais pas de clé API → poursuite avec le texte natif (avertissement)<br>
+      ✅ Si OCR non recommandé → étape sautée
+    </div>
+    <div class="sous-modules">
+      <div class="sous-module" onclick="ouvrirDetail('ocr-mistral')">
+        <span class="nom">MistralBackend</span>
+        <span class="fonction">ocraliser()</span>
+        <div class="detail">
+          <strong>API distante Mistral AI</strong><br>
+          OCRise le PDF entier en un seul appel API. Remplit <code>page.ocr.words</code> et <code>page.ocr.engine</code>. Ne fournit de bbox qu'au niveau bloc, pas mot.
+        </div>
+      </div>
+      <div class="sous-module" onclick="ouvrirDetail('ocr-registry')">
+        <span class="nom">Registre</span>
+        <span class="fonction">get_backend()</span>
+        <div class="detail">
+          <strong>Registre des backends</strong><br>
+          <code>BACKENDS = {"mistral": MistralBackend, "tesseract": TesseractBackend}</code> — permet de choisir le backend par nom.
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="fleche">▼<span class="fleche-texte">page.ocr rempli (si OCR exécuté)</span></div>
+
+  <!-- ÉTAPE 4 : OCR CIBLÉ ZONES VECTORISÉES -->
+  <div class="etape">
+    <div class="etape-numero">ÉTAPE 4/6</div>
+    <div class="etape-titre">
+      🎯 OCR Ciblé — Zones Vectorisées
+      <span class="badge badge-ocr">frontend/ocr/vector_zones</span>
+    </div>
+    <div class="etape-desc">
+      Indépendant de la clé API et du diagnostic global : cible uniquement les zones de texte vectorisé détectées par <code>vector_text.py</code>, et comble les vides géométriques avec Tesseract local.
+    </div>
+    <div class="sous-modules">
+      <div class="sous-module" onclick="ouvrirDetail('ocr-vector-zones')">
+        <span class="nom">Récupération texte vectorisé</span>
+        <span class="fonction">recuperer_texte_vectorise()</span>
+        <div class="detail">
+          <strong>OCR ciblé par zone</strong><br>
+          Pour chaque zone détectée : crop de la zone → OCR Tesseract → filtrage des doublons avec le natif → injection directe dans <code>page.native.words</code> avec <code>is_vectorized=True</code>.
+        </div>
+      </div>
+      <div class="sous-module" onclick="ouvrirDetail('ocr-tesseract')">
+        <span class="nom">TesseractBackend</span>
+        <span class="fonction">ocraliser_zone()</span>
+        <div class="detail">
+          <strong>OCR local (Tesseract)</strong><br>
+          Double passe PSM 3 + PSM 6, filtrage du bruit de bordure, filtrage des pictogrammes par géométrie, bbox par mot avec confiance.
+        </div>
+      </div>
+      <div class="sous-module" onclick="ouvrirDetail('ocr-fusion')">
+        <span class="nom">Fusion multi-backend</span>
+        <span class="fonction">fusionner_candidats_ocr()</span>
+        <div class="detail">
+          <strong>Arbitrage entre backends OCR</strong><br>
+          En cas de chevauchement de bbox entre deux backends, garde celui de plus haute confiance. Trace chaque arbitrage dans <code>notes</code>.
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="fleche">▼<span class="fleche-texte">native.words enrichi (is_vectorized=True)</span></div>
+
+  <!-- ÉTAPE 5 : COMPILATION -->
+  <div class="etape">
+    <div class="etape-numero">ÉTAPE 5/6</div>
+    <div class="etape-titre">
+      ⚙️ Compilation / Arbitrage
+      <span class="badge badge-compile">compile</span>
+    </div>
+    <div class="etape-desc">
+      Résout chaque page : ordre de lecture réel, normalisation typographique, alignement natif ↔ OCR, résolution des conflits, regroupement en lignes et QA.
+    </div>
+    <div class="sous-modules">
+      <div class="sous-module" onclick="ouvrirDetail('compile-reading-order')">
+        <span class="nom">1. Ordre de lecture</span>
+        <span class="fonction">reading_order.ordonner()</span>
+        <div class="detail">
+          <strong>Boîtes → Rangées → Tri</strong><br>
+          Construit des boîtes par ligne physique (native + vectorisée), les regroupe en rangées par chevauchement vertical, trie chaque rangée gauche → droite. Les mots de tableaux sont exclus puis réintégrés.
+        </div>
+      </div>
+      <div class="sous-module" onclick="ouvrirDetail('compile-typography')">
+        <span class="nom">2. Typographie</span>
+        <span class="fonction">typography.normaliser()</span>
+        <div class="detail">
+          <strong>Ligatures + césures</strong><br>
+          Normalise les ligatures Unicode (ff, fi, fl, ffi, ffl, st) et fusionne les mots coupés par une césure de fin de ligne.
+        </div>
+      </div>
+      <div class="sous-module" onclick="ouvrirDetail('compile-alignment')">
+        <span class="nom">3. Alignement</span>
+        <span class="fonction">alignment.aligner()</span>
+        <div class="detail">
+          <strong>Diff natif ↔ OCR</strong><br>
+          Aligne les séquences de texte natif et OCR avec <code>difflib.SequenceMatcher</code> (autojunk=False). Produit des <code>UniteAlignement</code> : equal, conflit, natif_seul, ocr_seul.
+        </div>
+      </div>
+      <div class="sous-module" onclick="ouvrirDetail('compile-conflict')">
+        <span class="nom">4. Résolution conflits</span>
+        <span class="fonction">conflict_resolution.resoudre_page()</span>
+        <div class="detail">
+          <strong>Texte final par unité</strong><br>
+          La bbox vient toujours du natif. En cas de conflit, compare les confiances (heuristique native vs OCR) et choisit le texte le plus fiable. Interpole les bbox des mots ocr_seul.
+        </div>
+      </div>
+      <div class="sous-module" onclick="ouvrirDetail('compile-layout')">
+        <span class="nom">5. Lignes</span>
+        <span class="fonction">layout.assigner_lignes()</span>
+        <div class="detail">
+          <strong>Regroupement en lignes visuelles</strong><br>
+          Annote chaque mot avec <code>layout_line</code> (numéro de ligne) en détectant les sauts de ligne par tolérance sur y0.
+        </div>
+      </div>
+      <div class="sous-module" onclick="ouvrirDetail('compile-qa')">
+        <span class="nom">6. QA</span>
+        <span class="fonction">qa.annoter()</span>
+        <div class="detail">
+          <strong>Détection d'anomalies</strong><br>
+          Ajoute des <code>Flag</code> : confiance basse (< 0.6) et ordre suspect (saut arrière en y0). Ne modifie jamais texte ni bbox.
+        </div>
+      </div>
+      <div class="sous-module" onclick="ouvrirDetail('compile-confidence')">
+        <span class="nom">Confiance</span>
+        <span class="fonction">confidence.meilleur()</span>
+        <div class="detail">
+          <strong>Échelle commune [0,1]</strong><br>
+          Estime la confiance native (heuristique : caractères suspects, chiffres, casse) et OCR (confidence fournie ou 0.5 par défaut). Écart significatif ≥ 0.15.
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="fleche">▼<span class="fleche-texte">page.resolved rempli (words + images + tables)</span></div>
+
+  <!-- ÉTAPE 6 : RENDU -->
+  <div class="etape">
+    <div class="etape-numero">ÉTAPE 6/6</div>
+    <div class="etape-titre">
+      📦 Rendu
+      <span class="badge badge-backend">backend</span>
+    </div>
+    <div class="etape-desc">
+      Rend le document résolu dans le format de sortie choisi selon la stratégie.
+    </div>
+    <div class="sous-modules">
+      <div class="sous-module" onclick="ouvrirDetail('backend-faithful')">
+        <span class="nom">PDF Fidèle</span>
+        <span class="fonction">render_faithful_pdf()</span>
+        <div class="detail">
+          <strong>3 stratégies</strong><br>
+          • <code>overlay</code> : superpose une couche invisible sur le PDF source<br>
+          • <code>clean_overlay</code> : recrée la page (images + dessins) et réinjecte le texte résolu<br>
+          • <code>rasterized</code> : rasterise chaque page en image + couche invisible
+        </div>
+      </div>
+      <div class="sous-module" onclick="ouvrirDetail('backend-flow')">
+        <span class="nom">PDF Flow</span>
+        <span class="fonction">render_flow_pdf()</span>
+        <div class="detail">
+          <strong>Flux texte linéaire</strong><br>
+          Reflue le contenu comme un traitement de texte : marges fixes, lignes empilées dans l'ordre de lecture, pages A4.
+        </div>
+      </div>
+      <div class="sous-module" onclick="ouvrirDetail('backend-rebuilt')">
+        <span class="nom">PDF Reconstruit</span>
+        <span class="fonction">render_rebuilt_pdf()</span>
+        <div class="detail">
+          <strong>Texte visible et sélectionnable</strong><br>
+          Reconstruit un PDF neuf à la même position que le source. Copie images/dessins (en excluant les glyphes vectorisés), calibre les lignes de base, échantillonne les couleurs, utilise LiberationSans.
+        </div>
+      </div>
+      <div class="sous-module" onclick="ouvrirDetail('backend-markdown')">
+        <span class="nom">Markdown</span>
+        <span class="fonction">render_markdown()</span>
+        <div class="detail">
+          <strong>Rendu texte</strong><br>
+          Un titre par page, un paragraphe par ligne regroupée, tableaux en syntaxe Markdown.
+        </div>
+      </div>
+      <div class="sous-module" onclick="ouvrirDetail('backend-html')">
+        <span class="nom">HTML</span>
+        <span class="fonction">render_html()</span>
+        <div class="detail">
+          <strong>Rendu web</strong><br>
+          Document Flow : empilement en ordre de lecture, hauteur libre, tableaux en HTML.
+        </div>
+      </div>
+      <div class="sous-module" onclick="ouvrirDetail('backend-docx')">
+        <span class="nom">DOCX</span>
+        <span class="fonction">render_docx()</span>
+        <div class="detail">
+          <strong>Rendu Word</strong><br>
+          Un titre par page, un paragraphe par ligne, vrais tableaux Word avec style "Table Grid".
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="fleche">▼<span class="fleche-texte">fichier de sortie écrit</span></div>
+
+  <!-- SORTIE -->
+  <div class="sortie">
+    📁 Fichiers de sortie
+    <div class="formats">
+      <span class="format">_propre.pdf (overlay)</span>
+      <span class="format">_propre.pdf (clean_overlay)</span>
+      <span class="format">_propre.pdf (rasterized)</span>
+      <span class="format">_flow.pdf</span>
+      <span class="format">_rebuilt.pdf</span>
+      <span class="format">_propre.md</span>
+      <span class="format">_propre.html</span>
+      <span class="format">_propre.docx</span>
+      <span class="format">.document.json</span>
+    </div>
+  </div>
+
+</div>
+
+<!-- TABLEAU DES FLUX DE DONNÉES -->
+<div class="flux-donnees">
+  <h2>📋 Flux de données entre les modules</h2>
+  <table class="flux-table">
+    <thead>
+      <tr>
+        <th>Étape</th>
+        <th>Module</th>
+        <th>Fichier(s)</th>
+        <th>Entrée → Sortie</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>1</td>
+        <td class="module">Extraction</td>
+        <td class="fichier">frontend/extract/__init__.py</td>
+        <td>PDF path → <code>Document</code> (native.words, graphics, metadata)</td>
+      </tr>
+      <tr>
+        <td>1a</td>
+        <td class="module">PyMuPDF</td>
+        <td class="fichier">frontend/extract/pymupdf.py</td>
+        <td>fitz.Page → Page (native.words, fonts, graphics.lines/rects/curves)</td>
+      </tr>
+      <tr>
+        <td>1b</td>
+        <td class="module">pdfplumber</td>
+        <td class="fichier">frontend/extract/pdfplumber.py</td>
+        <td>pdfplumber.Page → graphics_data (images, tables, lines)</td>
+      </tr>
+      <tr>
+        <td>1c</td>
+        <td class="module">Fusion</td>
+        <td class="fichier">frontend/extract/merge.py</td>
+        <td>Page + graphics_data → Page complète</td>
+      </tr>
+      <tr>
+        <td>2</td>
+        <td class="module">Diagnostic</td>
+        <td class="fichier">frontend/diagnostic/__init__.py</td>
+        <td>Document → Document (diagnostic rempli, recommend_ocr)</td>
+      </tr>
+      <tr>
+        <td>3</td>
+        <td class="module">OCR page entière</td>
+        <td class="fichier">frontend/ocr/__init__.py</td>
+        <td>Document + PDF → Document (page.ocr.words, page.ocr.engine)</td>
+      </tr>
+      <tr>
+        <td>4</td>
+        <td class="module">OCR ciblé</td>
+        <td class="fichier">frontend/ocr/vector_zones.py</td>
+        <td>Document + PDF → Document (native.words enrichi, is_vectorized=True)</td>
+      </tr>
+      <tr>
+        <td>5</td>
+        <td class="module">Compilation</td>
+        <td class="fichier">compile/compiler.py</td>
+        <td>Document → Document (page.resolved.words, images, tables)</td>
+      </tr>
+      <tr>
+        <td>5a</td>
+        <td class="module">Ordre de lecture</td>
+        <td class="fichier">compile/reading_order.py</td>
+        <td>page.native.words → copies ordonnées (boîtes/rangées)</td>
+      </tr>
+      <tr>
+        <td>5b</td>
+        <td class="module">Typographie</td>
+        <td class="fichier">compile/typography.py</td>
+        <td>mots ordonnés → mots normalisés (ligatures, césures)</td>
+      </tr>
+      <tr>
+        <td>5c</td>
+        <td class="module">Alignement</td>
+        <td class="fichier">compile/alignment.py</td>
+        <td>mots natifs + mots OCR → UniteAlignement[]</td>
+      </tr>
+      <tr>
+        <td>5d</td>
+        <td class="module">Résolution conflits</td>
+        <td class="fichier">compile/conflict_resolution.py</td>
+        <td>UniteAlignement[] → resolved.words (texte final + bbox)</td>
+      </tr>
+      <tr>
+        <td>5e</td>
+        <td class="module">Lignes</td>
+        <td class="fichier">compile/layout.py</td>
+        <td>resolved.words → annoté avec layout_line</td>
+      </tr>
+      <tr>
+        <td>5f</td>
+        <td class="module">QA</td>
+        <td class="fichier">compile/qa.py</td>
+        <td>resolved.words → annoté avec flags (confiance, ordre)</td>
+      </tr>
+      <tr>
+        <td>6</td>
+        <td class="module">Rendu</td>
+        <td class="fichier">backend/__init__.py</td>
+        <td>Document → fichier de sortie (PDF/MD/HTML/DOCX)</td>
+      </tr>
+      <tr>
+        <td>—</td>
+        <td class="module">Modèle</td>
+        <td class="fichier">model/document.py</td>
+        <td>Word, Page, Document, NativeContainer, OcrContainer, ResolvedContainer</td>
+      </tr>
+      <tr>
+        <td>—</td>
+        <td class="module">Heuristiques</td>
+        <td class="fichier">heuristics.py</td>
+        <td>Signaux bas niveau partagés (diagnostic + confidence)</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<!-- PANNEAU DE DÉTAIL -->
+<div class="overlay" id="overlay" onclick="fermerDetail()"></div>
+<div class="detail-panel" id="detailPanel">
+  <button class="fermer" onclick="fermerDetail()">✕</button>
+  <div id="detailContent"></div>
+</div>
+
+<script>
+const DETAILS = {
+  'extract-pymupdf': {
+    titre: 'PyMuPDF — Moteur 1 (Texte & Typographie)',
+    description: 'Extrait les données textuelles et métadonnées via PyMuPDF. Récupère les mots avec leur bbox, la typographie (police, taille, gras, italique, couleur), les métadonnées du document et les zones vectorielles (lignes, rects, courbes).',
+    fichiers: [
+      { nom: 'frontend/extract/pymupdf.py', fonction: 'extraire_metadonnees()' },
+      { nom: 'frontend/extract/pymupdf.py', fonction: 'extraire_page_pymupdf()' },
+      { nom: 'frontend/extract/pymupdf.py', fonction: 'rendre_zone_image()' },
+    ]
+  },
+  'extract-pdfplumber': {
+    titre: 'pdfplumber — Moteur 2 (Graphiques & Vecteurs)',
+    description: 'Extrait les éléments visuels et vectoriels via pdfplumber : images (avec sonde de texte), tableaux (avec reconstruction avancée si dégénérés), et lignes vectorielles.',
+    fichiers: [
+      { nom: 'frontend/extract/pdfplumber.py', fonction: 'extraire_page_pdfplumber()' },
+      { nom: 'frontend/extract/table_reconstruction.py', fonction: 'reconstruire()' },
+      { nom: 'frontend/extract/table_reconstruction.py', fonction: 'extraire_lignes()' },
+    ]
+  },
+  'extract-merge': {
+    titre: 'Fusion — Assemblage final',
+    description: 'Fusionne les flux PyMuPDF (texte/typo) et pdfplumber (graphiques/tableaux) dans la structure Page du modèle. Injecte aussi les métadonnées dans le Document.',
+    fichiers: [
+      { nom: 'frontend/extract/merge.py', fonction: 'enrichir_metadonnees()' },
+      { nom: 'frontend/extract/merge.py', fonction: 'fusionner_page()' },
+    ]
+  },
+  'extract-probe': {
+    titre: 'Sonde texte image',
+    description: 'Passe Tesseract en mode "sparse text" (PSM 11) sur chaque image pendant que le PDF est encore ouvert, pour signaler si une image contient du texte. Résultat stocké dans ImageElement.contains_text.',
+    fichiers: [
+      { nom: 'frontend/extract/image_text_probe.py', fonction: 'contient_probablement_du_texte()' },
+      { nom: 'frontend/extract/image_text_probe.py', fonction: 'sonder_images_page()' },
+    ]
+  },
+  'extract-tables': {
+    titre: 'Reconstruction tableaux',
+    description: 'Repli pour les tableaux que pdfplumber détecte comme dégénérés (une seule colonne alors que la table est large). Reconstruit les colonnes à partir des points de rupture récurrents des filets horizontaux.',
+    fichiers: [
+      { nom: 'frontend/extract/table_reconstruction.py', fonction: 'table_degenere()' },
+      { nom: 'frontend/extract/table_reconstruction.py', fonction: 'reconstruire()' },
+      { nom: 'frontend/extract/table_reconstruction.py', fonction: 'extraire_lignes()' },
+    ]
+  },
+  'diag-text': {
+    titre: 'Intégrité texte',
+    description: 'Calcule un score de qualité du texte natif basé sur les caractères suspects (mojibake, PUA) et les tokens anormaux (chiffres dans mots, casse irrégulière). Détecte aussi les pages à faible densité textuelle.',
+    fichiers: [
+      { nom: 'frontend/diagnostic/text_integrity.py', fonction: 'texte_page()' },
+      { nom: 'frontend/diagnostic/text_integrity.py', fonction: 'qualite_texte()' },
+      { nom: 'frontend/diagnostic/text_integrity.py', fonction: 'page_a_faible_densite()' },
+    ]
+  },
+  'diag-blind': {
+    titre: 'Angles morts',
+    description: 'Détecte les corruptions invisibles aux heuristiques classiques : substitutions de caractères (€ → e, l → t) et mots suspects par trigrammes internes au document.',
+    fichiers: [
+      { nom: 'frontend/diagnostic/blind_spots.py', fonction: 'symboles_corrompus()' },
+      { nom: 'frontend/diagnostic/blind_spots.py', fonction: 'mots_suspects_ngrammes()' },
+      { nom: 'frontend/diagnostic/blind_spots.py', fonction: 'qualite_avec_confiance()' },
+    ]
+  },
+  'diag-visual': {
+    titre: 'Intégrité visuelle',
+    description: 'Calcule la couverture image pleine page, le DPI effectif des images, détecte les images basse résolution et les images contenant du texte.',
+    fichiers: [
+      { nom: 'frontend/diagnostic/visual_integrity.py', fonction: 'couverture_image_max()' },
+      { nom: 'frontend/diagnostic/visual_integrity.py', fonction: 'dpi_effectif()' },
+      { nom: 'frontend/diagnostic/visual_integrity.py', fonction: 'images_basse_resolution()' },
+      { nom: 'frontend/diagnostic/visual_integrity.py', fonction: 'images_avec_texte()' },
+    ]
+  },
+  'diag-geometry': {
+    titre: 'Géométrie',
+    description: 'Score l\'ordre de lecture (proxy sans réorganiser), détecte les paires de mots chevauchants et les mots hors des limites de la page.',
+    fichiers: [
+      { nom: 'frontend/diagnostic/geometry.py', fonction: 'score_ordre_lecture()' },
+      { nom: 'frontend/diagnostic/geometry.py', fonction: 'detecter_chevauchements()' },
+      { nom: 'frontend/diagnostic/geometry.py', fonction: 'detecter_hors_limites()' },
+    ]
+  },
+  'diag-vector': {
+    titre: 'Texte vectorisé',
+    description: 'Regroupe les éléments vectoriels denses (lignes, courbes, rects fins) en zones suspectées de contenir du texte dessiné plutôt qu\'écrit nativement. Utilise union-find pour la fusion transitive.',
+    fichiers: [
+      { nom: 'frontend/diagnostic/vector_text.py', fonction: 'zones_texte_vectorise_probable()' },
+      { nom: 'frontend/diagnostic/vector_text.py', fonction: 'couverture_texte_natif()' },
+      { nom: 'frontend/diagnostic/vector_text.py', fonction: 'texte_vectorise_detecte()' },
+    ]
+  },
+  'diag-container': {
+    titre: 'Conteneur',
+    description: 'Vérifie si le producteur/créateur du PDF est dans la liste des producteurs suspects. La liste est volontairement vide au départ — à peupler uniquement avec des preuves empiriques.',
+    fichiers: [
+      { nom: 'frontend/diagnostic/container.py', fonction: 'producteur_suspect()' },
+    ]
+  },
+  'diag-categorize': {
+    titre: 'Catégorisation',
+    description: 'Dérive une catégorie unique depuis les signaux déjà calculés : natif_propre, natif_corrompu, natif_mixte ou scan.',
+    fichiers: [
+      { nom: 'frontend/diagnostic/categorize.py', fonction: 'categoriser()' },
+    ]
+  },
+  'diag-report': {
+    titre: 'Rapport',
+    description: 'Affiche un résumé lisible du diagnostic dans le terminal : qualité texte, couverture, images, tableaux, recommandation OCR, notes détaillées.',
+    fichiers: [
+      { nom: 'frontend/diagnostic/report.py', fonction: 'afficher()' },
+    ]
+  },
+  'ocr-mistral': {
+    titre: 'MistralBackend',
+    description: 'OCRise le PDF entier via l\'API distante Mistral AI. Remplit page.ocr.words et page.ocr.engine. Ne fournit de bbox qu\'au niveau bloc/paragraphe, jamais au niveau mot.',
+    fichiers: [
+      { nom: 'frontend/ocr/mistral.py', fonction: 'MistralBackend.ocraliser()' },
+    ]
+  },
+  'ocr-registry': {
+    titre: 'Registre des backends OCR',
+    description: 'Registre central des backends OCR disponibles : mistral et tesseract. Permet de choisir le backend par nom via get_backend().',
+    fichiers: [
+      { nom: 'frontend/ocr/__init__.py', fonction: 'get_backend()' },
+      { nom: 'frontend/ocr/__init__.py', fonction: 'ocraliser()' },
+      { nom: 'frontend/ocr/base.py', fonction: 'OcrBackend (interface)' },
+    ]
+  },
+  'ocr-vector-zones': {
+    titre: 'Récupération texte vectorisé',
+    description: 'Pour chaque zone de texte vectorisé détectée : crop de la zone → OCR Tesseract → filtrage des doublons avec le natif → injection directe dans page.native.words avec is_vectorized=True. Fonctionne indépendamment de MISTRAL_API_KEY.',
+    fichiers: [
+      { nom: 'frontend/ocr/vector_zones.py', fonction: 'recuperer_texte_vectorise()' },
+      { nom: 'frontend/ocr/vector_zones.py', fonction: '_fusionner_zones_chevauchantes()' },
+      { nom: 'frontend/ocr/vector_zones.py', fonction: '_chevauche_natif()' },
+    ]
+  },
+  'ocr-tesseract': {
+    titre: 'TesseractBackend',
+    description: 'OCR local (Tesseract) avec double passe PSM 3 + PSM 6, filtrage du bruit de bordure, filtrage des pictogrammes par géométrie, bbox par mot avec confiance.',
+    fichiers: [
+      { nom: 'frontend/ocr/tesseract.py', fonction: 'TesseractBackend.ocraliser()' },
+      { nom: 'frontend/ocr/tesseract.py', fonction: 'TesseractBackend.ocraliser_zone()' },
+      { nom: 'frontend/ocr/tesseract.py', fonction: '_extraire_deux_passes()' },
+    ]
+  },
+  'ocr-fusion': {
+    titre: 'Fusion multi-backend OCR',
+    description: 'Arbitre entre plusieurs backends OCR sur la même zone. En cas de chevauchement de bbox, garde celui de plus haute confiance. Trace chaque arbitrage dans notes.',
+    fichiers: [
+      { nom: 'frontend/ocr/fusion_ocr.py', fonction: 'fusionner_candidats_ocr()' },
+      { nom: 'frontend/ocr/fusion_ocr.py', fonction: 'fusionner_zone_multi_backend()' },
+    ]
+  },
+  'compile-reading-order': {
+    titre: 'Ordre de lecture',
+    description: 'Construit des boîtes par ligne physique (native + vectorisée), les regroupe en rangées par chevauchement vertical (seuil 30%), trie chaque rangée gauche → droite. Les mots de tableaux sont exclus puis réintégrés à la fin.',
+    fichiers: [
+      { nom: 'compile/reading_order.py', fonction: 'ordonner()' },
+      { nom: 'compile/reading_order.py', fonction: '_construire_boites_natives()' },
+      { nom: 'compile/reading_order.py', fonction: '_construire_boites_vectorisees()' },
+      { nom: 'compile/reading_order.py', fonction: '_ordonner_par_boites()' },
+    ]
+  },
+  'compile-typography': {
+    titre: 'Typographie',
+    description: 'Normalise les ligatures Unicode (ff, fi, fl, ffi, ffl, st) et fusionne les mots coupés par une césure de fin de ligne. Retourne une nouvelle liste.',
+    fichiers: [
+      { nom: 'compile/typography.py', fonction: 'normaliser()' },
+      { nom: 'compile/typography.py', fonction: 'normaliser_ligatures()' },
+      { nom: 'compile/typography.py', fonction: '_ressemble_a_une_cesure()' },
+    ]
+  },
+  'compile-alignment': {
+    titre: 'Alignement natif ↔ OCR',
+    description: 'Aligne les séquences de texte natif et OCR avec difflib.SequenceMatcher (autojunk=False). Produit des UniteAlignement : equal, conflit, natif_seul, ocr_seul.',
+    fichiers: [
+      { nom: 'compile/alignment.py', fonction: 'aligner()' },
+      { nom: 'compile/alignment.py', fonction: 'UniteAlignement (dataclass)' },
+    ]
+  },
+  'compile-conflict': {
+    titre: 'Résolution des conflits',
+    description: 'La bbox vient toujours du natif. En cas de conflit, compare les confiances (heuristique native vs OCR) et choisit le texte le plus fiable. Interpole les bbox des mots ocr_seul.',
+    fichiers: [
+      { nom: 'compile/conflict_resolution.py', fonction: 'resoudre_page()' },
+      { nom: 'compile/conflict_resolution.py', fonction: '_resoudre_conflit()' },
+      { nom: 'compile/conflict_resolution.py', fonction: '_interpoler_bboxes()' },
+    ]
+  },
+  'compile-layout': {
+    titre: 'Regroupement en lignes',
+    description: 'Annote chaque mot avec layout_line (numéro de ligne) en détectant les sauts de ligne par tolérance sur y0 (3pt). Les mots sans bbox héritent de la ligne courante.',
+    fichiers: [
+      { nom: 'compile/layout.py', fonction: 'assigner_lignes()' },
+      { nom: 'compile/layout.py', fonction: 'grouper_par_ligne()' },
+    ]
+  },
+  'compile-qa': {
+    titre: 'QA — Détection d\'anomalies',
+    description: 'Ajoute des Flag : confiance basse (< 0.6) et ordre suspect (saut arrière en y0 > 50pt). Ne modifie jamais texte ni bbox.',
+    fichiers: [
+      { nom: 'compile/qa.py', fonction: 'annoter()' },
+      { nom: 'compile/qa.py', fonction: '_confiance_basse()' },
+      { nom: 'compile/qa.py', fonction: '_ordre_suspect()' },
+    ]
+  },
+  'compile-confidence': {
+    titre: 'Confiance',
+    description: 'Estime une confiance par mot sur une échelle commune [0,1]. Native : heuristique (caractères suspects, chiffres, casse). OCR : confidence fournie ou 0.5 par défaut. Écart significatif ≥ 0.15.',
+    fichiers: [
+      { nom: 'compile/confidence.py', fonction: 'confiance_native()' },
+      { nom: 'compile/confidence.py', fonction: 'confiance_ocr()' },
+      { nom: 'compile/confidence.py', fonction: 'meilleur()' },
+    ]
+  },
+  'backend-faithful': {
+    titre: 'PDF Fidèle',
+    description: 'Trois stratégies : overlay (couche invisible sur le PDF source), clean_overlay (recrée la page + réinjecte le texte résolu), rasterized (rasterise chaque page + couche invisible).',
+    fichiers: [
+      { nom: 'backend/faithful_pdf.py', fonction: 'render_faithful_pdf()' },
+      { nom: 'backend/faithful_pdf.py', fonction: '_inserer_tous_les_mots()' },
+      { nom: 'backend/faithful_pdf.py', fonction: '_copier_images_et_dessins()' },
+      { nom: 'backend/faithful_pdf.py', fonction: '_extraire_et_ajouter_polices()' },
+    ]
+  },
+  'backend-flow': {
+    titre: 'PDF Flow',
+    description: 'Reflue le contenu comme un traitement de texte : marges fixes (50pt), lignes empilées dans l\'ordre de lecture, pages A4, police Unicode.',
+    fichiers: [
+      { nom: 'backend/flow_pdf.py', fonction: 'render_flow_pdf()' },
+    ]
+  },
+  'backend-rebuilt': {
+    titre: 'PDF Reconstruit',
+    description: 'Reconstruit un PDF neuf avec texte visible et sélectionnable à la même position que le source. Copie images/dessins (en excluant les glyphes vectorisés), calibre les lignes de base, échantillonne les couleurs, utilise LiberationSans embarquée.',
+    fichiers: [
+      { nom: 'backend/rebuilt_pdf.py', fonction: 'render_rebuilt_pdf()' },
+      { nom: 'backend/rebuilt_pdf.py', fonction: '_calibrer_lignes()' },
+      { nom: 'backend/rebuilt_pdf.py', fonction: '_copier_images_et_dessins()' },
+      { nom: 'backend/rebuilt_pdf.py', fonction: '_inserer_mot()' },
+    ]
+  },
+  'backend-markdown': {
+    titre: 'Markdown',
+    description: 'Rendu Markdown exclusivement depuis page.resolved. Un titre par page, un paragraphe par ligne regroupée, tableaux en syntaxe Markdown.',
+    fichiers: [
+      { nom: 'backend/rebuilt_markdown.py', fonction: 'render_markdown()' },
+      { nom: 'backend/rebuilt_markdown.py', fonction: '_table_en_markdown()' },
+    ]
+  },
+  'backend-html': {
+    titre: 'HTML',
+    description: 'Rendu HTML "Document Flow" : empilement en ordre de lecture, hauteur libre, tableaux en HTML.',
+    fichiers: [
+      { nom: 'backend/rebuilt_html.py', fonction: 'render_html()' },
+      { nom: 'backend/rebuilt_html.py', fonction: '_table_en_html()' },
+    ]
+  },
+  'backend-docx': {
+    titre: 'DOCX',
+    description: 'Rendu Word (.docx) exclusivement depuis page.resolved. Un titre par page, un paragraphe par ligne, vrais tableaux Word avec style "Table Grid".',
+    fichiers: [
+      { nom: 'backend/rebuilt_docx.py', fonction: 'render_docx()' },
+      { nom: 'backend/rebuilt_docx.py', fonction: '_ajouter_tableau()' },
+    ]
+  },
+};
+
+function ouvrirDetail(cle) {
+  const detail = DETAILS[cle];
+  if (!detail) return;
+  const panel = document.getElementById('detailPanel');
+  const content = document.getElementById('detailContent');
+  const overlay = document.getElementById('overlay');
+
+  let html = `<h3>${detail.titre}</h3>`;
+  html += `<p>${detail.description}</p>`;
+  html += '<div class="fichiers"><h4>Fichiers & fonctions</h4>';
+  for (const f of detail.fichiers) {
+    html += `<div class="fichier-item">${f.nom}<span class="fonction">${f.fonction}</span></div>`;
+  }
+  html += '</div>';
+
+  content.innerHTML = html;
+  panel.classList.add('ouvert');
+  overlay.classList.add('visible');
+}
+
+function fermerDetail() {
+  document.getElementById('detailPanel').classList.remove('ouvert');
+  document.getElementById('overlay').classList.remove('visible');
+}
+
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') fermerDetail();
+});
+</script>
+
+</body>
+</html>
