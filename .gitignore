@@ -40,6 +40,7 @@ eggs/
 # --- Fichiers de sorties temporaires & Logs ---
 *.log
 *.output.pdf
+*.rebuilt.pdf
 *_cleaned.pdf
 *_propre.pdf
 *_propre.json
