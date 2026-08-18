@@ -19,11 +19,13 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# Moteur OCR (Cloud avec Mistral ou Local avec Tesseract/Pillow)
+# Moteur OCR (Cloud avec Mistral ou Local avec Tesseract/PaddleOCR)
 ocr = [
     "mistralai>=1.0.0",
     "pytesseract>=0.3.10",
-    "Pillow>=10.0"
+    "Pillow>=10.0",
+    "paddlepaddle",
+    "paddleocr"
 ]
 # Export au format Word
 docx = [
@@ -42,6 +44,8 @@ all = [
     "mistralai>=1.0.0",
     "pytesseract>=0.3.10",
     "Pillow>=10.0",
+    "paddlepaddle",
+    "paddleocr",
     "python-docx>=1.1.0",
     "pytest>=7.0.0"
 ]
