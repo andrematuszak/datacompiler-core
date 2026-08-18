@@ -8,7 +8,8 @@ version = "0.1.0"
 description = "Nettoyage et reconstruction géométrique fidèle de fichiers PDF"
 readme = "README.md"
 requires-python = ">=3.11"
-# Dépendances de base minimales pour faire tourner le noyau sans fonctionnalités extra
+
+# Dépendances de base obligatoires
 dependencies = [
     "pymupdf>=1.24",
     "pdfplumber>=0.11",
@@ -19,7 +20,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# Moteur OCR (Cloud avec Mistral ou Local avec Tesseract/PaddleOCR)
+# Moteurs OCR (Mistral, PaddleOCR)
 ocr = [
     "mistralai>=1.0.0",
     "pytesseract>=0.3.10",
@@ -31,7 +32,7 @@ ocr = [
 docx = [
     "python-docx>=1.1.0"
 ]
-# Outils de développement et de tests
+# Outils de dev et tests
 dev = [
     "pytest>=7.0.0",
     "pytest-cov",
@@ -39,7 +40,7 @@ dev = [
     "ruff",
     "mypy"
 ]
-# Tout installer en une commande
+# Groupe pour tout installer en une commande
 all = [
     "mistralai>=1.0.0",
     "pytesseract>=0.3.10",
