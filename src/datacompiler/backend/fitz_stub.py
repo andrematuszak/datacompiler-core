@@ -149,6 +149,7 @@ class _Doc:
     def close(self):
         pass
 
+Document = _Doc  # alias pour rebuilt_pdf.py
 
 # Registre : chemin -> liste de Page, pour que fitz.open(path) retourne des
 # pages pré-construites par le test. fitz.open() sans argument (le doc de
