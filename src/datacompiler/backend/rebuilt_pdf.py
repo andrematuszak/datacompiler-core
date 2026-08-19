@@ -6,10 +6,10 @@ Reprend et corrige _copier_images_et_dessins / _inserer_texte de
 faithful_pdf.py (clean_overlay), adaptées pour tourner directement sur le
 modèle Document (pas de JSON brut). Correctifs appliqués :
 
-  1. bug 'qu'/fitz.Quad : pts = item[1:] -> pts = list(item[1])
+  1. bug 'qu'/pymupdf.Quad : pts = item[1:] -> pts = list(item[1])
   2. fill_opacity=1.0 (opacité pleine, car c'est le SEUL contenu textuel)
   3. police de repli : LiberationSans (contient '€') au lieu de Helvetica
-  4. fitz.TextWriter au lieu d'insert_text() mot par mot — un writer par
+  4. pymupdf.TextWriter au lieu d'insert_text() mot par mot — un writer par
      segment de couleur contiguë, pas un writer par couleur globale
   5. output.subset_fonts() juste avant la sauvegarde
   6. calibrage de ligne de base par ligne visuelle (`_calibrer_lignes`)
@@ -30,7 +30,7 @@ La fonction render_rebuilt_pdf() est l'entrée principale, appelée depuis pipel
 import logging
 from pathlib import Path
 
-import fitz
+import pymupdf
 
 from datacompiler.model.document import Document
 
@@ -42,18 +42,18 @@ _FONT_REGULAR = _FONTS_DIR / "LiberationSans-Regular.ttf"
 _FONT_BOLD = _FONTS_DIR / "LiberationSans-Bold.ttf"
 _FONT_FALLBACK = _FONTS_DIR / "DejaVuSans.ttf"
 
-_polices = {}  # cache global (chemin -> (fitz.Font, nom))
+_polices = {}  # cache global (chemin -> (pymupdf.Font, nom))
 
 
 def _font_objet(gras):
-    """Retourne (fitz.Font, nom) pour le style demandé, avec cache."""
+    """Retourne (pymupdf.Font, nom) pour le style demandé, avec cache."""
     fichier = _FONT_BOLD if gras else _FONT_REGULAR
     nom = "LiberationSans-Bold" if gras else "LiberationSans"
     if not fichier.exists():
         fichier = _FONT_FALLBACK
         nom = "DejaVuSans"
     if fichier not in _polices:
-        _polices[fichier] = (fitz.Font(fontfile=str(fichier)), nom)
+        _polices[fichier] = (pymupdf.Font(fontfile=str(fichier)), nom)
     return _polices[fichier]
 
 
@@ -139,7 +139,7 @@ def _copier_images_et_dessins(src_page, dst_page, report, exclure=None):
         for w in exclure:
             if not w.bbox:
                 continue
-            zone = fitz.Rect(w.bbox.x0, w.bbox.y0, w.bbox.x1, w.bbox.y1)
+            zone = pymupdf.Rect(w.bbox.x0, w.bbox.y0, w.bbox.x1, w.bbox.y1)
             inter = rect & zone
             if not inter.is_empty and inter.get_area() >= 0.6 * rect.get_area():
                 return w
@@ -199,7 +199,7 @@ def _copier_images_et_dessins(src_page, dst_page, report, exclure=None):
                     if len(pts) == 4:
                         shape.draw_bezier(pts[0], pts[1], pts[2], pts[3])
                 elif typ == "qu":
-                    q = item[1]  # fitz.Quad
+                    q = item[1]  # pymupdf.Quad
                     shape.draw_polyline([q.ul, q.ur, q.lr, q.ll])
                 else:
                     dessins_ignores += 1
@@ -220,7 +220,7 @@ def _copier_images_et_dessins(src_page, dst_page, report, exclure=None):
 
 def _inserer_mot(etat, page_rect, mot, baseline_par_id, report):
     """
-    Ajoute le mot à un fitz.TextWriter.
+    Ajoute le mot à un pymupdf.TextWriter.
 
     TextWriter accumule en mémoire et n'écrit qu'UN SEUL stream par
     write_text(). Un nouveau writer est ouvert seulement quand la couleur
@@ -259,10 +259,10 @@ def _inserer_mot(etat, page_rect, mot, baseline_par_id, report):
     couleur_cle = tuple(round(c, 3) for c in couleur_rgb)
     if couleur_cle != etat["couleur_cle"]:
         etat["segments"].append((etat["couleur_cle"], etat["tw"]))
-        etat["tw"] = fitz.TextWriter(page_rect)
+        etat["tw"] = pymupdf.TextWriter(page_rect)
         etat["couleur_cle"] = couleur_cle
 
-    point = fitz.Point(bbox.x0, baseline_par_id.get(mot_id, bbox.y1))
+    point = pymupdf.Point(bbox.x0, baseline_par_id.get(mot_id, bbox.y1))
     etat["tw"].append(point, texte, font=police, fontsize=taille)
     report["mots_inseres"] = report.get("mots_inseres", 0) + 1
 
@@ -288,12 +288,12 @@ def render_rebuilt_pdf(doc: Document, output_path: str, source_pdf: str = None,
     if not source_path:
         raise ValueError("Le chemin du PDF source est requis (doc.metadata.source_pdf).")
 
-    source = fitz.open(source_path)
+    source = pymupdf.open(source_path)
     if len(source) != len(doc.pages):
         source.close()
         raise ValueError("Le PDF source et Document n'ont pas le même nombre de pages.")
 
-    output = fitz.open()
+    output = pymupdf.open()
     try:
         for src_page, model_page in zip(source, doc.pages):
             dst_page = output.new_page(width=src_page.rect.width, height=src_page.rect.height)
@@ -343,7 +343,7 @@ def render_rebuilt_pdf(doc: Document, output_path: str, source_pdf: str = None,
 
             # Insérer les mots avec TextWriter (un writer par couleur)
             writers = {
-                "tw": fitz.TextWriter(dst_page.rect),
+                "tw": pymupdf.TextWriter(dst_page.rect),
                 "couleur_cle": (0.0, 0.0, 0.0),
                 "segments": [],
                 "couleurs_echantillonnees": couleurs_echantillonnees,

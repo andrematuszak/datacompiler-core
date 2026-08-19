@@ -15,7 +15,7 @@ images copiées, dessins ignorés, mots insérés, fallbacks, etc.).
 from pathlib import Path
 import gc
 import logging
-import fitz
+import pymupdf
 
 from datacompiler.model.document import Document
 from datacompiler.compile.layout import grouper_par_ligne
@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 _FALLBACK_FONTNAME = "Helvetica"  # police standard disponible par défaut
 _FALLBACK_FONTFILE = None  # pas de fichier, on utilise une police standard
 
-_polices_chargees = {}  # cache global (nom -> fitz.Font) pour éviter de recharger
+_polices_chargees = {}  # cache global (nom -> pymupdf.Font) pour éviter de recharger
 
 
 def _hex_to_rgb(hex_color):
@@ -42,13 +42,13 @@ def _hex_to_rgb(hex_color):
 
 
 def _font_objet(fontname, fontfile=None):
-    """Retourne un objet fitz.Font, avec cache.
+    """Retourne un objet pymupdf.Font, avec cache.
 
     N'espère plus que `fontname` soit forcément un nom PyMuPDF valide : le
     code appelant (_inserer_tous_les_mots) peut transmettre tel quel un
     word.font qui est en réalité une valeur sentinelle posée en amont par
     l'extraction (ex. la chaîne littérale "Unknown" quand la police n'a pas
-    pu être identifiée) -- pas un vrai nom de police. fitz.Font() plante
+    pu être identifiée) -- pas un vrai nom de police. pymupdf.Font() plante
     dans ce cas (FzErrorArgument: cannot find builtin font), confirmé en
     production sur ce document précis. Repli explicite et loggué sur
     _FALLBACK_FONTNAME plutôt qu'un crash du pipeline entier ; le repli est
@@ -57,7 +57,7 @@ def _font_objet(fontname, fontfile=None):
     if fontname not in _polices_chargees:
         try:
             _polices_chargees[fontname] = (
-                fitz.Font(fontfile=fontfile) if fontfile else fitz.Font(fontname)
+                pymupdf.Font(fontfile=fontfile) if fontfile else pymupdf.Font(fontname)
             )
         except Exception as e:
             logger.warning(
@@ -65,7 +65,7 @@ def _font_objet(fontname, fontfile=None):
                 f"repli sur {_FALLBACK_FONTNAME}"
             )
             if _FALLBACK_FONTNAME not in _polices_chargees:
-                _polices_chargees[_FALLBACK_FONTNAME] = fitz.Font(_FALLBACK_FONTNAME)
+                _polices_chargees[_FALLBACK_FONTNAME] = pymupdf.Font(_FALLBACK_FONTNAME)
             _polices_chargees[fontname] = _polices_chargees[_FALLBACK_FONTNAME]
     return _polices_chargees[fontname]
 
@@ -76,7 +76,7 @@ def _inserer_texte(page, x0, y1, texte, largeur_cible, taille_nominale,
     police = _font_objet(nom_police, _FALLBACK_FONTFILE)
     # Le nom RÉELLEMENT utilisable, après repli éventuel dans _font_objet --
     # PAS nom_police tel quel. _font_objet gère déjà le cas d'un nom
-    # invalide (ex. sentinelle "Unknown") en interne pour fitz.Font(), mais
+    # invalide (ex. sentinelle "Unknown") en interne pour pymupdf.Font(), mais
     # ce repli ne vivait que dans l'objet retourné -- insert_text() en
     # aval refait sa PROPRE résolution à partir du nom passé en paramètre,
     # indépendamment du cache Python, et plantait donc à nouveau si on lui
@@ -159,8 +159,8 @@ def _extraire_et_ajouter_polices(source_doc, dest_doc, mots, report):
             # Si ce nom est utilisé dans les mots, on l'extrait
             if name in font_names and name not in mapping:
                 try:
-                    # Méthode 1 : via fitz.Font(xref)
-                    font_obj = fitz.Font(xref=xref)
+                    # Méthode 1 : via pymupdf.Font(xref)
+                    font_obj = pymupdf.Font(xref=xref)
                     font_buffer = font_obj.buffer
                     if not font_buffer:
                         raise ValueError("Buffer vide")
@@ -282,7 +282,7 @@ def render_faithful_pdf(doc: Document, output_path: str,
     if strategy not in {"overlay", "clean_overlay", "rasterized"}:
         raise ValueError("strategy doit être 'overlay', 'clean_overlay' ou 'rasterized'.")
 
-    source = fitz.open(source_path)
+    source = pymupdf.open(source_path)
     if len(source) != len(doc.pages):
         raise ValueError("Le PDF source et Document n'ont pas le même nombre de pages.")
 
@@ -299,9 +299,9 @@ def render_faithful_pdf(doc: Document, output_path: str,
     output = None
     try:
         if strategy == "rasterized":
-            output = fitz.open()
+            output = pymupdf.open()
             scale = dpi / 72.0
-            matrix = fitz.Matrix(scale, scale)
+            matrix = pymupdf.Matrix(scale, scale)
             for src_page, model_page in zip(source, doc.pages):
                 target = output.new_page(width=src_page.rect.width, height=src_page.rect.height)
                 pix = src_page.get_pixmap(matrix=matrix, alpha=False)
@@ -316,7 +316,7 @@ def render_faithful_pdf(doc: Document, output_path: str,
             output.save(output_path, garbage=4, deflate=True)
 
         elif strategy == "clean_overlay":
-            output = fitz.open()
+            output = pymupdf.open()
             # On prépare le mapping des polices en fonction de tous les mots résolus
             all_words = []
             for p in doc.pages:
@@ -339,7 +339,7 @@ def render_faithful_pdf(doc: Document, output_path: str,
             output.save(output_path, garbage=4, deflate=True)
 
         else:  # overlay classique
-            output = fitz.open(source_path)
+            output = pymupdf.open(source_path)
             for page, model_page in zip(output, doc.pages):
                 mots_visibles = [w for w in model_page.resolved.words
                                  if w.resolved_text != w.text or w.reconstructed]

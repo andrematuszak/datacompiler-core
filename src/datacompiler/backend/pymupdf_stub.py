@@ -1,10 +1,10 @@
-"""fitz_stub.py — Faux module `fitz`, juste assez pour importer et exécuter
+"""pymupdf_stub.py — Faux module `pymupdf`, juste assez pour importer et exécuter
 rebuilt_pdf.py sans PyMuPDF installé. À enregistrer dans sys.modules AVANT
 d'importer rebuilt_pdf.py :
 
     import sys
-    import fitz_stub
-    sys.modules["fitz"] = fitz_stub
+    import pymupdf_stub
+    sys.modules["pymupdf"] = pymupdf_stub
 
 But : tester le VRAI rebuilt_pdf.py (non modifié, non réécrit) plutôt qu'une
 copie séparée -- éviter le piège déjà rencontré plusieurs fois dans ce
@@ -19,7 +19,7 @@ valider des valeurs de rendu pixel-exactes.
 from types import SimpleNamespace
 
 def paper_size(name):
-    """Bouchon pour simuler fitz.paper_size."""
+    """Bouchon pour simuler pymupdf.paper_size."""
     # Renvoie les dimensions A4 standards en points (largeur, hauteur)
     return (595.0, 842.0)
 
@@ -89,7 +89,7 @@ class Shape:
 
 
 class Page:
-    """Page SOURCE (fitz page brute) -- get_images/get_drawings/etc."""
+    """Page SOURCE (pymupdf page brute) -- get_images/get_drawings/etc."""
     def __init__(self, width=595.0, height=842.0, images=None, drawings=None):
         self.rect = SimpleNamespace(width=width, height=height)
         self._images = images or []
@@ -151,13 +151,13 @@ class _Doc:
 
 Document = _Doc  # alias pour rebuilt_pdf.py
 
-# Registre : chemin -> liste de Page, pour que fitz.open(path) retourne des
-# pages pré-construites par le test. fitz.open() sans argument (le doc de
+# Registre : chemin -> liste de Page, pour que pymupdf.open(path) retourne des
+# pages pré-construites par le test. pymupdf.open() sans argument (le doc de
 # sortie, vierge) retourne toujours un _Doc vide.
 _FAKE_SOURCES = {}
 
 
-def open(path=None):  # noqa: A001 (redéfinit sciemment open, comme fitz)
+def open(path=None):  # noqa: A001 (redéfinit sciemment open, comme pymupdf)
     if path is not None and path in _FAKE_SOURCES:
         return _Doc(pages=_FAKE_SOURCES[path])
     return _Doc()
