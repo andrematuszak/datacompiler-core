@@ -1,5 +1,2 @@
 # --- Installation du projet en mode éditable avec ses dépendances ---
 -e .
-
-# --- Outillage de Développement & Tests ---
-pytest>=7.0.0
