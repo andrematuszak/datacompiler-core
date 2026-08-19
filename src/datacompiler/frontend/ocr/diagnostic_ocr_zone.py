@@ -3,7 +3,7 @@ plusieurs combinaisons DPI x PSM Tesseract, avec confiance par mot.
 
 Objectif : confirmer/infirmer une hypothèse AVANT de toucher à
 tesseract.py, conformément à "diagnostic avant correctif". Aucune
-dépendance au reste du pipeline datacompiler -- juste fitz + pytesseract,
+dépendance au reste du pipeline datacompiler -- juste pymupdf + pytesseract,
 pour pouvoir tourner ce script seul sur un poste de dev.
 
 Usage :
@@ -18,13 +18,13 @@ Comment trouver la bbox :
     - ou en repérant la zone dans frontend/diagnostic/vector_text.py
       (zones_texte_vectorise_probable) et en imprimant ses bbox
 
---page est en INDEX 0 (comme fitz), pas le numéro affiché sur le PDF.
+--page est en INDEX 0 (comme pymupdf), pas le numéro affiché sur le PDF.
 """
 
 import argparse
 import io
 
-import fitz
+import pymupdf
 import pytesseract
 
 import sys
@@ -62,12 +62,12 @@ _DPI_A_TESTER = [300, 400, 600]
 
 
 def _cropper_zone(pdf_path: str, page_index: int, bbox: tuple, dpi: int) -> Image.Image:
-    doc = fitz.open(pdf_path)
+    doc = pymupdf.open(pdf_path)
     try:
         page = doc[page_index]
-        rect = fitz.Rect(*bbox)
+        rect = pymupdf.Rect(*bbox)
         scale = dpi / 72.0
-        matrix = fitz.Matrix(scale, scale)
+        matrix = pymupdf.Matrix(scale, scale)
         pix = page.get_pixmap(matrix=matrix, clip=rect, alpha=False)
         return Image.open(io.BytesIO(pix.tobytes("png")))
     finally:
@@ -113,7 +113,7 @@ def diagnostiquer(pdf_path: str, page_index: int, bbox: tuple, lang: str, etique
 def main():
     parser = argparse.ArgumentParser(description="Diagnostic OCR isolé sur une zone de PDF")
     parser.add_argument("pdf")
-    parser.add_argument("--page", type=int, required=True, help="index de page (0-based, comme fitz)")
+    parser.add_argument("--page", type=int, required=True, help="index de page (0-based, comme pymupdf)")
     parser.add_argument("--bbox", type=float, nargs=4, required=True, metavar=("X0", "Y0", "X1", "Y1"))
     parser.add_argument("--lang", default="fra")
     parser.add_argument("--etiquette", default="", help="nom lisible de la zone pour l'affichage")

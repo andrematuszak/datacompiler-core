@@ -3,7 +3,7 @@ import sys
 import json
 import random
 import base64
-import fitz
+import pymupdf
 from pathlib import Path
 from mistralai import Mistral
 
@@ -64,7 +64,7 @@ def ocriser_zone_aléatoire(pdf_path: str, output_path: str = "zone_ocr.json"):
         raise FileNotFoundError(f"Le fichier {pdf_path} est introuvable.")
 
     # 1. Ouvrir le PDF et récupérer la Page 1
-    doc = fitz.open(pdf_path)
+    doc = pymupdf.open(pdf_path)
     page = doc[0]
     w, h = page.rect.width, page.rect.height
 
@@ -74,7 +74,7 @@ def ocriser_zone_aléatoire(pdf_path: str, output_path: str = "zone_ocr.json"):
     y0 = random.uniform(0, max(1, h - 150))
     x1 = random.uniform(x0 + 100, w)
     y1 = random.uniform(y0 + 100, h)
-    crop_rect = fitz.Rect(x0, y0, x1, y1)
+    crop_rect = pymupdf.Rect(x0, y0, x1, y1)
 
     print(f"📐 Zone aléatoire générée (Page 1) : x0={x0:.1f}, y0={y0:.1f}, x1={x1:.1f}, y1={y1:.1f}")
 

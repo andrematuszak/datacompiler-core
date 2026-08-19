@@ -1,7 +1,7 @@
 """test_rebuilt_pdf_regression.py — Non-régression pour rebuilt_pdf.py.
 
 Fait tourner le VRAI rebuilt_pdf.py (import direct, non réécrit) contre un
-faux module `fitz` (fitz_stub.py) et un modèle Document minimal, pour
+faux module `pymupdf` (pymupdf_stub.py) et un modèle Document minimal, pour
 attraper sans PyMuPDF installé les deux classes de bugs qu'on a mis
 plusieurs tours à diagnostiquer à l'œil sur un rendu PDF entier :
 
@@ -27,12 +27,12 @@ import os
 sys.path.insert(0, os.path.dirname(__file__))
 sys.path.insert(0, os.path.dirname(__file__))
 
-import fitz_stub
-sys.modules["fitz"] = fitz_stub
+import pymupdf_stub
+sys.modules["pymupdf"] = pymupdf_stub
 
 import importlib
 import rebuilt_pdf
-importlib.reload(rebuilt_pdf)  # au cas où déjà importé avec l'ancien fitz réel
+importlib.reload(rebuilt_pdf)  # au cas où déjà importé avec l'ancien pymupdf réel
 
 from datacompiler.model.document import (
     Document, TableElement, Page, Word, BBox, NativeContainer, GraphicsContainer, ResolvedContainer, Metadata,
@@ -82,7 +82,7 @@ def test_id_coherence_couleur_echantillonnee():
     sur mot.color (#000000, noir) faute de correspondance d'id().
 
     Nécessite de capturer le document de SORTIE créé par render_rebuilt_pdf
-    (fitz.open() sans argument) -- fitz_stub.open est instrumenté juste
+    (pymupdf.open() sans argument) -- pymupdf_stub.open est instrumenté juste
     en dessous pour ça avant que cette fonction ne soit appelée.
     """
     _docs_crees.clear()
@@ -90,15 +90,15 @@ def test_id_coherence_couleur_echantillonnee():
     doc = Document(pages=[page_json], metadata=Metadata(source_pdf="/fake/source.pdf", filename="test.pdf"))
 
     dessin_blanc = {
-        "rect": fitz_stub.Rect(20, 214, 56, 223),
-        "items": [("re", fitz_stub.Rect(20, 214, 56, 223))],
+        "rect": pymupdf_stub.Rect(20, 214, 56, 223),
+        "items": [("re", pymupdf_stub.Rect(20, 214, 56, 223))],
         "color": (1.0, 1.0, 1.0),
         "fill": (1.0, 1.0, 1.0),
         "width": 1.0,
         "dashes": None,
     }
-    src_page = fitz_stub.Page(width=595, height=842, images=[], drawings=[dessin_blanc])
-    fitz_stub._FAKE_SOURCES["/fake/source.pdf"] = [src_page]
+    src_page = pymupdf_stub.Page(width=595, height=842, images=[], drawings=[dessin_blanc])
+    pymupdf_stub._FAKE_SOURCES["/fake/source.pdf"] = [src_page]
 
     rebuilt_pdf.render_rebuilt_pdf(doc, "/tmp/test_id.pdf", source_pdf="/fake/source.pdf")
 
@@ -128,10 +128,10 @@ def test_id_coherence_couleur_echantillonnee():
 
 # --- Instrumentation : capture le document de sortie -----------------------
 # render_rebuilt_pdf() ne retourne que le chemin, pas l'objet Document --
-# on intercepte fitz.open() sans argument (toujours le doc de SORTIE dans
+# on intercepte pymupdf.open() sans argument (toujours le doc de SORTIE dans
 # ce fichier) pour récupérer une référence dessus après coup.
 _docs_crees = []
-_open_original = fitz_stub.open
+_open_original = pymupdf_stub.open
 
 
 def _open_instrumente(path=None):
@@ -141,7 +141,7 @@ def _open_instrumente(path=None):
     return d
 
 
-fitz_stub.open = _open_instrumente
+pymupdf_stub.open = _open_instrumente
 
 
 def test_natif_pas_de_recalage():
@@ -152,7 +152,7 @@ def test_natif_pas_de_recalage():
     page_json = Page(number=1, width=595.0, height=842.0, native=NativeContainer(words=[mot_natif]),
                       graphics=GraphicsContainer(tables=[]), resolved=ResolvedContainer(words=[mot_natif]))
     doc = Document(pages=[page_json], metadata=Metadata(source_pdf="/fake/natif.pdf", filename="t.pdf"))
-    fitz_stub._FAKE_SOURCES["/fake/natif.pdf"] = [fitz_stub.Page(595, 842)]
+    pymupdf_stub._FAKE_SOURCES["/fake/natif.pdf"] = [pymupdf_stub.Page(595, 842)]
 
     _docs_crees.clear()
     rebuilt_pdf.render_rebuilt_pdf(doc, "/tmp/test_natif.pdf", source_pdf="/fake/natif.pdf")
