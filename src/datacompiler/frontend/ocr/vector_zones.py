@@ -15,10 +15,10 @@ aujourd'hui seul TesseractBackend le fait (bbox par mot). Fonctionne donc
 indépendamment de MISTRAL_API_KEY.
 """
 
-import fitz
+import pymupdf
 
 from datacompiler.frontend.diagnostic.vector_text import zones_texte_vectorise_probable
-from datacompiler.frontend.extract.pymupdf import rendre_zone_image
+from datacompiler.frontend.extract.extract_pymupdf import rendre_zone_image
 from datacompiler.model.document import BBox, Document
 
 MARGE_ZONE = 2.0  # pt -- contexte autour de la bbox détectée ; une zone trop serrée nuit à Tesseract
@@ -101,7 +101,7 @@ def recuperer_texte_vectorise(doc: Document, pdf_path: str, backend, lang: str =
     if not hasattr(backend, "ocraliser_zone"):
         return doc
 
-    source = fitz.open(pdf_path)
+    source = pymupdf.open(pdf_path)
     try:
         for i, page in enumerate(doc.pages):
             zones = zones_texte_vectorise_probable(page)
@@ -114,10 +114,10 @@ def recuperer_texte_vectorise(doc: Document, pdf_path: str, backend, lang: str =
             ]
             zones_a_traiter = _fusionner_zones_chevauchantes(zones_marginees)
 
-            page_fitz = source[i]
+            page_pymupdf = source[i]
             mots_natifs_existants = page.native.words  # référence avant tout ajout, pour cette page
             for zone in zones_a_traiter:
-                image, _ = rendre_zone_image(page_fitz, zone, dpi=dpi)
+                image, _ = rendre_zone_image(page_pymupdf, zone, dpi=dpi)
                 try:
                     mots = backend.ocraliser_zone(image, offset=(zone.x0, zone.y0), lang=lang, dpi=dpi)
                 except NotImplementedError:

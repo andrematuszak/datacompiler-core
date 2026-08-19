@@ -10,7 +10,7 @@ from __future__ import annotations
 import io
 from typing import Optional
 
-import fitz
+import pymupdf
 
 SEUIL_CONFIANCE_MIN = 0.4
 TAILLE_MAX_SOUS_ECHANTILLONNAGE = 1500
@@ -55,7 +55,7 @@ def contient_probablement_du_texte(image_bytes: bytes, lang: str = "eng") -> Opt
     return False
 
 
-def sonder_images_page(document: fitz.Document, page: fitz.Page, lang: str = "eng") -> list[tuple[fitz.Rect, Optional[bool]]]:
+def sonder_images_page(document: pymupdf.Document, page: pymupdf.Page, lang: str = "eng") -> list[tuple[pymupdf.Rect, Optional[bool]]]:
     """Associe chaque placement d'image de ``page`` à son signal texte."""
     resultats = []
     signaux_par_xref = {}

@@ -22,9 +22,9 @@ que calculée par diagnostic_zones_reelles.py)
 
 import argparse
 
-import fitz
+import pymupdf
 
-from datacompiler.frontend.extract.pymupdf import rendre_zone_image
+from datacompiler.frontend.extract.extract_pymupdf import rendre_zone_image
 from datacompiler.frontend.ocr.tesseract import TesseractBackend, _extraire_deux_passes, _extraire_tesseract
 from datacompiler.model.document import BBox
 
@@ -32,13 +32,13 @@ from datacompiler.model.document import BBox
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("pdf")
-    parser.add_argument("--page", type=int, required=True, help="index de page (0-based, comme fitz)")
+    parser.add_argument("--page", type=int, required=True, help="index de page (0-based, comme pymupdf)")
     parser.add_argument("--bbox", type=float, nargs=4, required=True, metavar=("X0", "Y0", "X1", "Y1"))
     parser.add_argument("--lang", default="fra")
     parser.add_argument("--dpi", type=int, default=300)
     args = parser.parse_args()
 
-    doc = fitz.open(args.pdf)
+    doc = pymupdf.open(args.pdf)
     page = doc[args.page]
     zone = BBox(*args.bbox)
 

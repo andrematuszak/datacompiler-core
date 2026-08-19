@@ -33,7 +33,7 @@ _BBOX_SORTIE_PAVIS = (80.4, 215.7, 102.0, 222.2)
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("pdf")
-    parser.add_argument("--page", type=int, required=True, help="index de page (0-based, comme fitz)")
+    parser.add_argument("--page", type=int, required=True, help="index de page (0-based, comme pymupdf)")
     args = parser.parse_args()
 
     print("Extraction du document (peut prendre quelques secondes)...")

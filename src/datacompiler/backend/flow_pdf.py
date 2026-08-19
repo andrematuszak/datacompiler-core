@@ -22,7 +22,7 @@ texte est VISIBLE, donc l'erreur serait visible aussi, pas seulement dans
 l'extraction)."""
 
 from pathlib import Path
-import fitz
+import pymupdf
 from datacompiler.model.document import Document
 from datacompiler.compile.layout import grouper_par_ligne
 from .faithful_pdf import _FALLBACK_FONTNAME, _FALLBACK_FONTFILE, _font_objet
@@ -31,11 +31,11 @@ MARGE = 50.0
 TAILLE_POLICE = 10.5
 TAILLE_TITRE = 13.0
 INTERLIGNE = 14.0
-_LARGEUR_PAGE, _HAUTEUR_PAGE = fitz.paper_size("a4")
+_LARGEUR_PAGE, _HAUTEUR_PAGE = pymupdf.paper_size("a4")
 
 
 def render_flow_pdf(doc: Document, output_path: str) -> str:
-    output = fitz.open()
+    output = pymupdf.open()
     _font_objet(_FALLBACK_FONTNAME, _FALLBACK_FONTFILE)  # charge/vérifie la police avant d'écrire
 
     etat = {"page": output.new_page(width=_LARGEUR_PAGE, height=_HAUTEUR_PAGE), "y": MARGE}
