@@ -14,13 +14,30 @@ Mistral ne fournit ni bbox ni confiance par mot dans ce mode d'appel --
 bbox=None (cf. alignment.py, qui n'aligne que par séquence de texte pour
 cette raison) et confidence=None (confidence.confiance_ocr() applique
 0.5 par défaut dans ce cas, pas de traitement spécial nécessaire ici).
+Remplit page.ocr.words (PAS page.ocr.blocks) à partir du markdown renvoyé
+par l'API, tokenisé BRUTEMENT (split sur les espaces, syntaxe markdown
+comprise dans les tokens : "|", "---", "^{14}", "..."). Choix volontaire
+pour une première version qui marche -- alignment.py fera un diff plus
+bruyant sur les tableaux qu'avec du texte nettoyé, mais c'est un problème
+à mesurer avant de le résoudre, pas à anticiper. Cf. discussion : si le
+diff s'avère trop perturbé par la syntaxe markdown (le tableau RÉSIDENCE
+en particulier), nettoyer/normaliser avant tokenisation sera la suite
+logique.
+
+Mistral ne fournit ni bbox ni confiance par mot dans ce mode d'appel --
+bbox=None (cf. alignment.py, qui n'aligne que par séquence de texte pour
+cette raison) et confidence=None (confidence.confiance_ocr() applique
+0.5 par défaut dans ce cas, pas de traitement spécial nécessaire ici).
 """
 
 import base64
+import base64
 import os
 
-from datacompiler.model.document import Document, Word
+from datacompiler.model.document import Document, Word, Word
 from datacompiler.frontend.ocr.base import OcrBackend
+
+MODELE_OCR = "mistral-ocr-latest"
 
 MODELE_OCR = "mistral-ocr-latest"
 
@@ -36,6 +53,7 @@ class MistralBackend(OcrBackend):
         # 1. Vérification de la clé API
         api_key = kwargs.get("api_key") or self.api_key
 
+
         if not api_key:
             raise ValueError(
                 "Clé API Mistral manquante ! "
@@ -46,7 +64,7 @@ class MistralBackend(OcrBackend):
         # Import différé : mistralai est une dépendance optionnelle (comme
         # pytesseract pour TesseractBackend) -- ne doit pas empêcher le
         # reste du package de s'importer si absent.
-        from mistralai.client import Mistral
+        from mistralai import Mistral
 
         client = Mistral(api_key=api_key)
 
@@ -73,16 +91,6 @@ class MistralBackend(OcrBackend):
                 "document_url": f"data:application/pdf;base64,{pdf_base64}",
             },
         )
-
-        # DIAGNOSTIC TEMPORAIRE -- la boucle ci-dessous ne dit jamais si
-        # elle n'a rien trouvé à écrire ; ocr.words resterait vide
-        # silencieusement, log "Appel OCR..." affiché quand même (émis
-        # AVANT cet appel, dans pipeline.py, sans rapport avec le succès
-        # réel de l'écriture). À retirer une fois la cause confirmée.
-        print(f"[DIAGNOSTIC MISTRAL] response.pages : {len(response.pages)} page(s)")
-        for p in response.pages[:2]:
-            print(f"[DIAGNOSTIC MISTRAL]   page index={p.index}  "
-                  f"markdown (100 premiers car.) : {(p.markdown or '')[:100]!r}")
 
         for page_result in response.pages:
             idx = page_result.index  # 0-based, cf. JSON de test (pages[i].index)
