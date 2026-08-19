@@ -11,7 +11,6 @@ from datacompiler.model.document import Document
 from datacompiler.frontend.extract import extraire
 from datacompiler.frontend import diagnostiquer, ocraliser, report as diagnostic_report
 from datacompiler.frontend.ocr.tesseract import TesseractBackend
-from datacompiler.frontend.ocr.paddle import PaddleOCRBackend
 from datacompiler.frontend.ocr.vector_zones import recuperer_texte_vectorise
 from datacompiler.compile import resoudre
 from datacompiler.backend import EXTENSIONS, FORMATS
@@ -78,11 +77,10 @@ def executer_pipeline(pdf_path, strategy="overlay", sauver_json=True,
     # Tesseract seul (cf. fusion_ocr.fusionner_zone_multi_backend) --
     # aucune vérification de disponibilité nécessaire ici.
     logger.info("[4/6] OCR ciblé (texte vectorisé)...")
-    backends_ocr_vectoriel = {
-        "tesseract": TesseractBackend(lang=tesseract_lang, dpi=dpi_ocr_vectoriel),
-    }
+    backend_tesseract = TesseractBackend(lang=tesseract_lang, dpi=dpi_ocr_vectoriel)
+
     recuperer_texte_vectorise(
-        doc, pdf_path, backends_ocr_vectoriel,
+        doc, pdf_path, backend_tesseract,
         lang=tesseract_lang, dpi=dpi_ocr_vectoriel,
     )
 
@@ -127,7 +125,6 @@ def main():
                         help="DPI dédié à l'OCR ciblé des zones de texte vectorisé (découplé de --dpi) -- "
                              "600 corrige 'Pavis' mais régresse d'autres zones, cf. docstring executer_pipeline")
     parser.add_argument("--tesseract-lang", default="fra", help="Langue Tesseract pour l'OCR ciblé du texte vectorisé (code ISO 639-2, ex. 'fra')")
-    parser.add_argument("--paddle-lang", default="fr", help="Langue PaddleOCR pour l'OCR ciblé du texte vectorisé (code ISO 639-1, ex. 'fr')")
     parser.add_argument("--no-json", action="store_true")
     parser.add_argument("-v", "--verbose", action="store_true", help="Active l'affichage des logs de niveau DEBUG")
     args = parser.parse_args()
@@ -142,7 +139,7 @@ def main():
     executer_pipeline(
         args.pdf, strategy=args.strategy, sauver_json=not args.no_json,
         dpi=args.dpi, dpi_ocr_vectoriel=args.dpi_ocr_vectoriel,
-        tesseract_lang=args.tesseract_lang, paddle_lang=args.paddle_lang,
+        tesseract_lang=args.tesseract_lang
     )
 
 
