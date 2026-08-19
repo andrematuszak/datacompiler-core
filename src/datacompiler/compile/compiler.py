@@ -1,4 +1,4 @@
-﻿"""compiler.py — Arbitrage des sources (natif + OCR) vers une couche de
+"""compiler.py — Arbitrage des sources (natif + OCR) vers une couche de
 sortie indépendante (page.resolved). Package plutôt que module unique : le
 passthrough minimal de l'ancien resolve.py ne suffit plus dès qu'on gère
 l'ordre de lecture, la typographie et les conflits natif/OCR -- chaque
@@ -52,12 +52,15 @@ plutôt qu'un seul chiffre agrégé.
 
 from collections import Counter
 from copy import deepcopy
+import logging
 
 
 from datacompiler.model.document import Document
 
 
 from . import alignment, conflict_resolution, layout, qa, reading_order, typography
+
+logger = logging.getLogger(__name__)
 
 
 def _cle_valeur_mot(mot):
@@ -91,6 +94,22 @@ def _snapshot(etape, page, mots, max_exemples=6):
     doublons_identite = {i: cnt for i, cnt in compte_identite.items() if cnt > 1}
     n_mots_touches_identite = sum(doublons_identite.values())
 
+    if doublons_valeur or doublons_identite:
+        logger.warning(
+            "[DOUBLON] page %s, étape '%s' : total=%d, "
+            "doublons_valeur=%d mot(s) touché(s) sur %d groupe(s), "
+            "doublons_identite=%d mot(s) touché(s) sur %d objet(s)",
+            n_page, etape, total,
+            n_mots_touches_valeur, len(doublons_valeur),
+            n_mots_touches_identite, len(doublons_identite),
+        )
+        for i, ((texte, bbox_cle), cnt) in enumerate(doublons_valeur.items()):
+            if i >= max_exemples:
+                logger.warning("  ... (%d groupe(s) supplémentaire(s) non affiché(s))",
+                                len(doublons_valeur) - max_exemples)
+                break
+            logger.warning("  valeur x%d : texte=%r bbox=%s", cnt, texte, bbox_cle)
+
     return mots
 
 
@@ -120,7 +139,7 @@ def _resoudre_page(page):
     layout.assigner_lignes(mots_resolus)
     _snapshot("layout.assigner_lignes", page, mots_resolus)
 
-    qa.annoter(mots_resolus)
+    qa.annoter(mots_resolus, page.graphics.tables)
     _snapshot("qa.annoter (sortie finale de _resoudre_page)", page, mots_resolus)
 
     return mots_resolus

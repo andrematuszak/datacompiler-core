@@ -82,24 +82,18 @@ import itertools
 from copy import deepcopy
 from collections import defaultdict
 
+from datacompiler.compile.geometry import dans_un_tableau
+
 
 SEUIL_CHEVAUCHEMENT_RANGEE = 0.3   # fraction de la + petite hauteur, pour dire "même rangée"
 DILATATION_CLUSTERING_VECTO = 8.0  # pt, marge de tolérance pour fusionner des mots vectorisés proches
 TOLERANCE_LIGNE = 3.5              # pt, écart de y0 toléré pour dire "même ligne" (bruit OCR)
 
 
-def _dans_un_tableau(mot, tables):
-    """Vérifie si le centre d'un mot tombe dans une table."""
-    if not mot.bbox:
-        return False
-    cx = (mot.bbox.x0 + mot.bbox.x1) / 2
-    cy = (mot.bbox.y0 + mot.bbox.y1) / 2
-    for table in tables:
-        if not table.bbox:
-            continue
-        if table.bbox.x0 <= cx <= table.bbox.x1 and table.bbox.y0 <= cy <= table.bbox.y1:
-            return True
-    return False
+# _dans_un_tableau extraite vers geometry.py (partagée avec qa.py) --
+# réutilisée ici par son nouveau nom pour ne rien changer au reste du
+# fichier.
+_dans_un_tableau = dans_un_tableau
 
 
 def _grouper_lignes_par_tolerance(mots, tolerance=TOLERANCE_LIGNE):

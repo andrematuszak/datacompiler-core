@@ -1,4 +1,4 @@
-﻿"""qa.py — Détection d'anomalies post-résolution : ANNOTE resolved.words
+"""qa.py — Détection d'anomalies post-résolution : ANNOTE resolved.words
 (champ .flags), ne modifie jamais texte ni bbox. Chaque sous-vérification
 est indépendante et n'est activée que si elle a une base fiable pour
 fonctionner.
@@ -22,6 +22,8 @@ _colonnes_depuis_fragments, correction en cours) :
 
 from datacompiler.model.document import Flag
 
+from .geometry import dans_un_tableau
+
 # Valeur de départ arbitraire, non calibrée -- cf. roadmap (étape
 # calibration confidence vs exactitude réelle sur échantillon annoté).
 SEUIL_CONFIANCE_A_VERIFIER = 0.6
@@ -39,7 +41,7 @@ def _confiance_basse(mots: list) -> None:
                 severity="warning",
             ))
 
-def _ordre_suspect(mots: list, seuil_regression: float = 50.0) -> None:
+def _ordre_suspect(mots: list, tables: list, seuil_regression: float = 50.0) -> None:
     """Détecte les sauts arrière significatifs dans l'ordre de sortie final
     (resolved.words) : un mot dont le y0 retombe nettement en dessous du
     maximum déjà atteint plus tôt dans la séquence.
@@ -50,15 +52,23 @@ def _ordre_suspect(mots: list, seuil_regression: float = 50.0) -> None:
     -- pas seulement pour le cas déjà identifié à la main sur
     test-impots-revenu.
 
-    LIMITE CONNUE : va se déclencher aussi sur un vrai document multi-
-    colonnes légitime (le passage colonne gauche -> colonne droite EST un
-    saut arrière en y). Tant que reading_order.py ne distingue pas
-    colonnes réelles et blocs séquentiels, ce flag doit être lu comme "à
-    vérifier", pas comme une preuve de bug -- à recalibrer une fois cette
-    distinction en place côté reading_order.py."""
+    Mots de TABLE exclus du calcul (via `dans_un_tableau`, partagée avec
+    reading_order.py) : reading_order.ordonner() réintègre volontairement
+    les mots de table à la fin de la séquence, triés indépendamment par
+    (y0, x0) -- décision d'architecture assumée (structure interne du
+    tableau pas encore reconstruite), pas un bug. Sans cette exclusion,
+    PRESQUE CHAQUE mot de table déclenchait ce flag mécaniquement (mesuré :
+    49/317 et 32/332 mots sur les deux pages à tableau du document de
+    test, 0 sur la page sans tableau) -- un canari qui sonnait pour une
+    raison structurelle connue, pas pour un vrai problème d'ordre.
+
+    LIMITE CONNUE RESTANTE : va toujours se déclencher aussi sur un vrai
+    document multi-colonnes légitime hors table (le passage colonne
+    gauche -> colonne droite EST un saut arrière en y). Ce flag reste "à
+    vérifier", pas une preuve de bug, pour ce cas-là."""
     max_y_vu = None
     for mot in mots:
-        if not mot.bbox:
+        if not mot.bbox or dans_un_tableau(mot, tables):
             continue
         if max_y_vu is not None and mot.bbox.y0 < max_y_vu - seuil_regression:
             mot.flags.append(Flag(
@@ -70,9 +80,12 @@ def _ordre_suspect(mots: list, seuil_regression: float = 50.0) -> None:
         max_y_vu = mot.bbox.y0 if max_y_vu is None else max(max_y_vu, mot.bbox.y0)
 
 
-def annoter(mots: list) -> list:
+def annoter(mots: list, tables: list) -> list:
     """Point d'entrée : annote `mots` (resolved.words) en place, retourne
-    la même liste -- convention identique à conflict_resolution.resoudre_page."""
+    la même liste -- convention identique à conflict_resolution.resoudre_page.
+
+    `tables` : page.graphics.tables, nécessaire à _ordre_suspect pour
+    exclure les mots de table (cf. son docstring)."""
     _confiance_basse(mots)
-    _ordre_suspect(mots)
+    _ordre_suspect(mots, tables)
     return mots
