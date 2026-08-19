@@ -5,7 +5,7 @@ Moteur 1 — Extraction des données textuelles et métadonnées via PyMuPDF.
 
 from pathlib import Path
 from typing import Dict, Tuple, Set, Any, List
-import fitz
+import pymupdf
 
 from datacompiler.model.document import BBox, Font, GraphicVector, Page, Word
 
@@ -20,13 +20,13 @@ def _convertir_couleur(srgb_int: int | None) -> str:
     return f"#{r:02x}{g:02x}{b:02x}"
 
 
-def _extraire_zones_vectorielles(page_fitz: fitz.Page) -> List[Dict[str, Any]]:
+def _extraire_zones_vectorielles(page_pymupdf: pymupdf.Page) -> List[Dict[str, Any]]:
     """
     Extrait les zones vectorielles (dessins) de la page qui pourraient correspondre
     à du texte dessiné géométriquement. Retourne une liste de bbox avec leurs
     caractéristiques.
     """
-    drawings = page_fitz.get_drawings()
+    drawings = page_pymupdf.get_drawings()
     zones_vectorielles = []
     
     for drawing in drawings:
@@ -124,35 +124,35 @@ def _mot_dans_zone_vectorielle(word_bbox: BBox, zone_bbox: List[float]) -> bool:
     return x0 <= cx <= x1 and y0 <= cy <= y1
 
 
-def extraire_metadonnees(doc_fitz: fitz.Document, pdf_path: str) -> dict:
+def extraire_metadonnees(doc_pymupdf: pymupdf.Document, pdf_path: str) -> dict:
     """Extrait l'ensemble des métadonnées système du fichier PDF."""
     return {
         "filename": Path(pdf_path).name,
         "source_pdf": str(Path(pdf_path).resolve()),
-        "page_count": len(doc_fitz),
-        "producer": doc_fitz.metadata.get("producer", ""),
-        "creator": doc_fitz.metadata.get("creator", ""),
-        "creation_date": doc_fitz.metadata.get("creationDate", ""),
-        "modification_date": doc_fitz.metadata.get("modDate", ""),
-        "pdf_version": doc_fitz.metadata.get("format", ""),
-        "encrypted": bool(doc_fitz.is_encrypted),
+        "page_count": len(doc_pymupdf),
+        "producer": doc_pymupdf.metadata.get("producer", ""),
+        "creator": doc_pymupdf.metadata.get("creator", ""),
+        "creation_date": doc_pymupdf.metadata.get("creationDate", ""),
+        "modification_date": doc_pymupdf.metadata.get("modDate", ""),
+        "pdf_version": doc_pymupdf.metadata.get("format", ""),
+        "encrypted": bool(doc_pymupdf.is_encrypted),
     }
 
 
-def extraire_page_pymupdf(page_fitz, page_number, start_word_id):
+def extraire_page_pymupdf(page_pymupdf, page_number, start_word_id):
     page_obj = Page(
         number=page_number,
-        width=float(page_fitz.rect.width),
-        height=float(page_fitz.rect.height),
-        rotation=float(page_fitz.rotation),
+        width=float(page_pymupdf.rect.width),
+        height=float(page_pymupdf.rect.height),
+        rotation=float(page_pymupdf.rotation),
     )
 
-    page_dict = page_fitz.get_text("dict")
-    words_fitz = page_fitz.get_text("words")
+    page_dict = page_pymupdf.get_text("dict")
+    words_pymupdf = page_pymupdf.get_text("words")
     font_map = {}
     word_global_id = start_word_id
 
-    for zone in _extraire_zones_vectorielles(page_fitz):
+    for zone in _extraire_zones_vectorielles(page_pymupdf):
         x0, y0, x1, y1 = zone["bbox"]
         vector = GraphicVector(bbox=BBox(x0, y0, x1, y1))
         if zone["type"] == "line":
@@ -171,7 +171,7 @@ def extraire_page_pymupdf(page_fitz, page_number, start_word_id):
     # correspondance -- perdus sans erreur (confirmé : "virement",
     # page avec has_images=True).
     #
-    # On itère directement sur words_fitz (garanti exhaustif : c'est LA
+    # On itère directement sur words_pymupdf (garanti exhaustif : c'est LA
     # source de vérité pour "quels mots existent"), et on retrouve la
     # typographie par containment géométrique du centre du mot dans la
     # bbox de ligne du dict, avec repli sur la ligne verticalement la plus
@@ -213,7 +213,7 @@ def extraire_page_pymupdf(page_fitz, page_number, start_word_id):
                 meilleure, meilleure_dist = lt, dist
         return meilleure
 
-    for w in words_fitz:
+    for w in words_pymupdf:
         x0, y0, x1, y1, texte = w[0], w[1], w[2], w[3], w[4]
         lt = _ligne_correspondante((x0, y0, x1, y1))
         page_obj.native.words.append(Word(
@@ -228,7 +228,7 @@ def extraire_page_pymupdf(page_fitz, page_number, start_word_id):
             bold=lt["bold"] if lt else False,
             italic=lt["italic"] if lt else False,
             color=lt["color"] if lt else "#000000",
-            rotation=float(page_fitz.rotation),
+            rotation=float(page_pymupdf.rotation),
         ))
         word_global_id += 1
 
@@ -238,7 +238,7 @@ def extraire_page_pymupdf(page_fitz, page_number, start_word_id):
     return page_obj, word_global_id
 
 
-def rendre_zone_image(page_fitz: fitz.Page, bbox: BBox, dpi: int = 300):
+def rendre_zone_image(page_pymupdf: pymupdf.Page, bbox: BBox, dpi: int = 300):
     """Rend en pixels UNE zone précise de la page (crop), pas la page
     entière -- pendant de get_pixmap() plein page déjà utilisé côté OCR
     page-entière. Retourne (image PIL, scale) ; scale nécessaire côté
@@ -247,7 +247,7 @@ def rendre_zone_image(page_fitz: fitz.Page, bbox: BBox, dpi: int = 300):
     import io
 
     scale = dpi / 72.0
-    matrix = fitz.Matrix(scale, scale)
-    clip = fitz.Rect(bbox.x0, bbox.y0, bbox.x1, bbox.y1)
-    pix = page_fitz.get_pixmap(matrix=matrix, clip=clip, alpha=False)
+    matrix = pymupdf.Matrix(scale, scale)
+    clip = pymupdf.Rect(bbox.x0, bbox.y0, bbox.x1, bbox.y1)
+    pix = page_pymupdf.get_pixmap(matrix=matrix, clip=clip, alpha=False)
     return Image.open(io.BytesIO(pix.tobytes("png"))), scale

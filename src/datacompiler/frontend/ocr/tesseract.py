@@ -18,7 +18,7 @@ le système (PAS un paquet pip -- `apt install tesseract-ocr` ou équivalent).
 
 import io
 
-import fitz
+import pymupdf
 import pytesseract
 from PIL import Image
 
@@ -179,7 +179,7 @@ def _parser_image(image, lang: str, scale: float) -> list:
     """Fait tourner Tesseract sur UNE image déjà rendue (stratégie à deux
     passes, cf. _extraire_deux_passes) et retourne une liste de Word --
     séparé de ocraliser() pour être testable directement avec une image
-    (PNG/PIL), sans dépendre de fitz pour la conversion PDF -> image.
+    (PNG/PIL), sans dépendre de pymupdf pour la conversion PDF -> image.
 
     N'applique PAS le filtre _glyphe_isole_suspect (contrairement à
     _ocraliser_zone_image) : ce filtre n'a été validé que sur l'OCR de
@@ -210,9 +210,9 @@ class TesseractBackend(OcrBackend):
         self.dpi = dpi
 
     def ocraliser(self, doc: Document, pdf_path: str, pages: list = None, **kwargs) -> Document:
-        source = fitz.open(pdf_path)
+        source = pymupdf.open(pdf_path)
         scale = self.dpi / 72.0
-        matrix = fitz.Matrix(scale, scale)
+        matrix = pymupdf.Matrix(scale, scale)
 
         try:
             for i, page_obj in enumerate(doc.pages):
