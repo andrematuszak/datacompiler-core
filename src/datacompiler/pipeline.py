@@ -80,7 +80,6 @@ def executer_pipeline(pdf_path, strategy="overlay", sauver_json=True,
     logger.info("[4/6] OCR ciblé (texte vectorisé)...")
     backends_ocr_vectoriel = {
         "tesseract": TesseractBackend(lang=tesseract_lang, dpi=dpi_ocr_vectoriel),
-        #"paddleocr": PaddleOCRBackend(lang=paddle_lang, dpi=dpi_ocr_vectoriel),
     }
     recuperer_texte_vectorise(
         doc, pdf_path, backends_ocr_vectoriel,
