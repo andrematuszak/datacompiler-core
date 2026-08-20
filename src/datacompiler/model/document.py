@@ -111,6 +111,14 @@ class TableElement:
     bbox: Optional[BBox] = None
     source: str = "pdfplumber"
     rows: List[List[Optional[str]]] = field(default_factory=list)
+    # Géométrie par cellule -- même structure que `rows` (rows[i][j] <->
+    # cell_bboxes[i][j]), None si la cellule n'a pas de bbox déterminable
+    # (fusion de cellules, reconstruction dégénérée sans grille fiable).
+    # Persistée ICI car le Table pdfplumber d'origine (qui l'expose via
+    # .rows[i].cells[j]) ne survit pas à la fermeture du document -- sans
+    # ça, cette géométrie serait perdue après extraction, avant même
+    # d'atteindre le JSON.
+    cell_bboxes: List[List[Optional[BBox]]] = field(default_factory=list)
     keep_original: bool = True
 
 

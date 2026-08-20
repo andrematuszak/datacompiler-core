@@ -50,10 +50,21 @@ def extraire_page_pdfplumber(
 
     # 2. Tableaux (Délégation de la reconstruction)
     for t in page_plumb.find_tables():
+        rows, cellules = table_reconstruction.extraire_lignes_et_cellules(page_plumb, t)
         tables.append(TableElement(
             id=table_id,
             bbox=BBox(float(t.bbox[0]), float(t.bbox[1]), float(t.bbox[2]), float(t.bbox[3])),
-            rows=table_reconstruction.extraire_lignes(page_plumb, t)
+            rows=rows,
+            # Géométrie par cellule, persistée séparément du texte --
+            # cf. table_reconstruction.extraire_lignes_et_cellules (appel
+            # combiné, garantit rows/cell_bboxes cohérents). Le bucketing
+            # mots<->cellules se fait plus tard, dans layout_tree.py, une
+            # fois native.words complet (OCR ciblé inclus, étape 4/6 du
+            # pipeline -- après celle-ci).
+            cell_bboxes=[
+                [BBox(*cell) if cell else None for cell in ligne]
+                for ligne in cellules
+            ],
         ))
         table_id += 1
 
