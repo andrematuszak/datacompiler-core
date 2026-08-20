@@ -688,7 +688,7 @@
       <span class="badge badge-compile">compile</span>
     </div>
     <div class="etape-desc">
-      Résout chaque page : ordre de lecture réel, normalisation typographique, alignement natif ↔ OCR, résolution des conflits, regroupement en lignes et QA.
+      Résout chaque page : arbre de mise en page (LayoutBox, jalon 1), ordre de lecture réel, normalisation typographique, alignement natif ↔ OCR, résolution des conflits, regroupement en lignes et QA.
     </div>
     <div class="sous-modules">
       <div class="sous-module" onclick="ouvrirDetail('compile-reading-order')">
@@ -697,6 +697,14 @@
         <div class="detail">
           <strong>Boîtes → Rangées → Tri</strong><br>
           Construit des boîtes par ligne physique (native + vectorisée), les regroupe en rangées par chevauchement vertical, trie chaque rangée gauche → droite. Les mots de tableaux sont exclus puis réintégrés.
+        </div>
+      </div>
+      <div class="sous-module" onclick="ouvrirDetail('compile-layout-tree')">
+        <span class="nom">1b. Arbre de mise en page</span>
+        <span class="fonction">construire_boites_images()</span>
+        <div class="detail">
+          <strong>LayoutBox — JALON 1</strong><br>
+          Construit des boîtes <code>LayoutBox</code> (type="image") depuis <code>page.graphics.images</code>, triées y0 puis x0. Les mots ne sont pas dupliqués : <code>word_ids</code> référence les <code>Word</code> existants. Racine <code>page.layout_root</code> — jalons 2-4 à venir.
         </div>
       </div>
       <div class="sous-module" onclick="ouvrirDetail('compile-typography')">
@@ -904,6 +912,12 @@
         <td>page.native.words → copies ordonnées (boîtes/rangées)</td>
       </tr>
       <tr>
+        <td>5a'</td>
+        <td class="module">Arbre de mise en page</td>
+        <td class="fichier">compile/layout_tree.py</td>
+        <td>page.graphics.images → LayoutBox[] (type="image", triées y0/x0, reading_order)</td>
+      </tr>
+      <tr>
         <td>5b</td>
         <td class="module">Typographie</td>
         <td class="fichier">compile/typography.py</td>
@@ -943,7 +957,7 @@
         <td>—</td>
         <td class="module">Modèle</td>
         <td class="fichier">model/document.py</td>
-        <td>Word, Page, Document, NativeContainer, OcrContainer, ResolvedContainer</td>
+        <td>Word, Page, Document, NativeContainer, OcrContainer, ResolvedContainer, LayoutBox (layout_root)</td>
       </tr>
       <tr>
         <td>—</td>
@@ -1124,6 +1138,15 @@ const DETAILS = {
       { nom: 'compile/reading_order.py', fonction: '_construire_boites_natives()' },
       { nom: 'compile/reading_order.py', fonction: '_construire_boites_vectorisees()' },
       { nom: 'compile/reading_order.py', fonction: '_ordonner_par_boites()' },
+    ]
+  },
+  'compile-layout-tree': {
+    titre: 'Arbre de mise en page — LayoutBox (JALON 1)',
+    description: 'Construit une liste de boîtes LayoutBox (type="image") à partir de la géométrie déjà extraite (page.graphics.images), triée en ordre de lecture simple (y0 puis x0). Les boîtes ne dupliquent jamais les mots : word_ids référence les Word existants par leur id. JALON 1 : boîtes-images seulement. Jalons suivants : zones de texte vectorisé (2), regroupement en lignes (3), assemblage hiérarchique complet avec parcours profondeur d\'abord vers resolved.words (4), racine page.layout_root.',
+    fichiers: [
+      { nom: 'compile/layout_tree.py', fonction: 'construire_boites_images()' },
+      { nom: 'model/document.py', fonction: 'LayoutBox (dataclass)' },
+      { nom: 'model/document.py', fonction: 'Page.layout_root (Optional[LayoutBox])' },
     ]
   },
   'compile-typography': {
