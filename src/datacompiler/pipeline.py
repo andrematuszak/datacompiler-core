@@ -1,4 +1,4 @@
-﻿"""Orchestrateur du moteur : frontend (extraction, diagnostic, OCR),
+"""Orchestrateur du moteur : frontend (extraction, diagnostic, OCR),
 compile (arbitrage native/OCR), backend (rendu)."""
 
 import argparse
@@ -11,6 +11,7 @@ from datacompiler.model.document import Document
 from datacompiler.frontend.extract import extraire
 from datacompiler.frontend import diagnostiquer, ocraliser, report as diagnostic_report
 from datacompiler.frontend.ocr.tesseract import TesseractBackend
+from datacompiler.frontend.ocr.paddle import PaddleOCRBackend
 from datacompiler.frontend.ocr.vector_zones import recuperer_texte_vectorise
 from datacompiler.compile import resoudre
 from datacompiler.backend import EXTENSIONS, FORMATS
@@ -57,13 +58,22 @@ def executer_pipeline(pdf_path, strategy="overlay", sauver_json=True,
         getattr(doc.diagnostic, "recommend_ocr", False)
     )
 
-    if doc.diagnostic.recommend_ocr and (api_key := os.getenv("MISTRAL_API_KEY")):
-        logger.info("[3/6] Appel OCR...")
-        ocraliser(doc, pdf_path, backend_name="mistral", api_key=api_key)
-    elif doc.diagnostic.recommend_ocr:
-        logger.warning("[3/6] OCR recommandé, mais MISTRAL_API_KEY absent : poursuite avec le texte natif.")
-    else:
-        logger.info("[3/6] OCR non nécessaire.")
+    # DÉBRANCHÉ (pas supprimé) : l'alignement texte-seul de alignment.py
+    # (SequenceMatcher sur le markdown Mistral vs la séquence de mots
+    # natifs) produit un diff trop bruyant sur les zones tabulaires de ce
+    # document (tableau RÉSIDENCE, grille de revenus) -- énormément de
+    # mots "ocr_seul" avec bbox interpolée, entassés dans des espaces
+    # natifs minuscules, d'où le texte collé sans espace observé sur tout
+    # le rendu. En attente de la refonte LayoutBox (arbre de mise en page)
+    # avant de rebrancher Mistral proprement.
+    # if doc.diagnostic.recommend_ocr and (api_key := os.getenv("MISTRAL_API_KEY")):
+    #     logger.info("[3/6] Appel OCR...")
+    #     ocraliser(doc, pdf_path, backend_name="mistral", api_key=api_key)
+    # elif doc.diagnostic.recommend_ocr:
+    #     logger.warning("[3/6] OCR recommandé, mais MISTRAL_API_KEY absent : poursuite avec le texte natif.")
+    # else:
+    #     logger.info("[3/6] OCR non nécessaire.")
+    logger.info("[3/6] OCR page-entière désactivé (Mistral débranché en attente de LayoutBox).")
 
     # Indépendant de MISTRAL_API_KEY et de recommend_ocr (page-entière) :
     # cible uniquement les zones de texte vectorisé repérées par
@@ -77,10 +87,12 @@ def executer_pipeline(pdf_path, strategy="overlay", sauver_json=True,
     # Tesseract seul (cf. fusion_ocr.fusionner_zone_multi_backend) --
     # aucune vérification de disponibilité nécessaire ici.
     logger.info("[4/6] OCR ciblé (texte vectorisé)...")
-    backend_tesseract = TesseractBackend(lang=tesseract_lang, dpi=dpi_ocr_vectoriel)
-
+    backends_ocr_vectoriel = {
+        "tesseract": TesseractBackend(lang=tesseract_lang, dpi=dpi_ocr_vectoriel),
+        "paddleocr": PaddleOCRBackend(lang=paddle_lang, dpi=dpi_ocr_vectoriel),
+    }
     recuperer_texte_vectorise(
-        doc, pdf_path, backend_tesseract,
+        doc, pdf_path, backends_ocr_vectoriel,
         lang=tesseract_lang, dpi=dpi_ocr_vectoriel,
     )
 
@@ -125,6 +137,7 @@ def main():
                         help="DPI dédié à l'OCR ciblé des zones de texte vectorisé (découplé de --dpi) -- "
                              "600 corrige 'Pavis' mais régresse d'autres zones, cf. docstring executer_pipeline")
     parser.add_argument("--tesseract-lang", default="fra", help="Langue Tesseract pour l'OCR ciblé du texte vectorisé (code ISO 639-2, ex. 'fra')")
+    parser.add_argument("--paddle-lang", default="fr", help="Langue PaddleOCR pour l'OCR ciblé du texte vectorisé (code ISO 639-1, ex. 'fr')")
     parser.add_argument("--no-json", action="store_true")
     parser.add_argument("-v", "--verbose", action="store_true", help="Active l'affichage des logs de niveau DEBUG")
     args = parser.parse_args()
@@ -139,7 +152,7 @@ def main():
     executer_pipeline(
         args.pdf, strategy=args.strategy, sauver_json=not args.no_json,
         dpi=args.dpi, dpi_ocr_vectoriel=args.dpi_ocr_vectoriel,
-        tesseract_lang=args.tesseract_lang
+        tesseract_lang=args.tesseract_lang, paddle_lang=args.paddle_lang,
     )
 
 
