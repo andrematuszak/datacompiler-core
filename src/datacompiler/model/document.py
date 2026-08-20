@@ -54,6 +54,41 @@ class Word:
 
 
 @dataclass
+class LayoutBox:
+    """Nœud d'arbre de mise en page -- alternative à la liste plate de
+    Word triée par coordonnées, pour les cas où l'ordre de lecture ne
+    peut PAS se déduire d'un simple tri par y0/x0 (ex. une boîte-image
+    dont le dernier mot est géométriquement plus bas qu'un bloc voisin,
+    mais qui doit être lue entièrement avant de passer à ce bloc voisin
+    -- cf. cas "République Française" vs "DIRECTION GÉNÉRALE").
+
+    Ne DUPLIQUE jamais les mots : `word_ids` référence des Word déjà
+    présents ailleurs (page.native.words typiquement) par leur `id`, pas
+    des copies -- évite de sérialiser deux fois la même information en
+    JSON et le risque que les deux représentations divergent.
+
+    `children` : sous-boîtes, pour les nœuds conteneurs
+    (type="container", ou "page" à la racine). Une boîte feuille (image,
+    vector_text, native_text, table) a `children` vide et porte
+    directement `word_ids`.
+
+    `reading_order` : position 0-indexée parmi les FRÈRES du même niveau
+    (pas un ordre global sur tout le document) -- assignée par l'étape de
+    détection/tri des boîtes, pas déduite automatiquement par ce nœud.
+
+    `resolved.words` (la vue plate finale consommée par le reste du
+    pipeline -- compile/typography.py, backend/rebuilt_pdf.py, etc.) sera
+    produite par un parcours profondeur d'abord de cet arbre, trié par
+    `reading_order` à chaque niveau -- pas encore implémenté à ce stade,
+    cf. jalon 4 de la discussion d'architecture."""
+    bbox: Optional[BBox] = None
+    type: str = "container"  # "page" | "image" | "vector_text" | "native_text" | "table" | "container"
+    reading_order: int = 0
+    word_ids: List[int] = field(default_factory=list)
+    children: List["LayoutBox"] = field(default_factory=list)
+
+
+@dataclass
 class NativeContainer:
     words: List[Word] = field(default_factory=list)
     fonts: List[Font] = field(default_factory=list)
@@ -126,6 +161,7 @@ class Page:
     graphics: GraphicsContainer = field(default_factory=GraphicsContainer)
     ocr: OcrContainer = field(default_factory=OcrContainer)
     resolved: ResolvedContainer = field(default_factory=ResolvedContainer)
+    layout_root: Optional[LayoutBox] = None  # arbre de mise en page -- None tant que non peuplé, additif
 
 
 @dataclass
@@ -174,6 +210,16 @@ class Document:
         def table(d):
             d = dict(d); d["bbox"] = BBox.from_dict(d.get("bbox"))
             return TableElement(**{k: v for k, v in d.items() if k in TableElement.__dataclass_fields__})
+        def layout_box(d):
+            if not d:
+                return None
+            return LayoutBox(
+                bbox=BBox.from_dict(d.get("bbox")),
+                type=d.get("type", "container"),
+                reading_order=d.get("reading_order", 0),
+                word_ids=list(d.get("word_ids", [])),
+                children=[layout_box(c) for c in d.get("children", [])],
+            )
         pages = []
         for raw in data.get("pages", []):
             native = raw.get("native", {})
@@ -186,6 +232,7 @@ class Document:
             page.graphics = GraphicsContainer(images=[image(x) for x in graphics.get("images", [])], tables=[table(x) for x in graphics.get("tables", [])])
             page.ocr = OcrContainer(engine=ocr.get("engine"), words=[word(x) for x in ocr.get("words", [])], blocks=[OcrBlock(BBox.from_dict(x.get("bbox")), x.get("type", "text"), x.get("content", "")) for x in ocr.get("blocks", [])])
             page.resolved = ResolvedContainer(words=[word(x) for x in resolved.get("words", [])], images=[image(x) for x in resolved.get("images", [])], tables=[table(x) for x in resolved.get("tables", [])])
+            page.layout_root = layout_box(raw.get("layout_root"))
             pages.append(page)
         metadata = Metadata(**{k: v for k, v in data.get("metadata", {}).items() if k in Metadata.__dataclass_fields__})
         diagnostic = Diagnostic(**{k: v for k, v in data.get("diagnostic", {}).items() if k in Diagnostic.__dataclass_fields__})
