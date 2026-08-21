@@ -217,6 +217,10 @@ class Document:
             return ImageElement(**{k: v for k, v in d.items() if k in ImageElement.__dataclass_fields__})
         def table(d):
             d = dict(d); d["bbox"] = BBox.from_dict(d.get("bbox"))
+            d["cell_bboxes"] = [
+                [BBox.from_dict(cell) for cell in ligne]
+                for ligne in d.get("cell_bboxes", [])
+            ]
             return TableElement(**{k: v for k, v in d.items() if k in TableElement.__dataclass_fields__})
         def layout_box(d):
             if not d:
