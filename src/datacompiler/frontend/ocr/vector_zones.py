@@ -10,15 +10,22 @@ page.native.words (is_vectorized=True, source="ocr_vectoriel"), EN AMONT
 du pipeline compile/ : ils traversent reading_order/typography comme
 n'importe quel mot natif, sans jamais passer par alignment.py.
 
-Nécessite un backend exposant ocraliser_zone() (cf. ocr/base.py) --
-aujourd'hui seul TesseractBackend le fait (bbox par mot). Fonctionne donc
-indépendamment de MISTRAL_API_KEY.
+Accepte PLUSIEURS backends (dict nom -> instance) exposant ocraliser_zone()
+(cf. ocr/base.py) -- fusionnés zone par zone via fusion_ocr.py quand
+plusieurs sont fournis et disponibles (ex. Tesseract + PaddleOCR). Un seul
+backend dans le dict reste un cas valide (fusion_ocr.fusionner_candidats_ocr
+sur un seul candidat = pas d'arbitrage à faire, comportement inchangé).
+Fonctionne indépendamment de MISTRAL_API_KEY -- Mistral n'expose pas
+ocraliser_zone (bbox bloc, pas par mot) et serait simplement ignoré s'il
+apparaissait dans le dict (cf. fusion_ocr.fusionner_zone_multi_backend,
+qui journalise et saute tout backend en échec plutôt que de planter).
 """
 
 import pymupdf
 
 from datacompiler.frontend.diagnostic.vector_text import zones_texte_vectorise_probable
 from datacompiler.frontend.extract.extract_pymupdf import rendre_zone_image
+from datacompiler.frontend.ocr.fusion_ocr import fusionner_zone_multi_backend
 from datacompiler.model.document import BBox, Document
 
 MARGE_ZONE = 2.0  # pt -- contexte autour de la bbox détectée ; une zone trop serrée nuit à Tesseract
@@ -97,8 +104,24 @@ def _chevauche_natif(mot, mots_natifs, seuil_recouvrement=0.5):
     return False
 
 
-def recuperer_texte_vectorise(doc: Document, pdf_path: str, backend, lang: str = "fra", dpi: int = 300) -> Document:
-    if not hasattr(backend, "ocraliser_zone"):
+def recuperer_texte_vectorise(doc: Document, pdf_path: str, backends: dict, lang: str = "fra", dpi: int = 300) -> Document:
+    """
+    backends : dict {nom: instance_de_backend}, ex.
+        {"tesseract": TesseractBackend(...)}
+        {"tesseract": TesseractBackend(...), "paddleocr": PaddleOCRBackend(...)}
+    Chaque backend doit exposer ocraliser_zone() (cf. ocr/base.py) pour être
+    utilisable ici -- les autres (Mistral) sont ignorés silencieusement par
+    fusion_ocr.fusionner_zone_multi_backend, pas par ce module.
+    """
+# Gestion souple : conversion si un backend unique est passé au lieu d'un dictionnaire
+    if not isinstance(backends, dict):
+        if hasattr(backends, "ocraliser_zone"):
+            backends = {"default": backends}
+        else:
+            return doc
+
+    backends_utilisables = {nom: b for nom, b in backends.items() if hasattr(b, "ocraliser_zone")}
+    if not backends_utilisables:
         return doc
 
     source = pymupdf.open(pdf_path)
@@ -116,20 +139,35 @@ def recuperer_texte_vectorise(doc: Document, pdf_path: str, backend, lang: str =
 
             page_pymupdf = source[i]
             mots_natifs_existants = page.native.words  # référence avant tout ajout, pour cette page
+            # Les backends (tesseract.py, paddle.py) laissent id=-1 sur les
+            # mots OCR en promettant une "renumérotation finale par
+            # compile/compiler.py" -- vrai UNIQUEMENT pour page.resolved.words
+            # (une copie, cf. reading_order.ordonner), JAMAIS pour
+            # page.native.words lui-même, où ces mots sont injectés
+            # directement. Sans ce correctif, tous les mots OCR d'une même
+            # page partagent id=-1 -- inoffensif tant que rien ne s'appuie
+            # sur l'unicité de l'id, mais bloquant pour LayoutBox.word_ids
+            # (impossible de savoir lequel de plusieurs -1 est référencé).
+            prochain_id = max((w.id for w in mots_natifs_existants if w.id and w.id > 0), default=0) + 1
             for zone in zones_a_traiter:
                 image, _ = rendre_zone_image(page_pymupdf, zone, dpi=dpi)
-                try:
-                    mots = backend.ocraliser_zone(image, offset=(zone.x0, zone.y0), lang=lang, dpi=dpi)
-                except NotImplementedError:
+                mots = fusionner_zone_multi_backend(
+                    image, offset=(zone.x0, zone.y0), backends=backends_utilisables, dpi=dpi, lang=lang
+                )
+                if not mots:
                     continue
                 # Filtre AVANT ajout : un mot OCR qui recouvre significativement
                 # du natif existant est un doublon dû à la fusion de zones
-                # (cf. _chevauche_natif), pas une vraie récupération.
+                # (cf. _chevauche_natif), pas une vraie récupération. S'applique
+                # de la même façon quel que soit le backend d'origine du mot,
+                # puisque fusion_ocr a déjà réduit à un seul candidat par zone
+                # de chevauchement avant qu'on arrive ici.
                 mots_valides = [m for m in mots if not _chevauche_natif(m, mots_natifs_existants)]
+                for m in mots_valides:
+                    m.id = prochain_id
+                    prochain_id += 1
                 page.native.words.extend(mots_valides)
     finally:
         source.close()
 
     return doc
-
-
