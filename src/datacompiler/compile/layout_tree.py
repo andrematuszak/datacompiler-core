@@ -73,27 +73,58 @@ def _bbox_union(bboxes) -> "BBox | None":
     )
 
 
-def construire_boite_tableau(table_element, mots_natifs) -> LayoutBox:
+def construire_boite_tableau(table_element, mots_resolus) -> LayoutBox:
     """Construit une LayoutBox(type="table") à partir de la géométrie
-    persistée (table_element.cell_bboxes) et de mots natifs -- à appeler
-    APRÈS que le pipeline complet a tourné (native.words doit déjà
-    inclure les mots vectorisés ajoutés par l'OCR ciblé, étape 4/6), pas
-    pendant l'extraction (étape 1/6, où cell_bboxes est calculé) : cf.
-    docstring de table_reconstruction.cellules_bbox_degenere pour le
-    détail de cette contrainte d'ordre.
+    persistée (table_element.cell_bboxes) et de mots RÉSOLUS -- à appeler
+    avec `page.resolved.words`, PAS `page.native.words`.
+
+    Ce n'est pas seulement une question de TIMING (attendre l'étape 4/6) --
+    c'est structurel : reading_order.ordonner() fait un deepcopy() de
+    chaque mot dès sa première ligne (cf. compile/reading_order.py), donc
+    toute la chaîne compile/ (typography, arbitrage OCR, renumérotation
+    finale dans compiler._resoudre_page : `for i, mot in enumerate(...,
+    start=1): mot.id = i`) opère sur des COPIES, jamais sur les objets
+    d'origine de native.words. Les mots vectorisés créés par tesseract.py
+    avec id=-1 (cf. son commentaire "renumérotation finale par
+    compile/compiler.py") gardent donc CE -1 pour toujours dans
+    native.words, peu importe à quel moment du pipeline on regarde --
+    resolved.words est la SEULE liste où compiler.py garantit des id
+    réels et uniques.
+
+    Confirmé empiriquement (session du 16/08) : appel avec native.words
+    -> tous les word_ids valent -1, indiscernables entre eux dès qu'une
+    cellule contient plusieurs mots vectorisés.
 
     Arbre produit : table -> une boîte "container" par ligne -> une boîte
     "native_text" par cellule, portant les `word_ids` des mots dont le
     centre tombe dans cette cellule (cf. _mot_dans_cellule).
 
-    `mots_natifs` : liste de Word (typiquement page.native.words) --
-    nom générique plutôt que "page" pour rester testable sans construire
-    un Document complet (cf. test synthétique)."""
+    LIMITE CONNUE, pas encore tranchée : `type="native_text"` est mis en
+    dur sur chaque cellule, même si les mots qu'elle contient sont
+    vectorisés (LayoutBox prévoit pourtant "vector_text" comme type
+    distinct). Pas de règle évidente pour une cellule MIXTE (natif +
+    vectorisé) -- décision de politique à prendre séparément, pas
+    tranchée ici pour ne pas deviner à la place de l'appelant.
+
+    `mots_resolus` : liste de Word (typiquement page.resolved.words) --
+    nom générique plutôt que directement "page" pour rester testable sans
+    construire un Document complet (cf. test synthétique)."""
+    ids_invalides = {m.id for m in mots_resolus if m.id is None or m.id < 0}
+    if ids_invalides:
+        raise ValueError(
+            f"construire_boite_tableau : {len(ids_invalides)} mot(s) avec un id "
+            f"invalide (<0 ou None) parmi les mots fournis -- probablement appelé "
+            f"avec page.native.words au lieu de page.resolved.words (seule liste "
+            f"où compiler.py garantit des ids réels, cf. sa renumérotation finale "
+            f"dans _resoudre_page). native.words ne les aura JAMAIS, quel que soit "
+            f"le moment du pipeline où cette fonction est appelée."
+        )
+
     lignes_boites = []
     for i, ligne_bboxes in enumerate(table_element.cell_bboxes):
         cellules = []
         for j, cell_bbox in enumerate(ligne_bboxes):
-            ids = [m.id for m in mots_natifs if _mot_dans_cellule(m, cell_bbox)]
+            ids = [m.id for m in mots_resolus if _mot_dans_cellule(m, cell_bbox)]
             cellules.append(LayoutBox(
                 bbox=cell_bbox, type="native_text", reading_order=j, word_ids=ids,
             ))
