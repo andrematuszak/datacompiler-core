@@ -5,6 +5,7 @@ env/
 ENV/
 venv-deepseek/
 .env/
+.env
 .envexperiments/
 
 # --- Python & Caches ---
