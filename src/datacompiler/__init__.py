@@ -2,10 +2,10 @@
 
 __version__ = "0.1.0"
 
-from .model import Document, Word, BBox, Font, Metadata, Diagnostic
-from .frontend import extraire, diagnostiquer, ocraliser
-from .compile import resoudre
-from .backend import FORMATS, EXTENSIONS
+from datacompiler.model import Document, Word, BBox, Font, Metadata, Diagnostic
+from datacompiler.frontend import extraire, diagnostiquer, ocraliser
+from datacompiler.compile import resoudre
+from datacompiler.backend import FORMATS, EXTENSIONS
 
 __all__ = [
     "Document", "Word", "BBox", "Font", "Metadata", "Diagnostic",
