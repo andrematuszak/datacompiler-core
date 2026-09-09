@@ -55,7 +55,6 @@ apps/
 experiments/
 resultats/
 sources/
-utils/
 .aider*
 .editorconfig
 .continue.ctx
