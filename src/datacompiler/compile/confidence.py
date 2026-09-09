@@ -10,7 +10,7 @@ Cohérence garantie entre le diagnostic global et l'arbitrage mot-à-mot.
 """
 
 
-from datacompiler.heuristics import taux_caracteres_suspects, chiffre_dans_mot, casse_irreguliere
+from datacompiler.utils.heuristics import taux_caracteres_suspects, chiffre_dans_mot, casse_irreguliere
 
 
 CONFIANCE_OCR_PAR_DEFAUT = 0.5
