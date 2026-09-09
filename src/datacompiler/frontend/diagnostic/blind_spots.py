@@ -44,7 +44,7 @@ def mots_suspects_ngrammes(texte: str, longueur_min: int = 7, top_n: int = 20) -
     if not mots:
         return []
 
-    compte_tri = Counter()
+    compte_tri: Counter[str] = Counter()
     for m in mots:
         for tri in _trigrammes(m):
             compte_tri[tri] += 1
