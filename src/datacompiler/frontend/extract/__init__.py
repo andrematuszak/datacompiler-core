@@ -8,8 +8,8 @@ import pymupdf
 import pdfplumber as pdfplumber_lib
 
 from datacompiler.model.document import Document
-from .extract_pymupdf import extraire_metadonnees, extraire_page_pymupdf
-from .pdfplumber import extraire_page_pdfplumber
+from datacompiler.frontend.extract.extract_pymupdf import extraire_metadonnees, extraire_page_pymupdf
+from datacompiler.frontend.extract.extract_pdfplumber import extraire_page_pdfplumber
 from .merge import enrichir_metadonnees, fusionner_page
 from .image_text_probe import sonder_images_page
 
