@@ -10,8 +10,8 @@ import pdfplumber as pdfplumber_lib
 from datacompiler.model.document import Document
 from datacompiler.frontend.extract.extract_pymupdf import extraire_metadonnees, extraire_page_pymupdf
 from datacompiler.frontend.extract.extract_pdfplumber import extraire_page_pdfplumber
-from .merge import enrichir_metadonnees, fusionner_page
-from .image_text_probe import sonder_images_page
+from datacompiler.frontend.extract.merge import enrichir_metadonnees, fusionner_page
+from datacompiler.frontend.extract.image_text_probe import sonder_images_page
 
 
 def extraire(doc_obj: Document, pdf_path: str) -> Document:
@@ -22,7 +22,7 @@ def extraire(doc_obj: Document, pdf_path: str) -> Document:
     3. Fusion des couches textuelle et graphique
     """
     doc_pymupdf = pymupdf.open(pdf_path)
-    # 2. On utilise l'alias pour faire appel à l'API publique
+    # 0. On utilise l'alias pour faire appel à l'API publique
     pdf_plumb = pdfplumber_lib.open(pdf_path)
 
     # 1. Ingestion des métadonnées globales
