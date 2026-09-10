@@ -17,7 +17,7 @@ plus quand tu es prêt à les intégrer."""
 import re
 from collections import Counter
 
-from datacompiler.utils.heuristics import TOKEN_PATTERN
+from datacompiler.utils.heuristics_text import TOKEN_PATTERN
 
 _MOTIF_NOMBRE_LETTRE = re.compile(r"\d[.,]\d{2}\s*([A-Za-z])\b")
 _MOT_PATTERN = re.compile(r"[A-Za-zÀ-ÖØ-öø-ÿ]+")
