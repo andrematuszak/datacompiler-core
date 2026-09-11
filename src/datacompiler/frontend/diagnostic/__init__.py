@@ -5,7 +5,7 @@ from datacompiler.model.document import Document
 from datacompiler.model.metadata import Diagnostic
 
 from .categorize import SEUIL_QUALITE_CORROMPU, categoriser
-from . import blind_spots, container, geometry, text_integrity, vector_text, visual_integrity
+from . import blind_spots, container, spatial_integrity, text_integrity, vector_text, visual_integrity
 
 def _diagnostiquer_page(page) -> Diagnostic:
     notes = []
@@ -37,15 +37,15 @@ def _diagnostiquer_page(page) -> Diagnostic:
     for img, dpi in images_basse_res:
         notes.append(f"Image basse résolution ({dpi:.0f} DPI effectif)")
 
-    chevauchements = geometry.detecter_chevauchements(page)
+    chevauchements = spatial_integrity.detecter_chevauchements(page)
     if chevauchements:
         notes.append(f"{len(chevauchements)} paire(s) de mots avec bbox chevauchantes")
 
-    hors_limites = geometry.detecter_hors_limites(page)
+    hors_limites = spatial_integrity.detecter_hors_limites(page)
     if hors_limites:
         notes.append(f"{len(hors_limites)} mot(s) hors des limites de la page")
 
-    ordre = geometry.score_ordre_lecture(page)
+    ordre = spatial_integrity.score_ordre_lecture(page)
     if ordre < 0.85:
         notes.append(f"Ordre de lecture instable (score {ordre:.2f})")
 
