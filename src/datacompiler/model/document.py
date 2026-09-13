@@ -6,7 +6,7 @@ from dataclasses import asdict, dataclass, field
 from typing import Any, Dict, List, Optional
 
 from datacompiler.model.geometry import BBox, Polygon
-from datacompiler.model.typography import Font
+from datacompiler.model.font import Font
 from datacompiler.model.metadata import Diagnostic, Metadata
 
 
