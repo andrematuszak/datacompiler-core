@@ -104,16 +104,20 @@ def _chevauche_natif(mot, mots_natifs, seuil_recouvrement=0.5):
     return False
 
 
-def recuperer_texte_vectorise(doc: Document, pdf_path: str, backends: dict, lang: str = "fra", dpi: int = 300) -> Document:
+def recuperer_texte_vectorise(doc: Document, pdf_path: str, backends, lang: str = "fra", dpi: int = 300) -> Document:
     """
     backends : dict {nom: instance_de_backend}, ex.
         {"tesseract": TesseractBackend(...)}
         {"tesseract": TesseractBackend(...), "paddleocr": PaddleOCRBackend(...)}
+    Un backend UNIQUE (pas dans un dict) est aussi accepté, par souplesse --
+    pratique pour un appelant qui n'a qu'un seul moteur à passer (ex.
+    pipeline.py avant que PaddleOCR ne soit branché) sans avoir à
+    construire un dict à un seul élément à chaque appel.
+
     Chaque backend doit exposer ocraliser_zone() (cf. ocr/base.py) pour être
     utilisable ici -- les autres (Mistral) sont ignorés silencieusement par
     fusion_ocr.fusionner_zone_multi_backend, pas par ce module.
     """
-# Gestion souple : conversion si un backend unique est passé au lieu d'un dictionnaire
     if not isinstance(backends, dict):
         if hasattr(backends, "ocraliser_zone"):
             backends = {"default": backends}
