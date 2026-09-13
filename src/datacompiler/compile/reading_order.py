@@ -74,15 +74,41 @@ explicite : "on reste sur mon premier test, on bosse test par test").
 L'exclusion des mots de table (`_dans_un_tableau`/`graphics.tables`) est
 CONSERVÉE en amont, inchangée par rapport à l'ancienne version -- décision
 d'architecture volontaire, un changement à la fois. Les mots de table ne
-passent PAS par le moteur boîtes/rangées ; ils sont réintégrés à la fin,
-triés simplement par (y0, x0).
+passent PAS par le moteur boîtes/rangées général.
+
+INTÉGRATION CHIRURGICALE (ajoutée après la mise en place de
+compile/layout_tree.py) : les mots de table ne sont plus réintégrés par un
+tri plat (y0, x0) unique -- ce tri mélangeait en-têtes et lignes de valeurs
+dès qu'ils se chevauchaient verticalement (confirmé : "situation du foyer"
+et "C T" du document fiscal, deux lignes visuellement distinctes mais
+suffisamment proches en y pour un tri plat les entrelacer). Chaque table
+est maintenant ordonnée via SA PROPRE grille (`TableElement.cell_bboxes`,
+déjà calculée à l'extraction par extract/pdfplumber.py) : ligne par ligne,
+cellule par cellule gauche->droite au sein de chaque ligne -- même principe
+que `construire_boite_tableau` (layout_tree.py), mais appliqué directement
+à des objets Word plutôt qu'à des ids, PARCE QUE cette fonction tourne
+AVANT la renumérotation finale de compiler.py (mots encore à id=-1 pour
+les vectorisés à ce stade, cf. docstring de construire_boite_tableau pour
+le détail) -- utiliser des ids ici serait prématuré, pas une erreur en soi,
+mais une dépendance sur une garantie qui n'existe pas encore à ce point du
+pipeline. Un mot dans une table mais dans AUCUNE cellule (bord, cellule
+fusionnée sans bbox) reste capté par le même filet de sécurité qu'avant :
+tri plat (y0, x0), en fin de liste -- jamais perdu.
+
+LIMITE CONNUE, NON RÉSOLUE par cette intégration : un mot peut être proche
+d'une table sans que `_dans_un_tableau` le capte -- si la bbox de la table
+détectée par pdfplumber ne s'étend pas jusqu'à cette "ligne invisible" (ex.
+confirmé : "C"/"T" du document fiscal, juste sous la bbox du tableau
+d'en-têtes, jamais inclus dans mots_dans_table). Ce cas-là reste traité par
+le moteur boîtes/rangées général, pas par cette intégration -- un problème
+de géométrie de détection en amont (extract/pdfplumber.py), pas d'ordre.
 """
 
 import itertools
 from copy import deepcopy
 from collections import defaultdict
 
-from datacompiler.compile.geometry import dans_un_tableau
+from datacompiler.utils.heuristics_geometry import dans_un_tableau, mot_dans_cellule
 
 
 SEUIL_CHEVAUCHEMENT_RANGEE = 0.3   # fraction de la + petite hauteur, pour dire "même rangée"
@@ -304,6 +330,56 @@ def _ordonner_par_boites(boites, seuil=SEUIL_CHEVAUCHEMENT_RANGEE):
     return resultat, rangees
 
 
+def _ordonner_mots_table(mots_table, table):
+    """Ordonne les mots d'UNE table selon sa grille `cell_bboxes` (ligne
+    par ligne, cellule par cellule gauche->droite) -- remplace le tri plat
+    (y0, x0) qui mélangeait en-têtes et lignes de valeurs proches
+    verticalement (cf. docstring de module, section "INTÉGRATION
+    CHIRURGICALE").
+
+    Au sein d'une cellule : regroupement en lignes par TOLÉRANCE
+    (_grouper_lignes_par_tolerance, même fonction que pour les boîtes
+    natives/vectorisées du moteur général) avant de trier chaque ligne par
+    x0 -- PAS un tri plat (y0, x0) direct. Erreur commise puis corrigée
+    dans cette même fonction : sur les vraies coordonnées de la page 2,
+    "foyer" (y0=94.6) triait avant "situation"/"du" (y0=94.8) à cause d'un
+    écart de 0.2pt -- exactement le mécanisme du bug "Feuillet 1 2" déjà
+    corrigé ailleurs (cf. Cas 5, test_reading_order_regression.py) et
+    réintroduit ici par inattention avant d'être repéré sur données
+    réelles.
+
+    Mots hors de toute cellule connue (bord, cellule fusionnée) : ajoutés
+    à la fin, triés (y0, x0) -- même filet de sécurité que le reste du
+    fichier, jamais de perte silencieuse.
+
+    Si `table.cell_bboxes` est vide (géométrie non disponible, ex. ancien
+    document.json généré avant ce champ) : comportement identique à
+    avant, tri plat pur -- pas de régression sur des données plus
+    anciennes."""
+    if not getattr(table, "cell_bboxes", None):
+        return sorted(mots_table, key=lambda w: (w.bbox.y0, w.bbox.x0))
+
+    captes = set()
+    resultat = []
+    for ligne_bboxes in table.cell_bboxes:
+        for cell_bbox in ligne_bboxes:
+            if cell_bbox is None:
+                continue
+            mots_cellule = [
+                m for m in mots_table
+                if id(m) not in captes and mot_dans_cellule(m, cell_bbox)
+            ]
+            if mots_cellule:
+                for ligne in _grouper_lignes_par_tolerance(mots_cellule):
+                    resultat.extend(sorted(ligne, key=lambda w: w.bbox.x0))
+                captes.update(id(m) for m in mots_cellule)
+
+    non_captes = [m for m in mots_table if id(m) not in captes]
+    non_captes.sort(key=lambda w: (w.bbox.y0, w.bbox.x0))
+    resultat.extend(non_captes)
+    return resultat
+
+
 def ordonner(page, simple_sort=False) -> list:
     """Retourne des COPIES des mots natifs de `page`, dans l'ordre de
     lecture réel : tableaux exclus du tri par boîtes/rangées, mais
@@ -343,9 +419,25 @@ def ordonner(page, simple_sort=False) -> list:
     for boite in boites_ordonnees:
         resultat.extend(_grouper_par_ligne_tolerant(boite.mots))
 
-    # 3. RÉINTÉGRATION : Ajout des mots de tableau à la suite (inchangé).
+    # 3. RÉINTÉGRATION : mots de table, ordonnés PAR TABLE via sa grille de
+    #    cellules (cf. _ordonner_mots_table) plutôt qu'un tri plat unique
+    #    sur l'ensemble des tables mélangées. Tables elles-mêmes triées par
+    #    y0 -- l'ordre de page.graphics.tables n'est pas garanti être déjà
+    #    l'ordre de lecture (dépend de pdfplumber.find_tables()).
+    #
+    #    Un mot n'est assigné qu'à la PREMIÈRE table qui le capte (retiré
+    #    du bassin avant de passer à la suivante) -- protège contre une
+    #    duplication si deux tables détectées ont des bbox qui se
+    #    chevauchent (cas non rencontré sur le document de test, mais pas
+    #    à exclure sur un autre document).
     if mots_dans_table:
-        mots_dans_table_tries = sorted(mots_dans_table, key=lambda w: (w.bbox.y0, w.bbox.x0))
-        resultat.extend(mots_dans_table_tries)
+        tables_triees = sorted(tables, key=lambda t: t.bbox.y0 if t.bbox else 0.0)
+        bassin = list(mots_dans_table)
+        for table in tables_triees:
+            mots_de_cette_table = [w for w in bassin if _dans_un_tableau(w, [table])]
+            if mots_de_cette_table:
+                resultat.extend(_ordonner_mots_table(mots_de_cette_table, table))
+                dejas_assignes = {id(w) for w in mots_de_cette_table}
+                bassin = [w for w in bassin if id(w) not in dejas_assignes]
 
     return resultat

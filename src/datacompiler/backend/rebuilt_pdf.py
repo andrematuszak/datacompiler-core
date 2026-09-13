@@ -244,8 +244,21 @@ def _inserer_mot(etat, page_rect, mot, baseline_par_id, report):
 
     largeur_cible = max(bbox.x1 - bbox.x0, 0.1)
     largeur_rendue = police.text_length(texte, fontsize=taille_nominale)
-    taille = (taille_nominale * (largeur_cible / largeur_rendue)
-              if largeur_rendue else taille_nominale)
+    ratio = (largeur_cible / largeur_rendue) if largeur_rendue else 1.0
+    # Ne jamais ÉTALER un mot au-delà de sa propre bbox (ratio > 1) --
+    # seulement le rétrécir si besoin (ratio < 1 reste inchangé). Sans ce
+    # clamp, un mot rendu plus étroit que prévu par LiberationSans se
+    # fait artificiellement grossir pour combler sa bbox cible, et peut
+    # déborder sur le mot suivant quand l'espace naturel entre les deux
+    # est très fin (~1-2pt) -- collage visuel sans perte ni déformation
+    # de caractères (cf. "DIRECTIONGÉNÉRALE", diagnostiqué à partir des
+    # bbox réelles : écart natif de 1.6pt entre les deux mots, aucun
+    # chevauchement en amont). Même correctif que faithful_pdf.py
+    # (_inserer_texte, ligne ~87), jamais répliqué ici jusqu'à présent --
+    # deux renderers séparés (rebuilt vs overlay/clean_overlay/rasterized),
+    # aucun code partagé entre les deux.
+    ratio = min(ratio, 1.0)
+    taille = taille_nominale * ratio
 
     # Couleur : priorité à la couleur échantillonnée (pour les mots blancs
     # sur fond bleu), sinon utiliser mot.color

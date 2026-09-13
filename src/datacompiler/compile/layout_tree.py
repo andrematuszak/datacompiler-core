@@ -47,6 +47,45 @@ def construire_boites_images(page) -> list:
     return boites
 
 
+def _bbox_contenu(bbox_petit, bbox_grand, marge=0.0) -> bool:
+    """True si bbox_petit est ENTIÈREMENT contenue dans bbox_grand
+    (horizontalement, avec une marge de tolérance) -- pas juste son
+    centre. Un mot dont la bbox déborde d'une cellule n'est PAS considéré
+    comme lui appartenant sans ambiguïté, même si son centre y tombe."""
+    if bbox_petit is None or bbox_grand is None:
+        return False
+    return (bbox_grand.x0 - marge <= bbox_petit.x0) and (bbox_petit.x1 <= bbox_grand.x1 + marge)
+
+
+def _chevauchement_y(a, b) -> bool:
+    """True si deux bbox se chevauchent verticalement -- sert à ne
+    comparer un mot ambigu qu'à des voisins de la même ligne physique,
+    pas à un mot d'une autre ligne wrappée dans la même cellule."""
+    return a.y0 < b.y1 and b.y0 < a.y1
+
+
+def _distance_x(bbox_a, bbox_b) -> float:
+    """Distance horizontale entre deux bbox -- 0 si elles se chevauchent
+    en x, sinon l'écart entre les bords les plus proches."""
+    if bbox_a.x1 < bbox_b.x0:
+        return bbox_b.x0 - bbox_a.x1
+    if bbox_b.x1 < bbox_a.x0:
+        return bbox_a.x0 - bbox_b.x1
+    return 0.0
+
+
+# Distance en-dessous de laquelle un voisin de la même ligne physique est
+# considéré assez proche pour trancher une ambiguïté de cellule -- calibré
+# sur les deux seuls écarts réels observés à ce jour (test-impots-revenu.pdf) :
+# ~2.9pt entre "enfants" et "majeurs" (même groupe), ~52-60pt entre
+# "majeurs"/"célibataires" et le premier mot de la colonne suivante (groupe
+# différent). 15pt sépare proprement les deux sur CE document -- pas
+# revalidé sur un autre, à recalibrer si des faux positifs/négatifs
+# apparaissent sur un corpus plus large (même réserve que pour le seuil de
+# largeur de _glyphe_isole_suspect dans tesseract.py).
+SEUIL_PROXIMITE_MOT = 15.0
+
+
 def _mot_dans_cellule(mot, cell_bbox) -> bool:
     """True si le CENTRE de la bbox du mot tombe dans la cellule --
     plus robuste qu'un simple chevauchement pour un mot à cheval sur une
@@ -73,62 +112,96 @@ def _bbox_union(bboxes) -> "BBox | None":
     )
 
 
-def construire_boite_tableau(table_element, mots_resolus) -> LayoutBox:
+def construire_boite_tableau(table_element, mots_natifs) -> LayoutBox:
     """Construit une LayoutBox(type="table") à partir de la géométrie
-    persistée (table_element.cell_bboxes) et de mots RÉSOLUS -- à appeler
-    avec `page.resolved.words`, PAS `page.native.words`.
-
-    Ce n'est pas seulement une question de TIMING (attendre l'étape 4/6) --
-    c'est structurel : reading_order.ordonner() fait un deepcopy() de
-    chaque mot dès sa première ligne (cf. compile/reading_order.py), donc
-    toute la chaîne compile/ (typography, arbitrage OCR, renumérotation
-    finale dans compiler._resoudre_page : `for i, mot in enumerate(...,
-    start=1): mot.id = i`) opère sur des COPIES, jamais sur les objets
-    d'origine de native.words. Les mots vectorisés créés par tesseract.py
-    avec id=-1 (cf. son commentaire "renumérotation finale par
-    compile/compiler.py") gardent donc CE -1 pour toujours dans
-    native.words, peu importe à quel moment du pipeline on regarde --
-    resolved.words est la SEULE liste où compiler.py garantit des id
-    réels et uniques.
-
-    Confirmé empiriquement (session du 16/08) : appel avec native.words
-    -> tous les word_ids valent -1, indiscernables entre eux dès qu'une
-    cellule contient plusieurs mots vectorisés.
+    persistée (table_element.cell_bboxes) et de mots natifs -- à appeler
+    APRÈS que le pipeline complet a tourné (native.words doit déjà
+    inclure les mots vectorisés ajoutés par l'OCR ciblé, étape 4/6), pas
+    pendant l'extraction (étape 1/6, où cell_bboxes est calculé) : cf.
+    docstring de table_reconstruction.cellules_bbox_degenere pour le
+    détail de cette contrainte d'ordre.
 
     Arbre produit : table -> une boîte "container" par ligne -> une boîte
     "native_text" par cellule, portant les `word_ids` des mots dont le
     centre tombe dans cette cellule (cf. _mot_dans_cellule).
 
-    LIMITE CONNUE, pas encore tranchée : `type="native_text"` est mis en
-    dur sur chaque cellule, même si les mots qu'elle contient sont
-    vectorisés (LayoutBox prévoit pourtant "vector_text" comme type
-    distinct). Pas de règle évidente pour une cellule MIXTE (natif +
-    vectorisé) -- décision de politique à prendre séparément, pas
-    tranchée ici pour ne pas deviner à la place de l'appelant.
-
-    `mots_resolus` : liste de Word (typiquement page.resolved.words) --
-    nom générique plutôt que directement "page" pour rester testable sans
-    construire un Document complet (cf. test synthétique)."""
-    ids_invalides = {m.id for m in mots_resolus if m.id is None or m.id < 0}
-    if ids_invalides:
-        raise ValueError(
-            f"construire_boite_tableau : {len(ids_invalides)} mot(s) avec un id "
-            f"invalide (<0 ou None) parmi les mots fournis -- probablement appelé "
-            f"avec page.native.words au lieu de page.resolved.words (seule liste "
-            f"où compiler.py garantit des ids réels, cf. sa renumérotation finale "
-            f"dans _resoudre_page). native.words ne les aura JAMAIS, quel que soit "
-            f"le moment du pipeline où cette fonction est appelée."
-        )
-
+    `mots_natifs` : liste de Word (typiquement page.native.words) --
+    nom générique plutôt que "page" pour rester testable sans construire
+    un Document complet (cf. test synthétique)."""
     lignes_boites = []
     for i, ligne_bboxes in enumerate(table_element.cell_bboxes):
+        # Passe 1 : affectation SANS AMBIGUÏTÉ -- bbox du mot ENTIÈREMENT
+        # contenue dans la cellule (_bbox_contenu), pas juste son centre.
+        assignations = {j: [] for j in range(len(ligne_bboxes))}
+        ambigus = []
+        for m in mots_natifs:
+            if not m.bbox:
+                continue
+            if not any(cb is not None and _chevauchement_y(m.bbox, cb) for cb in ligne_bboxes):
+                continue  # ce mot n'est pas sur la bande y de cette ligne, ignoré ici
+            candidats = [j for j, cb in enumerate(ligne_bboxes) if cb is not None and _bbox_contenu(m.bbox, cb)]
+            if len(candidats) == 1:
+                assignations[candidats[0]].append(m)
+            else:
+                ambigus.append(m)
+
+        # Passe 2 : mots à cheval sur une frontière -- rattachés à la
+        # cellule dont un mot déjà affecté (passe 1) est le plus PROCHE
+        # horizontalement, restreint aux voisins de la même ligne
+        # physique (_chevauchement_y). Justification empirique (cf. cas
+        # "majeurs") : un mot d'en-tête peut déborder de sa colonne
+        # nominale tant qu'il reste loin du contenu réel de la colonne
+        # voisine -- la proximité tranche là où la géométrie de cellule
+        # seule (centre ou majorité d'aire) se trompe.
+        for m in ambigus:
+            meilleure_cellule, meilleure_distance = None, float("inf")
+            for j, cb in enumerate(ligne_bboxes):
+                if cb is None:
+                    continue
+                for voisin in assignations[j]:
+                    if not _chevauchement_y(m.bbox, voisin.bbox):
+                        continue
+                    d = _distance_x(m.bbox, voisin.bbox)
+                    if d < meilleure_distance:
+                        meilleure_distance, meilleure_cellule = d, j
+            if meilleure_cellule is None or meilleure_distance > SEUIL_PROXIMITE_MOT:
+                # Pas de voisin assez proche sur la même ligne -- soit
+                # aucun trouvé, soit trouvé mais trop loin (chevauchement
+                # Y coïncidentel entre mots sans rapport, cf. le bug
+                # "célibataires" découvert en testant). Repli sur le
+                # centre plutôt que de faire confiance à ce signal faible.
+                meilleure_cellule = next(
+                    (j for j, cb in enumerate(ligne_bboxes) if cb is not None and _mot_dans_cellule(m, cb)),
+                    None,
+                )
+            if meilleure_cellule is not None:
+                assignations[meilleure_cellule].append(m)
+
         cellules = []
         for j, cell_bbox in enumerate(ligne_bboxes):
-            ids = [m.id for m in mots_resolus if _mot_dans_cellule(m, cell_bbox)]
+            mots_cellule = sorted(assignations[j], key=lambda m: (m.bbox.y0, m.bbox.x0))
             cellules.append(LayoutBox(
-                bbox=cell_bbox, type="native_text", reading_order=j, word_ids=ids,
+                bbox=cell_bbox, type="native_text", reading_order=j, word_ids=[m.id for m in mots_cellule],
             ))
         lignes_boites.append(LayoutBox(
             bbox=_bbox_union(ligne_bboxes), type="container", reading_order=i, children=cellules,
         ))
     return LayoutBox(bbox=table_element.bbox, type="table", children=lignes_boites)
+
+
+def aplatir_ids(boite: LayoutBox) -> list:
+    """Parcours profondeur d'abord d'une LayoutBox, triée par
+    `reading_order` à chaque niveau -- retourne les word_ids dans l'ordre
+    de lecture qu'exprime l'arbre. Jalon 4 (cf. discussion d'architecture).
+
+    Une feuille (word_ids non vide) contribue ses ids directement --
+    déjà triés en position par construire_boite_tableau, pas retriés ici.
+    Un nœud interne (children non vide) descend récursivement. Convention
+    actuelle : une boîte a soit des enfants, soit des word_ids, jamais les
+    deux -- respectée par construire_boite_tableau, pas revérifiée ici."""
+    if boite.children:
+        ids = []
+        for enfant in sorted(boite.children, key=lambda b: b.reading_order):
+            ids.extend(aplatir_ids(enfant))
+        return ids
+    return list(boite.word_ids)

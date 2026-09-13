@@ -22,7 +22,7 @@ _colonnes_depuis_fragments, correction en cours) :
 
 from datacompiler.model.document import Flag
 
-from .geometry import dans_un_tableau
+from datacompiler.utils.heuristics_geometry import dans_un_tableau
 
 # Valeur de départ arbitraire, non calibrée -- cf. roadmap (étape
 # calibration confidence vs exactitude réelle sur échantillon annoté).

@@ -1,13 +1,13 @@
-﻿"""document.py — Assemblage du modèle : Word (le nœud central, référencé
+"""document.py — Assemblage du modèle : Word (le nœud central, référencé
 depuis native/ocr/resolved), conteneurs de page, Page, Document."""
 
 import json
 from dataclasses import asdict, dataclass, field
 from typing import Any, Dict, List, Optional
 
-from .geometry import BBox, Polygon
-from .typography import Font
-from .metadata import Diagnostic, Metadata
+from datacompiler.model.geometry import BBox, Polygon
+from datacompiler.model.typography import Font
+from datacompiler.model.metadata import Diagnostic, Metadata
 
 
 @dataclass
@@ -55,32 +55,6 @@ class Word:
 
 @dataclass
 class LayoutBox:
-    """Nœud d'arbre de mise en page -- alternative à la liste plate de
-    Word triée par coordonnées, pour les cas où l'ordre de lecture ne
-    peut PAS se déduire d'un simple tri par y0/x0 (ex. une boîte-image
-    dont le dernier mot est géométriquement plus bas qu'un bloc voisin,
-    mais qui doit être lue entièrement avant de passer à ce bloc voisin
-    -- cf. cas "République Française" vs "DIRECTION GÉNÉRALE").
-
-    Ne DUPLIQUE jamais les mots : `word_ids` référence des Word déjà
-    présents ailleurs (page.native.words typiquement) par leur `id`, pas
-    des copies -- évite de sérialiser deux fois la même information en
-    JSON et le risque que les deux représentations divergent.
-
-    `children` : sous-boîtes, pour les nœuds conteneurs
-    (type="container", ou "page" à la racine). Une boîte feuille (image,
-    vector_text, native_text, table) a `children` vide et porte
-    directement `word_ids`.
-
-    `reading_order` : position 0-indexée parmi les FRÈRES du même niveau
-    (pas un ordre global sur tout le document) -- assignée par l'étape de
-    détection/tri des boîtes, pas déduite automatiquement par ce nœud.
-
-    `resolved.words` (la vue plate finale consommée par le reste du
-    pipeline -- compile/typography.py, backend/rebuilt_pdf.py, etc.) sera
-    produite par un parcours profondeur d'abord de cet arbre, trié par
-    `reading_order` à chaque niveau -- pas encore implémenté à ce stade,
-    cf. jalon 4 de la discussion d'architecture."""
     bbox: Optional[BBox] = None
     type: str = "container"  # "page" | "image" | "vector_text" | "native_text" | "table" | "container"
     reading_order: int = 0
@@ -111,13 +85,6 @@ class TableElement:
     bbox: Optional[BBox] = None
     source: str = "pdfplumber"
     rows: List[List[Optional[str]]] = field(default_factory=list)
-    # Géométrie par cellule -- même structure que `rows` (rows[i][j] <->
-    # cell_bboxes[i][j]), None si la cellule n'a pas de bbox déterminable
-    # (fusion de cellules, reconstruction dégénérée sans grille fiable).
-    # Persistée ICI car le Table pdfplumber d'origine (qui l'expose via
-    # .rows[i].cells[j]) ne survit pas à la fermeture du document -- sans
-    # ça, cette géométrie serait perdue après extraction, avant même
-    # d'atteindre le JSON.
     cell_bboxes: List[List[Optional[BBox]]] = field(default_factory=list)
     keep_original: bool = True
 
@@ -156,6 +123,7 @@ class ResolvedContainer:
     words: List[Word] = field(default_factory=list)
     images: List[ImageElement] = field(default_factory=list)
     tables: List[TableElement] = field(default_factory=list)
+    fonts: List[Font] = field(default_factory=list)  # Polices résolues pour le rendu
 
 
 @dataclass
@@ -169,7 +137,7 @@ class Page:
     graphics: GraphicsContainer = field(default_factory=GraphicsContainer)
     ocr: OcrContainer = field(default_factory=OcrContainer)
     resolved: ResolvedContainer = field(default_factory=ResolvedContainer)
-    layout_root: Optional[LayoutBox] = None  # arbre de mise en page -- None tant que non peuplé, additif
+    layout_root: Optional[LayoutBox] = None
 
 
 @dataclass
@@ -202,6 +170,11 @@ class Document:
                 return None
             return Decision(**{k: v for k, v in d.items() if k in Decision.__dataclass_fields__})
 
+        def font_obj(d):
+            if not d:
+                return None
+            return Font(**{k: v for k, v in d.items() if k in Font.__dataclass_fields__})
+
         def word(d):
             d = dict(d)
             d["bbox"] = BBox.from_dict(d.get("bbox"))
@@ -212,16 +185,21 @@ class Document:
             if not d:
                 return Diagnostic()
             return Diagnostic(**{k: v for k, v in d.items() if k in Diagnostic.__dataclass_fields__})
+
         def image(d):
-            d = dict(d); d["bbox"] = BBox.from_dict(d.get("bbox"))
+            d = dict(d)
+            d["bbox"] = BBox.from_dict(d.get("bbox"))
             return ImageElement(**{k: v for k, v in d.items() if k in ImageElement.__dataclass_fields__})
+
         def table(d):
-            d = dict(d); d["bbox"] = BBox.from_dict(d.get("bbox"))
+            d = dict(d)
+            d["bbox"] = BBox.from_dict(d.get("bbox"))
             d["cell_bboxes"] = [
                 [BBox.from_dict(cell) for cell in ligne]
                 for ligne in d.get("cell_bboxes", [])
             ]
             return TableElement(**{k: v for k, v in d.items() if k in TableElement.__dataclass_fields__})
+
         def layout_box(d):
             if not d:
                 return None
@@ -232,6 +210,7 @@ class Document:
                 word_ids=list(d.get("word_ids", [])),
                 children=[layout_box(c) for c in d.get("children", [])],
             )
+
         pages = []
         for raw in data.get("pages", []):
             native = raw.get("native", {})
@@ -240,14 +219,30 @@ class Document:
             resolved = raw.get("resolved", {})
             page = Page(number=raw["number"], width=raw["width"], height=raw["height"], rotation=raw.get("rotation", 0.0))
             page.diagnostic = page_diagnostic(raw.get("diagnostic", {}))
-            page.native = NativeContainer(words=[word(x) for x in native.get("words", [])], fonts=[Font(**x) for x in native.get("fonts", [])])
-            page.graphics = GraphicsContainer(images=[image(x) for x in graphics.get("images", [])], tables=[table(x) for x in graphics.get("tables", [])])
-            page.ocr = OcrContainer(engine=ocr.get("engine"), words=[word(x) for x in ocr.get("words", [])], blocks=[OcrBlock(BBox.from_dict(x.get("bbox")), x.get("type", "text"), x.get("content", "")) for x in ocr.get("blocks", [])])
-            page.resolved = ResolvedContainer(words=[word(x) for x in resolved.get("words", [])], images=[image(x) for x in resolved.get("images", [])], tables=[table(x) for x in resolved.get("tables", [])])
+            
+            # Utilisation du helper sécurisé font_obj
+            page.native = NativeContainer(
+                words=[word(x) for x in native.get("words", [])],
+                fonts=[font_obj(x) for x in native.get("fonts", []) if x]
+            )
+            page.graphics = GraphicsContainer(
+                images=[image(x) for x in graphics.get("images", [])],
+                tables=[table(x) for x in graphics.get("tables", [])]
+            )
+            page.ocr = OcrContainer(
+                engine=ocr.get("engine"),
+                words=[word(x) for x in ocr.get("words", [])],
+                blocks=[OcrBlock(BBox.from_dict(x.get("bbox")), x.get("type", "text"), x.get("content", "")) for x in ocr.get("blocks", [])]
+            )
+            page.resolved = ResolvedContainer(
+                words=[word(x) for x in resolved.get("words", [])],
+                images=[image(x) for x in resolved.get("images", [])],
+                tables=[table(x) for x in resolved.get("tables", [])],
+                fonts=[font_obj(x) for x in resolved.get("fonts", []) if x]
+            )
             page.layout_root = layout_box(raw.get("layout_root"))
             pages.append(page)
+
         metadata = Metadata(**{k: v for k, v in data.get("metadata", {}).items() if k in Metadata.__dataclass_fields__})
         diagnostic = Diagnostic(**{k: v for k, v in data.get("diagnostic", {}).items() if k in Diagnostic.__dataclass_fields__})
         return cls(metadata=metadata, diagnostic=diagnostic, pages=pages)
-
-
