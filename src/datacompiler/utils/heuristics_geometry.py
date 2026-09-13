@@ -97,6 +97,20 @@ def calculer_ecarts(box1: BBox, box2: BBox) -> Tuple[float, float, float]:
     return dx, dy, dist_euclidienne
 
 
+def dans_un_tableau(mot, tables):
+    """Vérifie si le centre d'un mot tombe dans une table."""
+    if not mot.bbox:
+        return False
+    cx = (mot.bbox.x0 + mot.bbox.x1) / 2
+    cy = (mot.bbox.y0 + mot.bbox.y1) / 2
+    for table in tables:
+        if not table.bbox:
+            continue
+        if table.bbox.x0 <= cx <= table.bbox.x1 and table.bbox.y0 <= cy <= table.bbox.y1:
+            return True
+    return False
+
+
 def fusionner_bboxes(bboxes: List[BBox]) -> Optional[BBox]:
     """Calcule la BBox minimale englobante à partir d'une liste de BBox[cite: 8]."""
     valides = [b for b in bboxes if b is not None]
@@ -109,3 +123,16 @@ def fusionner_bboxes(bboxes: List[BBox]) -> Optional[BBox]:
     y1 = max(b.y1 for b in valides)
 
     return BBox(x0=x0, y0=y0, x1=x1, y1=y1)
+
+
+def mot_dans_cellule(mot, cell_bbox) -> bool:
+    """True si le CENTRE de la bbox du mot tombe dans la cellule --
+    plus robuste qu'un simple chevauchement pour un mot à cheval sur une
+    frontière (le chevauchement partiel avec la cellule voisine ne le
+    fait pas basculer dedans à tort)."""
+    if not mot.bbox or cell_bbox is None:
+        return False
+    cx = (mot.bbox.x0 + mot.bbox.x1) / 2
+    cy = (mot.bbox.y0 + mot.bbox.y1) / 2
+    return cell_bbox.x0 <= cx <= cell_bbox.x1 and cell_bbox.y0 <= cy <= cell_bbox.y1
+
