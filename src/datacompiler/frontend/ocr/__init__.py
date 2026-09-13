@@ -4,23 +4,34 @@ Usage :
     from datacompiler.frontend.ocr import get_backend, ocraliser
     
     # Via le registre :
-    backend = get_backend("tesseract", lang="fra")
+    backend = get_backend("paddle", lang="fr")
     backend.ocraliser(doc, pdf_path, pages=[3, 4])
 
     # Ou via le helper direct :
-    ocraliser(doc, pdf_path, backend_name="mistral")
+    ocraliser(doc, pdf_path, backend_name="paddle")
 """
 
 from datacompiler.frontend.ocr.base import OcrBackend
-from datacompiler.frontend.ocr.mistral import MistralBackend
 
-BACKENDS = {"mistral": MistralBackend}
+BACKENDS = {}
+
+try:
+    from .paddle import PaddleOCRBackend
+    BACKENDS["paddle"] = PaddleOCRBackend
+except ImportError:
+    pass
 
 try:
     from .tesseract import TesseractBackend
     BACKENDS["tesseract"] = TesseractBackend
 except ImportError:
-    pass  # pytesseract/Pillow non installés, ou binaire tesseract absent
+    pass
+
+try:
+    from .mistral import MistralBackend
+    BACKENDS["mistral"] = MistralBackend
+except ImportError:
+    pass
 
 
 def get_backend(name: str, **kwargs) -> OcrBackend:
@@ -29,7 +40,7 @@ def get_backend(name: str, **kwargs) -> OcrBackend:
     return BACKENDS[name](**kwargs)
 
 
-def ocraliser(doc, pdf_path: str, backend_name: str = "mistral", pages: list = None, **kwargs):
+def ocraliser(doc, pdf_path: str, backend_name: str = "paddle", pages: list = None, **kwargs):
     """Point d'entrée global pour exécuter l'OCR sur un document."""
     backend = get_backend(backend_name, **kwargs)
     return backend.ocraliser(doc, pdf_path, pages=pages, **kwargs)
