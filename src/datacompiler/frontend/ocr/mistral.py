@@ -34,13 +34,10 @@ import base64
 import base64
 import os
 
-from datacompiler.model.document import Document, Word, Word
+from datacompiler.model.document import Document, Word
 from datacompiler.frontend.ocr.base import OcrBackend
 
 MODELE_OCR = "mistral-ocr-latest"
-
-MODELE_OCR = "mistral-ocr-latest"
-
 
 class MistralBackend(OcrBackend):
     name = "mistral"
@@ -52,7 +49,6 @@ class MistralBackend(OcrBackend):
     def ocraliser(self, doc: Document, pdf_path: str, pages: list = None, **kwargs) -> Document:
         # 1. Vérification de la clé API
         api_key = kwargs.get("api_key") or self.api_key
-
 
         if not api_key:
             raise ValueError(
