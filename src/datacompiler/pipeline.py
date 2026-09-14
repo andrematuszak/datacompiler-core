@@ -3,14 +3,13 @@ compile (arbitrage native/OCR), backend (rendu)."""
 
 import argparse
 import logging
-import os
 from pathlib import Path
 
 from datacompiler.frontend.diagnostic.vector_text import zones_texte_vectorise_probable
 from datacompiler.model.document import Document
 from datacompiler.frontend.extract import extraire
-from datacompiler.frontend import diagnostiquer, ocraliser, report as diagnostic_report
-from datacompiler.frontend.ocr.tesseract import TesseractBackend
+from datacompiler.frontend import diagnostiquer, report as diagnostic_report
+from datacompiler.frontend.ocr.paddle import PaddleOCRBackend
 from datacompiler.frontend.ocr.vector_zones import recuperer_texte_vectorise
 from datacompiler.compile import resoudre
 from datacompiler.backend import EXTENSIONS, FORMATS
@@ -22,73 +21,90 @@ logger = logging.getLogger(__name__)
 
 
 def executer_pipeline(pdf_path, strategy="overlay", sauver_json=True,
-                      dpi=300, dpi_ocr_vectoriel=300, tesseract_lang="fra", paddle_lang="fr"):
+                      dpi=300, dpi_ocr_vectoriel=300, paddle_lang="fr",
+                      ocr_mode="auto"):
+
     """
+    Exécute le pipeline de compilation de PDF en 5 étapes claires :
+      [1/5] Extraction du texte natif
+      [2/5] Diagnostic de la page
+      [3/5] Enrichissement OCR
+      [4/5] Compilation et résolution
+      [5/5] Rendu final
+
+    ---
+    Note d'architecture (OCR pleine page) :
+      L'étape d'OCR pleine page globale (anciennement 'ocraliser') a été retirée
+      du flux actif. Contrairement à l'OCR ciblé (qui insère directement les
+      mots vectorisés dans page.native.words pour combler des trous géométriques
+      délimités), l'OCR pleine page passe par un processus d'alignement global
+      (diff de séquence + interpolation de bbox via alignment.py et
+      conflict_resolution.py).
+      
+      Tant que l'algorithme d'alignement n'est pas pleinement validé sur des
+      cas réels sans régression de duplication de mots, l'OCR pleine page
+      est désactivé pour préserver la précision du texte natif.
+    ---
+
     dpi : DPI du RENDU final (faithful/rasterized) -- indépendant de l'OCR,
     garder bas pour limiter la taille de fichier.
     dpi_ocr_vectoriel : DPI dédié à l'OCR ciblé des zones de texte
     vectorisé (recuperer_texte_vectorise). Découplé de `dpi`, mais laissé
-    à 300 (même valeur que dpi) PAR DÉFAUT -- ⚠️ ROLLBACK : un essai à 600
-    en global a corrigé "Pavis" mais causé une régression confirmée sur
-    d'autres zones (mots natifs disparus, "célibataires" -> "TRES" sur le
-    tableau RÉSIDENCE de la page 2). Un DPI élevé aide sur un mot court et
-    isolé, mais pas garanti sur une zone dense/complexe -- un défaut
-    global n'est pas la bonne granularité. Piste à creuser : DPI
-    conditionnel à la taille de la zone, pas un défaut unique pour toutes
-    les zones. Le paramètre reste disponible pour des tests ciblés
-    (diagnostic_ocr_zone_reel.py), juste plus comme valeur par défaut du
-    pipeline complet tant que ce n'est pas résolu proprement.
-    tesseract_lang / paddle_lang : DEUX paramètres distincts, PAS un seul
-    `lang` partagé -- Tesseract attend un code ISO 639-2 ("fra"),
-    PaddleOCR attend ISO 639-1 ("fr"). Réutiliser tesseract_lang pour les
-    deux planterait ou ferait tourner PaddleOCR dans une langue non
-    reconnue, silencieusement.
+    à 300 PAR DÉFAUT.
+    paddle_lang : Code langue ISO 639-1 pour PaddleOCR (ex. "fr").
+    """
+    """
+    ocr_mode : 
+      - "auto"   : Fait confiance au diagnostic (pleine page si
+                    recommend_full_ocr, zones ciblées sinon)
+      - "force"  : Force l'OCR pleine page quelle que soit la recommandation
+      - "skip"   : Désactive tout OCR (pleine page et zones vectorielles)
+      - "vector" : Exécute uniquement l'OCR ciblé sur zones vectorielles
     """
     pdf_path = str(Path(pdf_path).resolve())
-    logger.info("[1/6] Extraction : %s", pdf_path)
+    logger.info("[1/5] Extraction : %s", pdf_path)
     doc = extraire(Document(), pdf_path)
 
-    logger.info("[2/6] Diagnostic...")
+    logger.info("[2/5] Diagnostic...")
     diagnostiquer(doc)
     diagnostic_report.afficher(doc)
 
     logger.debug(
-        "Diagnostic terminé. Recommandation OCR : %s",
-        getattr(doc.diagnostic, "recommend_ocr", False)
+        "Diagnostic terminé. Recommandation OCR pleine page : %s (désactivée du flux)",
+        getattr(doc.diagnostic, "recommend_full_ocr", False)
     )
 
-    if doc.diagnostic.recommend_ocr and (api_key := os.getenv("MISTRAL_API_KEY")):
-        logger.info("[3/6] Appel OCR...")
-        ocraliser(doc, pdf_path, backend_name="mistral", api_key=api_key)
-    elif doc.diagnostic.recommend_ocr:
-        logger.warning("[3/6] OCR recommandé, mais MISTRAL_API_KEY absent : poursuite avec le texte natif.")
+
+    logger.info("[3/5] Traitement OCR...")
+
+    if ocr_mode == "skip":
+        logger.info("      [OCR] Mode 'skip' : Aucun OCR exécuté.")
     else:
-        logger.info("[3/6] OCR non nécessaire.")
+        # A) Branche OCR Pleine Page
+        do_full_ocr = (ocr_mode == "force") or (
+            ocr_mode == "auto" and getattr(doc.diagnostic, "recommend_full_ocr", False)
+        )
+        if do_full_ocr:
+            logger.info("      [OCR] Pleine page recommandée (recommend_full_ocr=%s, mode=%s), mais moteur global désactivé...",
+                        getattr(doc.diagnostic, "recommend_full_ocr", False), ocr_mode)
+            # ocraliser(doc, pdf_path, backend_name="paddle", lang=paddle_lang)
+        else:
+            logger.info("      [OCR] Pleine page non nécessaire.")
 
-    # Indépendant de MISTRAL_API_KEY et de recommend_ocr (page-entière) :
-    # cible uniquement les zones de texte vectorisé repérées par
-    # diagnostic/vector_text.py, comble un vide géométrique plutôt
-    # qu'arbitrer un désaccord natif/OCR. No-op silencieux si aucune zone
-    # détectée sur aucune page.
-    # DPI dédié (dpi_ocr_vectoriel), PAS le DPI de rendu -- cf. docstring
-    # de executer_pipeline.
-    # Deux backends fournis -> fusionnés zone par zone (fusion_ocr.py).
-    # PaddleOCR non installé/indisponible dégrade gracieusement vers
-    # Tesseract seul (cf. fusion_ocr.fusionner_zone_multi_backend) --
-    # aucune vérification de disponibilité nécessaire ici.
-    logger.info("[4/6] OCR ciblé (texte vectorisé)...")
-    backend_tesseract = TesseractBackend(lang=tesseract_lang, dpi=dpi_ocr_vectoriel)
+        # B) Branche OCR Ciblé (Zones vectorielles)
+        if ocr_mode in ("auto", "vector"):
+            logger.info("      [OCR] Vérification des zones de texte vectorisé...")
+            backend_paddle = PaddleOCRBackend(lang=paddle_lang, dpi=dpi_ocr_vectoriel)
+            recuperer_texte_vectorise(
+                doc, pdf_path, backend_paddle,
+                lang=paddle_lang, dpi=dpi_ocr_vectoriel,
+            )
 
-    recuperer_texte_vectorise(
-        doc, pdf_path, backend_tesseract,
-        lang=tesseract_lang, dpi=dpi_ocr_vectoriel,
-    )
-
-    logger.info("[5/6] Compilation...")
+    logger.info("[4/5] Compilation...")
     resoudre(doc)
 
     base = str(Path(pdf_path).with_suffix(""))
-    logger.info("[6/6] Rendu (stratégie : %s)...", strategy)
+    logger.info("[5/5] Rendu (stratégie : %s)...", strategy)
     if strategy in ("overlay", "clean_overlay", "rasterized"):
         fichier_sortie = base + "_propre.pdf"
         render_faithful_pdf(doc, fichier_sortie, strategy=strategy, dpi=dpi)
@@ -122,9 +138,10 @@ def main():
                         default="overlay", help="Stratégie de rendu : overlay (défaut), clean_overlay, rasterized, flow, rebuilt, markdown, html, docx")
     parser.add_argument("--dpi", type=int, default=300, help="DPI du rendu final (faithful/rasterized)")
     parser.add_argument("--dpi-ocr-vectoriel", type=int, default=300,
-                        help="DPI dédié à l'OCR ciblé des zones de texte vectorisé (découplé de --dpi) -- "
-                             "600 corrige 'Pavis' mais régresse d'autres zones, cf. docstring executer_pipeline")
-    parser.add_argument("--tesseract-lang", default="fra", help="Langue Tesseract pour l'OCR ciblé du texte vectorisé (code ISO 639-2, ex. 'fra')")
+                        help="DPI dédié à l'OCR ciblé des zones de texte vectorisé (découplé de --dpi)")
+    parser.add_argument("--paddle-lang", default="fr", help="Langue PaddleOCR pour l'OCR ciblé du texte vectorisé (code ISO 639-1, ex. 'fr')")
+    parser.add_argument("--ocr-mode", choices=["auto", "force", "skip", "vector"], default="auto",
+                        help="Politique OCR : auto, force pleine page, skip ou vectoriel seulement")
     parser.add_argument("--no-json", action="store_true")
     parser.add_argument("-v", "--verbose", action="store_true", help="Active l'affichage des logs de niveau DEBUG")
     args = parser.parse_args()
@@ -139,7 +156,7 @@ def main():
     executer_pipeline(
         args.pdf, strategy=args.strategy, sauver_json=not args.no_json,
         dpi=args.dpi, dpi_ocr_vectoriel=args.dpi_ocr_vectoriel,
-        tesseract_lang=args.tesseract_lang
+        paddle_lang=args.paddle_lang, ocr_mode=args.ocr_mode,
     )
 
 

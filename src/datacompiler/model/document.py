@@ -1,13 +1,13 @@
-﻿"""document.py — Assemblage du modèle : Word (le nœud central, référencé
+"""document.py — Assemblage du modèle : Word (le nœud central, référencé
 depuis native/ocr/resolved), conteneurs de page, Page, Document."""
 
 import json
 from dataclasses import asdict, dataclass, field
 from typing import Any, Dict, List, Optional
 
-from .geometry import BBox, Polygon
-from .typography import Font
-from .metadata import Diagnostic, Metadata
+from datacompiler.model.geometry import BBox, Polygon
+from datacompiler.model.font import Font
+from datacompiler.model.metadata import Diagnostic, Metadata
 
 
 @dataclass
@@ -54,6 +54,15 @@ class Word:
 
 
 @dataclass
+class LayoutBox:
+    bbox: Optional[BBox] = None
+    type: str = "container"  # "page" | "image" | "vector_text" | "native_text" | "table" | "container"
+    reading_order: int = 0
+    word_ids: List[int] = field(default_factory=list)
+    children: List["LayoutBox"] = field(default_factory=list)
+
+
+@dataclass
 class NativeContainer:
     words: List[Word] = field(default_factory=list)
     fonts: List[Font] = field(default_factory=list)
@@ -76,6 +85,7 @@ class TableElement:
     bbox: Optional[BBox] = None
     source: str = "pdfplumber"
     rows: List[List[Optional[str]]] = field(default_factory=list)
+    cell_bboxes: List[List[Optional[BBox]]] = field(default_factory=list)
     keep_original: bool = True
 
 
@@ -113,6 +123,7 @@ class ResolvedContainer:
     words: List[Word] = field(default_factory=list)
     images: List[ImageElement] = field(default_factory=list)
     tables: List[TableElement] = field(default_factory=list)
+    fonts: List[Font] = field(default_factory=list)  # Polices résolues pour le rendu
 
 
 @dataclass
@@ -126,6 +137,7 @@ class Page:
     graphics: GraphicsContainer = field(default_factory=GraphicsContainer)
     ocr: OcrContainer = field(default_factory=OcrContainer)
     resolved: ResolvedContainer = field(default_factory=ResolvedContainer)
+    layout_root: Optional[LayoutBox] = None
 
 
 @dataclass
@@ -158,6 +170,11 @@ class Document:
                 return None
             return Decision(**{k: v for k, v in d.items() if k in Decision.__dataclass_fields__})
 
+        def font_obj(d):
+            if not d:
+                return None
+            return Font(**{k: v for k, v in d.items() if k in Font.__dataclass_fields__})
+
         def word(d):
             d = dict(d)
             d["bbox"] = BBox.from_dict(d.get("bbox"))
@@ -168,12 +185,32 @@ class Document:
             if not d:
                 return Diagnostic()
             return Diagnostic(**{k: v for k, v in d.items() if k in Diagnostic.__dataclass_fields__})
+
         def image(d):
-            d = dict(d); d["bbox"] = BBox.from_dict(d.get("bbox"))
+            d = dict(d)
+            d["bbox"] = BBox.from_dict(d.get("bbox"))
             return ImageElement(**{k: v for k, v in d.items() if k in ImageElement.__dataclass_fields__})
+
         def table(d):
-            d = dict(d); d["bbox"] = BBox.from_dict(d.get("bbox"))
+            d = dict(d)
+            d["bbox"] = BBox.from_dict(d.get("bbox"))
+            d["cell_bboxes"] = [
+                [BBox.from_dict(cell) for cell in ligne]
+                for ligne in d.get("cell_bboxes", [])
+            ]
             return TableElement(**{k: v for k, v in d.items() if k in TableElement.__dataclass_fields__})
+
+        def layout_box(d):
+            if not d:
+                return None
+            return LayoutBox(
+                bbox=BBox.from_dict(d.get("bbox")),
+                type=d.get("type", "container"),
+                reading_order=d.get("reading_order", 0),
+                word_ids=list(d.get("word_ids", [])),
+                children=[layout_box(c) for c in d.get("children", [])],
+            )
+
         pages = []
         for raw in data.get("pages", []):
             native = raw.get("native", {})
@@ -182,13 +219,30 @@ class Document:
             resolved = raw.get("resolved", {})
             page = Page(number=raw["number"], width=raw["width"], height=raw["height"], rotation=raw.get("rotation", 0.0))
             page.diagnostic = page_diagnostic(raw.get("diagnostic", {}))
-            page.native = NativeContainer(words=[word(x) for x in native.get("words", [])], fonts=[Font(**x) for x in native.get("fonts", [])])
-            page.graphics = GraphicsContainer(images=[image(x) for x in graphics.get("images", [])], tables=[table(x) for x in graphics.get("tables", [])])
-            page.ocr = OcrContainer(engine=ocr.get("engine"), words=[word(x) for x in ocr.get("words", [])], blocks=[OcrBlock(BBox.from_dict(x.get("bbox")), x.get("type", "text"), x.get("content", "")) for x in ocr.get("blocks", [])])
-            page.resolved = ResolvedContainer(words=[word(x) for x in resolved.get("words", [])], images=[image(x) for x in resolved.get("images", [])], tables=[table(x) for x in resolved.get("tables", [])])
+            
+            # Utilisation du helper sécurisé font_obj
+            page.native = NativeContainer(
+                words=[word(x) for x in native.get("words", [])],
+                fonts=[font_obj(x) for x in native.get("fonts", []) if x]
+            )
+            page.graphics = GraphicsContainer(
+                images=[image(x) for x in graphics.get("images", [])],
+                tables=[table(x) for x in graphics.get("tables", [])]
+            )
+            page.ocr = OcrContainer(
+                engine=ocr.get("engine"),
+                words=[word(x) for x in ocr.get("words", [])],
+                blocks=[OcrBlock(BBox.from_dict(x.get("bbox")), x.get("type", "text"), x.get("content", "")) for x in ocr.get("blocks", [])]
+            )
+            page.resolved = ResolvedContainer(
+                words=[word(x) for x in resolved.get("words", [])],
+                images=[image(x) for x in resolved.get("images", [])],
+                tables=[table(x) for x in resolved.get("tables", [])],
+                fonts=[font_obj(x) for x in resolved.get("fonts", []) if x]
+            )
+            page.layout_root = layout_box(raw.get("layout_root"))
             pages.append(page)
+
         metadata = Metadata(**{k: v for k, v in data.get("metadata", {}).items() if k in Metadata.__dataclass_fields__})
         diagnostic = Diagnostic(**{k: v for k, v in data.get("diagnostic", {}).items() if k in Diagnostic.__dataclass_fields__})
         return cls(metadata=metadata, diagnostic=diagnostic, pages=pages)
-
-
