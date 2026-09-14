@@ -71,8 +71,6 @@ class PaddleOcrBackend(OcrBackend):
             scores = res.get("rec_scores", [])
             boxes = res.get("dt_polys", res.get("rec_boxes", []))
 
-            print("\n[DIAGNOSTIC PADDLE RAW]", texts)
-
             for box, text, score in zip(boxes, texts, scores):
                 x0 = min(p[0] for p in box)
                 y0 = min(p[1] for p in box)
