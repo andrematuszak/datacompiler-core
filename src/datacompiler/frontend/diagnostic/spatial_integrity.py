@@ -1,4 +1,4 @@
-﻿"""geometry.py — Ordre de lecture (proxy, sans réorganiser -- contrairement
+﻿"""spatial_integrity.py — Ordre de lecture (proxy, sans réorganiser -- contrairement
 à resolve/reading_order.py qui, lui, réordonne réellement), chevauchements
 de texte, coordonnées hors-limites."""
 

@@ -40,15 +40,23 @@ logger = logging.getLogger(__name__)
 _FONTS_DIR = Path(__file__).parent / "fonts"
 _FONT_REGULAR = _FONTS_DIR / "LiberationSans-Regular.ttf"
 _FONT_BOLD = _FONTS_DIR / "LiberationSans-Bold.ttf"
+_FONT_ITALIC = _FONTS_DIR / "LiberationSans-Italic.ttf"
+_FONT_BOLD_ITALIC = _FONTS_DIR / "LiberationSans-BoldItalic.ttf"
 _FONT_FALLBACK = _FONTS_DIR / "DejaVuSans.ttf"
 
 _polices = {}  # cache global (chemin -> (pymupdf.Font, nom))
 
 
-def _font_objet(gras):
+def _font_objet(gras, italic=False):
     """Retourne (pymupdf.Font, nom) pour le style demandé, avec cache."""
-    fichier = _FONT_BOLD if gras else _FONT_REGULAR
-    nom = "LiberationSans-Bold" if gras else "LiberationSans"
+    if gras and italic:
+        fichier, nom = _FONT_BOLD_ITALIC, "LiberationSans-BoldItalic"
+    elif gras:
+        fichier, nom = _FONT_BOLD, "LiberationSans-Bold"
+    elif italic:
+        fichier, nom = _FONT_ITALIC, "LiberationSans-Italic"
+    else:
+        fichier, nom = _FONT_REGULAR, "LiberationSans"
     if not fichier.exists():
         fichier = _FONT_FALLBACK
         nom = "DejaVuSans"
@@ -218,7 +226,32 @@ def _copier_images_et_dessins(src_page, dst_page, report, exclure=None):
     return couleurs_echantillonnees
 
 
-def _inserer_mot(etat, page_rect, mot, baseline_par_id, report):
+# Écart minimum (pt) à réserver avant le mot suivant sur la même ligne,
+# pour les mots OCR/vectorisés dont les bbox se touchent. En dessous
+# d'environ 1pt, MuPDF fusionne les insertions en un seul token
+# (get_text("words") → "GÉNÉRALEDES").
+_MIN_GAP_MOTS = 2.0
+
+
+def _voisin_droit(mot, ordre, tolerance_y=3.0):
+    """Mot le plus proche à droite sur la même ligne visuelle, ou None."""
+    bbox = mot.bbox
+    if bbox is None:
+        return None
+    meilleur = None
+    for autre in ordre:
+        if autre is mot or autre.bbox is None:
+            continue
+        if abs(autre.bbox.y0 - bbox.y0) > tolerance_y:
+            continue
+        if autre.bbox.x0 <= bbox.x0:
+            continue
+        if meilleur is None or autre.bbox.x0 < meilleur.bbox.x0:
+            meilleur = autre
+    return meilleur
+
+
+def _inserer_mot(etat, page_rect, mot, baseline_par_id, report, voisin=None):
     """
     Ajoute le mot à un pymupdf.TextWriter.
 
@@ -235,7 +268,8 @@ def _inserer_mot(etat, page_rect, mot, baseline_par_id, report):
         return
 
     gras = bool(mot.bold) or "bold" in (mot.font or "").lower()
-    police, _ = _font_objet(gras)
+    italic = bool(mot.italic) or "italic" in (mot.font or "").lower()
+    police, _ = _font_objet(gras, italic)
 
     taille_nominale = mot.font_size or 0.0
     if not taille_nominale:
@@ -243,9 +277,36 @@ def _inserer_mot(etat, page_rect, mot, baseline_par_id, report):
         report["taille_heuristique"] = report.get("taille_heuristique", 0) + 1
 
     largeur_cible = max(bbox.x1 - bbox.x0, 0.1)
+    # Les bbox Paddle d'une ligne vectorisée peuvent n'avoir que ~0.6pt
+    # d'écart (GÉNÉRALE.x1=240.75, DES.x0=241.35 sur impots-revenu).
+    # Le clamp anti-étirement ci-dessous aligne alors le glyphe sur le
+    # bord droit de SA bbox, et MuPDF recolle les deux insertions.
+    # On réserve un gap devant le voisin droit, seulement pour le texte
+    # reconstruit/vectorisé -- un mot natif garde sa métrique d'origine.
+    if (
+        voisin is not None
+        and voisin.bbox is not None
+        and (mot.reconstructed or mot.is_vectorized)
+    ):
+        largeur_avant_voisin = voisin.bbox.x0 - bbox.x0 - _MIN_GAP_MOTS
+        if largeur_avant_voisin > 0:
+            largeur_cible = min(largeur_cible, largeur_avant_voisin)
     largeur_rendue = police.text_length(texte, fontsize=taille_nominale)
-    taille = (taille_nominale * (largeur_cible / largeur_rendue)
-              if largeur_rendue else taille_nominale)
+    ratio = (largeur_cible / largeur_rendue) if largeur_rendue else 1.0
+    # Ne jamais ÉTALER un mot au-delà de sa propre bbox (ratio > 1) --
+    # seulement le rétrécir si besoin (ratio < 1 reste inchangé). Sans ce
+    # clamp, un mot rendu plus étroit que prévu par LiberationSans se
+    # fait artificiellement grossir pour combler sa bbox cible, et peut
+    # déborder sur le mot suivant quand l'espace naturel entre les deux
+    # est très fin (~1-2pt) -- collage visuel sans perte ni déformation
+    # de caractères (cf. "DIRECTIONGÉNÉRALE", diagnostiqué à partir des
+    # bbox réelles : écart natif de 1.6pt entre les deux mots, aucun
+    # chevauchement en amont). Même correctif que faithful_pdf.py
+    # (_inserer_texte, ligne ~87), jamais répliqué ici jusqu'à présent --
+    # deux renderers séparés (rebuilt vs overlay/clean_overlay/rasterized),
+    # aucun code partagé entre les deux.
+    ratio = min(ratio, 1.0)
+    taille = taille_nominale * ratio
 
     # Couleur : priorité à la couleur échantillonnée (pour les mots blancs
     # sur fond bleu), sinon utiliser mot.color
@@ -264,6 +325,18 @@ def _inserer_mot(etat, page_rect, mot, baseline_par_id, report):
 
     point = pymupdf.Point(bbox.x0, baseline_par_id.get(mot_id, bbox.y1))
     etat["tw"].append(point, texte, font=police, fontsize=taille)
+    # Espace explicite dans le flux, à part du mot : MuPDF découpe
+    # get_text("words") sur les glyphes d'espace, pas seulement sur
+    # l'écart visuel. Un espace minuscule ne décale pas le mot suivant
+    # (positionné indépendamment) mais empêche "GÉNÉRALEDES" quand le
+    # gap OCR reste sous le seuil interne de MuPDF.
+    largeur_finale = police.text_length(texte, fontsize=taille)
+    etat["tw"].append(
+        pymupdf.Point(point.x + largeur_finale, point.y),
+        " ",
+        font=police,
+        fontsize=0.5,
+    )
     report["mots_inseres"] = report.get("mots_inseres", 0) + 1
 
 
@@ -350,7 +423,10 @@ def render_rebuilt_pdf(doc: Document, output_path: str, source_pdf: str = None,
             }
 
             for mot in ordre:
-                _inserer_mot(writers, dst_page.rect, mot, baseline_par_id, report)
+                _inserer_mot(
+                    writers, dst_page.rect, mot, baseline_par_id, report,
+                    voisin=_voisin_droit(mot, ordre),
+                )
 
             writers["segments"].append((writers["couleur_cle"], writers["tw"]))
             for couleur_rgb, tw in writers["segments"]:

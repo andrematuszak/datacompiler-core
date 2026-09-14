@@ -17,7 +17,7 @@ plus quand tu es prêt à les intégrer."""
 import re
 from collections import Counter
 
-from datacompiler.heuristics import TOKEN_PATTERN
+from datacompiler.utils.heuristics_text import TOKEN_PATTERN
 
 _MOTIF_NOMBRE_LETTRE = re.compile(r"\d[.,]\d{2}\s*([A-Za-z])\b")
 _MOT_PATTERN = re.compile(r"[A-Za-zÀ-ÖØ-öø-ÿ]+")
@@ -44,7 +44,7 @@ def mots_suspects_ngrammes(texte: str, longueur_min: int = 7, top_n: int = 20) -
     if not mots:
         return []
 
-    compte_tri = Counter()
+    compte_tri: Counter[str] = Counter()
     for m in mots:
         for tri in _trigrammes(m):
             compte_tri[tri] += 1

@@ -30,7 +30,11 @@ class Diagnostic:
     native_text_quality: Optional[float] = None
     native_text_coverage: Optional[float] = None
     image_quality: Optional[float] = None
+    # OCR ciblé : vecteurs, images avec texte, ou texte natif dégradé.
     recommend_ocr: bool = False
+    # OCR page entière : réservé aux scans / pages images, jamais à une
+    # page hybride dont seules quelques zones doivent être enrichies.
+    recommend_full_ocr: bool = False
     notes: List[str] = field(default_factory=list)
     ocr_reasons: List[str] = field(default_factory=list)
     encrypted: bool = False

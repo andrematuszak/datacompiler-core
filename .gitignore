@@ -5,6 +5,7 @@ env/
 ENV/
 venv-deepseek/
 .env/
+.env
 .envexperiments/
 
 # --- Python & Caches ---
@@ -54,7 +55,6 @@ apps/
 experiments/
 resultats/
 sources/
-utils/
 .aider*
 .editorconfig
 .continue.ctx
