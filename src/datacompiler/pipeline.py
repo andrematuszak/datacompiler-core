@@ -55,7 +55,8 @@ def executer_pipeline(pdf_path, strategy="overlay", sauver_json=True,
     """
     """
     ocr_mode : 
-      - "auto"   : Fait confiance au diagnostic (pleine page si recommend_ocr, vectoriel si zones détectées)
+      - "auto"   : Fait confiance au diagnostic (pleine page si
+                    recommend_full_ocr, zones ciblées sinon)
       - "force"  : Force l'OCR pleine page quelle que soit la recommandation
       - "skip"   : Désactive tout OCR (pleine page et zones vectorielles)
       - "vector" : Exécute uniquement l'OCR ciblé sur zones vectorielles
@@ -70,7 +71,7 @@ def executer_pipeline(pdf_path, strategy="overlay", sauver_json=True,
 
     logger.debug(
         "Diagnostic terminé. Recommandation OCR pleine page : %s (désactivée du flux)",
-        getattr(doc.diagnostic, "recommend_ocr", False)
+        getattr(doc.diagnostic, "recommend_full_ocr", False)
     )
 
 
@@ -81,11 +82,11 @@ def executer_pipeline(pdf_path, strategy="overlay", sauver_json=True,
     else:
         # A) Branche OCR Pleine Page
         do_full_ocr = (ocr_mode == "force") or (
-            ocr_mode == "auto" and getattr(doc.diagnostic, "recommend_ocr", False)
+            ocr_mode == "auto" and getattr(doc.diagnostic, "recommend_full_ocr", False)
         )
         if do_full_ocr:
-            logger.info("      [OCR] Pleine page activé (recommend_ocr=%s, mode=%s)...",
-                        getattr(doc.diagnostic, "recommend_ocr", False), ocr_mode)
+            logger.info("      [OCR] Pleine page recommandée (recommend_full_ocr=%s, mode=%s), mais moteur global désactivé...",
+                        getattr(doc.diagnostic, "recommend_full_ocr", False), ocr_mode)
             # ocraliser(doc, pdf_path, backend_name="paddle", lang=paddle_lang)
         else:
             logger.info("      [OCR] Pleine page non nécessaire.")
@@ -139,6 +140,8 @@ def main():
     parser.add_argument("--dpi-ocr-vectoriel", type=int, default=300,
                         help="DPI dédié à l'OCR ciblé des zones de texte vectorisé (découplé de --dpi)")
     parser.add_argument("--paddle-lang", default="fr", help="Langue PaddleOCR pour l'OCR ciblé du texte vectorisé (code ISO 639-1, ex. 'fr')")
+    parser.add_argument("--ocr-mode", choices=["auto", "force", "skip", "vector"], default="auto",
+                        help="Politique OCR : auto, force pleine page, skip ou vectoriel seulement")
     parser.add_argument("--no-json", action="store_true")
     parser.add_argument("-v", "--verbose", action="store_true", help="Active l'affichage des logs de niveau DEBUG")
     args = parser.parse_args()
@@ -153,7 +156,7 @@ def main():
     executer_pipeline(
         args.pdf, strategy=args.strategy, sauver_json=not args.no_json,
         dpi=args.dpi, dpi_ocr_vectoriel=args.dpi_ocr_vectoriel,
-        paddle_lang=args.paddle_lang
+        paddle_lang=args.paddle_lang, ocr_mode=args.ocr_mode,
     )
 
 
