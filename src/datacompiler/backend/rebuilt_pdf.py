@@ -40,15 +40,23 @@ logger = logging.getLogger(__name__)
 _FONTS_DIR = Path(__file__).parent / "fonts"
 _FONT_REGULAR = _FONTS_DIR / "LiberationSans-Regular.ttf"
 _FONT_BOLD = _FONTS_DIR / "LiberationSans-Bold.ttf"
+_FONT_ITALIC = _FONTS_DIR / "LiberationSans-Italic.ttf"
+_FONT_BOLD_ITALIC = _FONTS_DIR / "LiberationSans-BoldItalic.ttf"
 _FONT_FALLBACK = _FONTS_DIR / "DejaVuSans.ttf"
 
 _polices = {}  # cache global (chemin -> (pymupdf.Font, nom))
 
 
-def _font_objet(gras):
+def _font_objet(gras, italic=False):
     """Retourne (pymupdf.Font, nom) pour le style demandé, avec cache."""
-    fichier = _FONT_BOLD if gras else _FONT_REGULAR
-    nom = "LiberationSans-Bold" if gras else "LiberationSans"
+    if gras and italic:
+        fichier, nom = _FONT_BOLD_ITALIC, "LiberationSans-BoldItalic"
+    elif gras:
+        fichier, nom = _FONT_BOLD, "LiberationSans-Bold"
+    elif italic:
+        fichier, nom = _FONT_ITALIC, "LiberationSans-Italic"
+    else:
+        fichier, nom = _FONT_REGULAR, "LiberationSans"
     if not fichier.exists():
         fichier = _FONT_FALLBACK
         nom = "DejaVuSans"
@@ -235,7 +243,8 @@ def _inserer_mot(etat, page_rect, mot, baseline_par_id, report):
         return
 
     gras = bool(mot.bold) or "bold" in (mot.font or "").lower()
-    police, _ = _font_objet(gras)
+    italic = bool(mot.italic) or "italic" in (mot.font or "").lower()
+    police, _ = _font_objet(gras, italic)
 
     taille_nominale = mot.font_size or 0.0
     if not taille_nominale:

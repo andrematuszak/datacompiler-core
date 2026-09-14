@@ -4,10 +4,26 @@ Moteur 1 — Extraction des données textuelles et métadonnées via PyMuPDF.
 """
 
 from pathlib import Path
+import re
 from typing import Dict, Tuple, Set, Any, List
 import pymupdf
 
 from datacompiler.model.document import BBox, Font, GraphicVector, Page, Word
+
+
+_MONTANT_EURO_CMAP = re.compile(r"(?<=\d[.,]\d{2}\s)[\ufffd\u00a4]$")
+
+
+def _reparer_texte_cmap(texte: str) -> str:
+    """Répare un cas CMap observé dans les avis d'impôt.
+
+    Certains PDF encodent le signe euro dans une police Helvetica sans une
+    table Unicode exploitable : PyMuPDF retourne alors U+FFFD ou U+00A4,
+    alors que le glyphe visible est bien « € ». La correction est volontairement bornée
+    à la position monétaire ``123,45 �`` ; tout autre U+FFFD reste visible
+    au diagnostic plutôt que d'être deviné.
+    """
+    return _MONTANT_EURO_CMAP.sub("€", texte)
 
 
 def _convertir_couleur(srgb_int: int | None) -> str:
@@ -179,30 +195,61 @@ def extraire_page_pymupdf(page_pymupdf, page_number, start_word_id):
     # d'arrondi de bbox entre les deux extractions). Un mot ne peut plus
     # jamais disparaître : au pire, sa typographie est mal attribuée --
     # jamais son existence.
+    # Une ligne peut mélanger plusieurs spans (gras, normal, couleurs,
+    # polices). Attribuer le style du dernier span à tous ses mots est la
+    # cause directe des passages natifs rendus à tort en gras.
+    spans_typo = []
     lignes_typo = []
     text_block_idx = 0
     for b in page_dict.get("blocks", []):
         if b.get("type") != 0:
             continue
         for l in b.get("lines", []):
-            font_name, font_size, bold, italic, color_hex = "Unknown", 0.0, False, False, "#000000"
             for s in l.get("spans", []):
                 font_name = s.get("font", "Unknown")
                 font_size = float(s.get("size", 0.0))
-                bold = bool(s.get("flags", 0) & 4)
+                # PyMuPDF : bit 4 (valeur 16) = bold. La valeur 4 est le
+                # bit "serifed" ; la confondre avec bold transformait par
+                # exemple les spans Helvetica normaux en LiberationSans-Bold.
+                bold = bool(s.get("flags", 0) & 16)
                 italic = bool(s.get("flags", 0) & 2)
                 color_hex = _convertir_couleur(s.get("color"))
                 font_map.setdefault(font_name, set()).add(round(font_size, 1))
+                bbox_span = s.get("bbox")
+                if bbox_span:
+                    spans_typo.append({
+                        "bbox": bbox_span, "block": text_block_idx,
+                        "font": font_name, "font_size": font_size,
+                        "bold": bold, "italic": italic, "color": color_hex,
+                    })
             bbox_ligne = l.get("bbox")
             if bbox_ligne:
+                # Repli seulement lorsqu'aucun span ne couvre le mot.
+                premier_span = next((s for s in spans_typo[::-1]
+                                      if s["block"] == text_block_idx), None)
                 lignes_typo.append({
-                    "bbox": bbox_ligne, "block": text_block_idx, "font": font_name,
-                    "font_size": font_size, "bold": bold, "italic": italic, "color": color_hex,
+                    "bbox": bbox_ligne, "block": text_block_idx,
+                    "font": premier_span["font"] if premier_span else "Unknown",
+                    "font_size": premier_span["font_size"] if premier_span else 0.0,
+                    "bold": premier_span["bold"] if premier_span else False,
+                    "italic": premier_span["italic"] if premier_span else False,
+                    "color": premier_span["color"] if premier_span else "#000000",
                 })
         text_block_idx += 1
 
-    def _ligne_correspondante(word_bbox):
+    def _typo_correspondante(word_bbox):
         cx, cy = (word_bbox[0] + word_bbox[2]) / 2, (word_bbox[1] + word_bbox[3]) / 2
+        # Le centre est plus robuste que le chevauchement pour les mots aux
+        # bornes de deux spans adjacents ; choisir le plus petit span qui le
+        # contient évite qu'un span de fond trop large absorbe le mot.
+        candidates = []
+        for span in spans_typo:
+            bx0, by0, bx1, by1 = span["bbox"]
+            if bx0 - 1 <= cx <= bx1 + 1 and by0 - 1 <= cy <= by1 + 1:
+                candidates.append(span)
+        if candidates:
+            return min(candidates, key=lambda s: (s["bbox"][2] - s["bbox"][0]) * (s["bbox"][3] - s["bbox"][1]))
+
         meilleure, meilleure_dist = None, None
         for lt in lignes_typo:
             bx0, by0, bx1, by1 = lt["bbox"]
@@ -213,16 +260,21 @@ def extraire_page_pymupdf(page_pymupdf, page_number, start_word_id):
                 meilleure, meilleure_dist = lt, dist
         return meilleure
 
+    texte_precedent = ""
     for w in words_pymupdf:
-        x0, y0, x1, y1, texte = w[0], w[1], w[2], w[3], w[4]
-        lt = _ligne_correspondante((x0, y0, x1, y1))
+        x0, y0, x1, y1, texte = w[0], w[1], w[2], w[3], _reparer_texte_cmap(w[4])
+        # get_text("words") sépare parfois le montant et son symbole en deux
+        # mots. Le contexte doit donc aussi couvrir le token isolé « � » / « ¤ ».
+        if texte in {"�", "¤"} and re.search(r"\d[.,]\d{2}$", texte_precedent):
+            texte = "€"
+        lt = _typo_correspondante((x0, y0, x1, y1))
         page_obj.native.words.append(Word(
             id=word_global_id,
             text=texte,
             bbox=BBox(x0, y0, x1, y1),
-            block=lt["block"] if lt else 0,
-            line=0,
-            word=0,
+            block=int(w[5]),
+            line=int(w[6]),
+            word=int(w[7]),
             font=lt["font"] if lt else "Unknown",
             font_size=lt["font_size"] if lt else 0.0,
             bold=lt["bold"] if lt else False,
@@ -231,6 +283,7 @@ def extraire_page_pymupdf(page_pymupdf, page_number, start_word_id):
             rotation=float(page_pymupdf.rotation),
         ))
         word_global_id += 1
+        texte_precedent = texte
 
     for name, sizes in font_map.items():
         page_obj.native.fonts.append(Font(name=name, sizes=sorted(list(sizes))))

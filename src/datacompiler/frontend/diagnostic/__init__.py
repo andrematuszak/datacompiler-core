@@ -73,6 +73,10 @@ def _diagnostiquer_page(page) -> Diagnostic:
         or confiance["recommend_ocr_par_precaution"]
         or bool(symboles)
     )
+    # Une recommandation d'enrichissement n'implique pas une OCRisation
+    # coûteuse de la page entière. Les pages mixtes sont traitées par les
+    # OCR ciblés (vecteurs / images) ; seul un scan complet y a droit.
+    recommend_full_ocr = not has_native or ocr_integre
 
     if not has_native:
         ocr_reasons.append("aucun_texte_natif")
@@ -99,6 +103,7 @@ def _diagnostiquer_page(page) -> Diagnostic:
     diag.native_text_coverage = round(couverture_native, 3) if couverture_native is not None else None
     diag.image_quality = None
     diag.recommend_ocr = recommend_ocr
+    diag.recommend_full_ocr = recommend_full_ocr
     diag.ocr_reasons = ocr_reasons
     diag.low_dpi_images_detected = bool(images_basse_res)
     diag.overlapping_text_detected = bool(chevauchements)
@@ -128,6 +133,7 @@ def diagnostiquer(doc: Document) -> Document:
     a_tables = False
     a_images_pleine_page = False
     ocr_integre_detecte = False
+    ocr_pleine_page_recommande = False
     dpi_bas_detecte = False
     chevauchement_detecte = False
     hors_limites_detecte = False
@@ -150,6 +156,8 @@ def diagnostiquer(doc: Document) -> Document:
             a_images_pleine_page = True
         if pd.embedded_ocr_detected:
             ocr_integre_detecte = True
+        if pd.recommend_full_ocr:
+            ocr_pleine_page_recommande = True
         if pd.low_dpi_images_detected:
             dpi_bas_detecte = True
         if pd.overlapping_text_detected:
@@ -207,6 +215,7 @@ def diagnostiquer(doc: Document) -> Document:
     doc.diagnostic.native_text_coverage = native_text_coverage
     doc.diagnostic.image_quality = None
     doc.diagnostic.recommend_ocr = recommend_ocr
+    doc.diagnostic.recommend_full_ocr = ocr_pleine_page_recommande
     doc.diagnostic.ocr_reasons = ocr_reasons
     doc.diagnostic.encrypted = encrypted
     doc.diagnostic.suspect_producer = suspect

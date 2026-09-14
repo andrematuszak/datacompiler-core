@@ -57,6 +57,7 @@ def afficher(doc: Document) -> None:
 
     print("-" * 64)
     print(_ligne("RECOMMANDATION OCR", "OUI" if d.recommend_ocr else "NON"))
+    print(_ligne("OCR pleine page", "OUI" if d.recommend_full_ocr else "NON"))
     if d.ocr_reasons:
         print(_ligne("Raisons", ", ".join(d.ocr_reasons)))
 
