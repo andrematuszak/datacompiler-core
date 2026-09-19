@@ -2,34 +2,16 @@
 rebuilt_pdf.py — Reconstruction fidèle d'un PDF neuf, texte VISIBLE et
 sélectionnable, à la même position que le source.
 
-Reprend et corrige _copier_images_et_dessins / _inserer_texte de
-faithful_pdf.py (clean_overlay), adaptées pour tourner directement sur le
-modèle Document (pas de JSON brut). Correctifs appliqués :
-
-  1. bug 'qu'/pymupdf.Quad : pts = item[1:] -> pts = list(item[1])
-  2. fill_opacity=1.0 (opacité pleine, car c'est le SEUL contenu textuel)
-  3. police de repli : LiberationSans (contient '€') au lieu de Helvetica
-  4. pymupdf.TextWriter au lieu d'insert_text() mot par mot — un writer par
-     segment de couleur contiguë, pas un writer par couleur globale
-  5. output.subset_fonts() juste avant la sauvegarde
-  6. calibrage de ligne de base par ligne visuelle (`_calibrer_lignes`)
-  7. échantillonnage des couleurs des glyphes vectoriels pour les mots
-     blancs sur fond bleu (les mots vectorisés ont `color="#000000"` dans
-     le JSON, mais sont en réalité blancs)
-  8. Ordre de lecture et texte final : lus depuis page.resolved.words (la
-     sortie de compile/compiler.py -- déjà en ordre de lecture, césures et
-     ligatures fusionnées, arbitrage natif/OCR appliqué), PAS recalculés
-     ici. Auparavant ce module rappelait reading_order.ordonner()
-     directement sur native.words, un jeu de mots différent de
-     resolved.words -- corrigé, cf. commentaire inline dans
-     render_rebuilt_pdf() pour le détail du bug que ça causait.
-
-La fonction render_rebuilt_pdf() est l'entrée principale, appelée depuis pipeline.py.
+Architecture optimisée :
+  1. Regroupement des mots consécutifs en Spans/Lignes continus (métrique de ligne stable).
+  2. Calcul précis de la Baseline typographique basé sur l'ascender réel de la police.
+  3. Compression horizontale ciblée via matrice (morphing PyMuPDF) sans altérer la hauteur.
+  4. Préservation de la sélection du texte sans injection de hacks d'espaces fictifs.
+  5. Copie fidèle des images et éléments vectoriels non-textuels du document source.
 """
 
 import logging
 from pathlib import Path
-
 import pymupdf
 
 from datacompiler.model.document import Document
@@ -57,9 +39,11 @@ def _font_objet(gras, italic=False):
         fichier, nom = _FONT_ITALIC, "LiberationSans-Italic"
     else:
         fichier, nom = _FONT_REGULAR, "LiberationSans"
+
     if not fichier.exists():
         fichier = _FONT_FALLBACK
         nom = "DejaVuSans"
+
     if fichier not in _polices:
         _polices[fichier] = (pymupdf.Font(fontfile=str(fichier)), nom)
     return _polices[fichier]
@@ -68,7 +52,7 @@ def _font_objet(gras, italic=False):
 def _hex_to_rgb(hex_color):
     """Convertit '#RRGGBB' ou '#RRGGBBAA' en tuple RGB(A) normalisé 0..1."""
     if not hex_color or not isinstance(hex_color, str):
-        return (0, 0, 0)
+        return (0.0, 0.0, 0.0)
     hex_color = hex_color.lstrip("#")
     if len(hex_color) == 6:
         r, g, b = int(hex_color[0:2], 16), int(hex_color[2:4], 16), int(hex_color[4:6], 16)
@@ -76,68 +60,13 @@ def _hex_to_rgb(hex_color):
     elif len(hex_color) == 8:
         r, g, b, a = int(hex_color[0:2], 16), int(hex_color[2:4], 16), int(hex_color[4:6], 16), int(hex_color[6:8], 16)
         return (r / 255.0, g / 255.0, b / 255.0, a / 255.0)
-    return (0, 0, 0)
-
-
-def _calibrer_lignes(ordre, tolerance=3.0):
-    """
-    Calcule une ligne de base COMMUNE par ligne visuelle, au lieu
-    d'utiliser bbox.y1 de chaque mot individuellement.
-
-    Les bbox des mots vectorisés/OCR sont des boîtes d'encre SERRÉES :
-    leur hauteur dépend de si le mot contient une descendante (ex: 'p')
-    ou non. Résultat : au sein d'une même ligne, des mots sans descendante
-    ont un y1 plus petit qu'un mot avec descendante — d'où le flottement.
-
-    Parcourt `ordre` (déjà dans l'ordre de lecture) SÉQUENTIELLEMENT pour
-    éviter de fusionner des colonnes différentes (bug corrigé).
-
-    Retourne un dict id(mot) -> y_ligne_de_base.
-    """
-    candidats = [w for w in ordre if w.bbox]
-
-    lignes = []
-    ligne_courante = None
-    for w in candidats:
-        b = w.bbox
-        meme_ligne = (
-            ligne_courante is not None
-            and abs(b.y0 - ligne_courante["y0_ref"]) <= tolerance
-            and b.x0 >= ligne_courante["x1_max"] - 5.0
-        )
-        if meme_ligne:
-            ligne_courante["mots"].append(w)
-            ligne_courante["x1_max"] = max(ligne_courante["x1_max"], b.x1)
-        else:
-            ligne_courante = {"y0_ref": b.y0, "x1_max": b.x1, "mots": [w]}
-            lignes.append(ligne_courante)
-
-    baseline_par_id = {}
-    for ligne in lignes:
-        mots_ligne = ligne["mots"]
-        # Utiliser les mots natifs comme référence (métrique de ligne fiable)
-        natifs = [w for w in mots_ligne if not w.is_vectorized]
-        if natifs:
-            y1s = sorted(w.bbox.y1 for w in natifs)
-            baseline = y1s[len(y1s) // 2]  # médiane
-        else:
-            baseline = max(w.bbox.y1 for w in mots_ligne)
-        for w in mots_ligne:
-            baseline_par_id[id(w)] = baseline
-    return baseline_par_id
+    return (0.0, 0.0, 0.0)
 
 
 def _copier_images_et_dessins(src_page, dst_page, report, exclure=None):
     """
     Copie les images et dessins vectoriels du source vers la page de destination.
-
-    `exclure` : liste de mots (Word) reconstruits/vectorisés.
-    Un dessin dont le rectangle tombe majoritairement dans la bbox d'un
-    de ces mots est un tracé de GLYPHE — on ne le copie pas (double impression).
-
-    Retourne un dict id(mot) -> couleur échantillonnée, pour les mots
-    vectorisés dont la couleur réelle est différente de mot.color
-    (ex: blanc sur fond bleu).
+    Exclut les tracés de glyphes des mots vectorisés/OCRisés pour éviter les doublons.
     """
     exclure = exclure or []
 
@@ -183,7 +112,6 @@ def _copier_images_et_dessins(src_page, dst_page, report, exclure=None):
         mot_touche = _match_exclusion(draw.get("rect"))
         if mot_touche is not None:
             dessins_exclus_glyphes += 1
-            # Échantillonner la couleur du glyphe (fill ou color)
             couleur = draw.get("fill") or draw.get("color")
             if couleur is not None:
                 couleurs_echantillonnees[id(mot_touche)] = couleur
@@ -207,7 +135,7 @@ def _copier_images_et_dessins(src_page, dst_page, report, exclure=None):
                     if len(pts) == 4:
                         shape.draw_bezier(pts[0], pts[1], pts[2], pts[3])
                 elif typ == "qu":
-                    q = item[1]  # pymupdf.Quad
+                    q = item[1]
                     shape.draw_polyline([q.ul, q.ur, q.lr, q.ll])
                 else:
                     dessins_ignores += 1
@@ -226,34 +154,81 @@ def _copier_images_et_dessins(src_page, dst_page, report, exclure=None):
     return couleurs_echantillonnees
 
 
-# Écart minimum (pt) à réserver avant le mot suivant sur la même ligne,
-# pour les mots OCR/vectorisés dont les bbox se touchent. En dessous
-# d'environ 1pt, MuPDF fusionne les insertions en un seul token
-# (get_text("words") → "GÉNÉRALEDES").
-_MIN_GAP_MOTS = 2.0
+def _grouper_en_spans(mots, couleurs_echantillonnees=None, tolerance_y=3.0, ecart_max_mot=8.0):
+    """
+    Regroupe les mots consécutifs partageant la même ligne visuelle, le même style
+    et la même couleur en Spans de texte continus.
+    """
+    if not mots:
+        return []
 
+    couleurs_echantillonnees = couleurs_echantillonnees or {}
+    spans = []
+    span_courant = None
 
-def _voisin_droit(mot, ordre, tolerance_y=3.0):
-    """Mot le plus proche à droite sur la même ligne visuelle, ou None."""
-    bbox = mot.bbox
-    if bbox is None:
-        return None
-    meilleur = None
-    for autre in ordre:
-        if autre is mot or autre.bbox is None:
+    for w in mots:
+        if not w.bbox:
             continue
-        if abs(autre.bbox.y0 - bbox.y0) > tolerance_y:
+        texte = w.resolved_text or w.text or ""
+        if not texte.strip():
             continue
-        if autre.bbox.x0 <= bbox.x0:
+
+        b = pymupdf.Rect(w.bbox.x0, w.bbox.y0, w.bbox.x1, w.bbox.y1)
+        gras = bool(w.bold) or "bold" in (w.font or "").lower()
+        italic = bool(w.italic) or "italic" in (w.font or "").lower()
+        taille = w.font_size or max(4.0, b.height)
+
+        mot_id = id(w)
+        if mot_id in couleurs_echantillonnees:
+            couleur = tuple(couleurs_echantillonnees[mot_id])
+        else:
+            couleur = _hex_to_rgb(getattr(w, "color", "#000000"))
+        couleur_key = tuple(round(c, 3) for c in couleur)
+
+        if span_courant is None:
+            span_courant = {
+                "mots": [w],
+                "textes": [texte],
+                "bbox": b,
+                "size": taille,
+                "bold": gras,
+                "italic": italic,
+                "color": couleur_key,
+            }
             continue
-        if meilleur is None or autre.bbox.x0 < meilleur.bbox.x0:
-            meilleur = autre
-    return meilleur
+
+        # Vérification d'appartenance au Span courant
+        meme_ligne = abs(b.y0 - span_courant["bbox"].y0) <= tolerance_y
+        meme_style = (
+            span_courant["bold"] == gras
+            and span_courant["italic"] == italic
+            and span_courant["color"] == couleur_key
+            and abs(span_courant["size"] - taille) <= 1.5
+        )
+        proche = (b.x0 - span_courant["bbox"].x1) <= ecart_max_mot
+
+        if meme_ligne and meme_style and proche:
+            span_courant["mots"].append(w)
+            span_courant["textes"].append(texte)
+            span_courant["bbox"] |= b  # Étendre la bounding box du span
+        else:
+            spans.append(span_courant)
+            span_courant = {
+                "mots": [w],
+                "textes": [texte],
+                "bbox": b,
+                "size": taille,
+                "bold": gras,
+                "italic": italic,
+                "color": couleur_key,
+            }
+
+    if span_courant:
+        spans.append(span_courant)
+
+    return spans
 
 
-<<<<<<< Updated upstream
-def _inserer_mot(etat, page_rect, mot, baseline_par_id, report, voisin=None):
-=======
 def _calibrer_lignes(ordre, tolerance=3.0):
     """
     Calcule une ligne de base COMMUNE par ligne visuelle.
@@ -331,73 +306,17 @@ def _recalage_necessaire(mot) -> bool:
 
 
 def _inserer_span(writers, page_rect, span, report, baseline_par_id=None):
->>>>>>> Stashed changes
     """
-    Ajoute le mot à un pymupdf.TextWriter.
-
-    TextWriter accumule en mémoire et n'écrit qu'UN SEUL stream par
-    write_text(). Un nouveau writer est ouvert seulement quand la couleur
-    CHANGE dans la séquence — l'ordre de lecture est préservé.
+    Insère un Span complet de texte dans le TextWriter correspondant à sa couleur.
+    Repositionne verticalement via l'ascender typographique et ajuste la taille si dépassement.
     """
-    texte = mot.resolved_text or mot.text or ""
-    if not texte.strip():
-        return
+    texte_complet = " ".join(span["textes"])
+    rect = span["bbox"]
+    fontsize = span["size"]
+    couleur_key = span["color"]
 
-    bbox = mot.bbox
-    if bbox is None:
-        return
+    police, _ = _font_objet(span["bold"], span["italic"])
 
-<<<<<<< Updated upstream
-    gras = bool(mot.bold) or "bold" in (mot.font or "").lower()
-    italic = bool(mot.italic) or "italic" in (mot.font or "").lower()
-    police, _ = _font_objet(gras, italic)
-
-    taille_nominale = mot.font_size or 0.0
-    if not taille_nominale:
-        taille_nominale = max(4.0, bbox.y1 - bbox.y0)
-        report["taille_heuristique"] = report.get("taille_heuristique", 0) + 1
-
-    largeur_cible = max(bbox.x1 - bbox.x0, 0.1)
-    # Les bbox Paddle d'une ligne vectorisée peuvent n'avoir que ~0.6pt
-    # d'écart (GÉNÉRALE.x1=240.75, DES.x0=241.35 sur impots-revenu).
-    # Le clamp anti-étirement ci-dessous aligne alors le glyphe sur le
-    # bord droit de SA bbox, et MuPDF recolle les deux insertions.
-    # On réserve un gap devant le voisin droit, seulement pour le texte
-    # reconstruit/vectorisé -- un mot natif garde sa métrique d'origine.
-    if (
-        voisin is not None
-        and voisin.bbox is not None
-        and (mot.reconstructed or mot.is_vectorized)
-    ):
-        largeur_avant_voisin = voisin.bbox.x0 - bbox.x0 - _MIN_GAP_MOTS
-        if largeur_avant_voisin > 0:
-            largeur_cible = min(largeur_cible, largeur_avant_voisin)
-    largeur_rendue = police.text_length(texte, fontsize=taille_nominale)
-    ratio = (largeur_cible / largeur_rendue) if largeur_rendue else 1.0
-    # Ne jamais ÉTALER un mot au-delà de sa propre bbox (ratio > 1) --
-    # seulement le rétrécir si besoin (ratio < 1 reste inchangé). Sans ce
-    # clamp, un mot rendu plus étroit que prévu par LiberationSans se
-    # fait artificiellement grossir pour combler sa bbox cible, et peut
-    # déborder sur le mot suivant quand l'espace naturel entre les deux
-    # est très fin (~1-2pt) -- collage visuel sans perte ni déformation
-    # de caractères (cf. "DIRECTIONGÉNÉRALE", diagnostiqué à partir des
-    # bbox réelles : écart natif de 1.6pt entre les deux mots, aucun
-    # chevauchement en amont). Même correctif que faithful_pdf.py
-    # (_inserer_texte, ligne ~87), jamais répliqué ici jusqu'à présent --
-    # deux renderers séparés (rebuilt vs overlay/clean_overlay/rasterized),
-    # aucun code partagé entre les deux.
-    ratio = min(ratio, 1.0)
-    taille = taille_nominale * ratio
-
-    # Couleur : priorité à la couleur échantillonnée (pour les mots blancs
-    # sur fond bleu), sinon utiliser mot.color
-    mot_id = id(mot)
-    couleurs_echantillonnees = etat.get("couleurs_echantillonnees", {})
-    if mot_id in couleurs_echantillonnees:
-        couleur_rgb = tuple(couleurs_echantillonnees[mot_id])
-    else:
-        couleur_rgb = _hex_to_rgb(mot.color)
-=======
     # 1. Baseline : priorité au calibrage par ligne (médiane des mots
     # natifs de cette ligne visuelle, cf. _calibrer_lignes) -- plus
     # stable qu'un calcul par ascender seul, surtout quand plusieurs
@@ -432,47 +351,23 @@ def _inserer_span(writers, page_rect, span, report, baseline_par_id=None):
         if largeur_mesuree > 0 and largeur_cible < largeur_mesuree:
             ratio = min(largeur_cible / largeur_mesuree, 1.0)
             fontsize = fontsize * ratio
->>>>>>> Stashed changes
 
-    couleur_cle = tuple(round(c, 3) for c in couleur_rgb)
-    if couleur_cle != etat["couleur_cle"]:
-        etat["segments"].append((etat["couleur_cle"], etat["tw"]))
-        etat["tw"] = pymupdf.TextWriter(page_rect)
-        etat["couleur_cle"] = couleur_cle
+    # 3. Séparation des TextWriter par groupe de couleur
+    if couleur_key != writers["couleur_cle"]:
+        writers["segments"].append((writers["couleur_cle"], writers["tw"]))
+        writers["tw"] = pymupdf.TextWriter(page_rect)
+        writers["couleur_cle"] = couleur_key
 
-    point = pymupdf.Point(bbox.x0, baseline_par_id.get(mot_id, bbox.y1))
-    etat["tw"].append(point, texte, font=police, fontsize=taille)
-    # Espace explicite dans le flux, à part du mot : MuPDF découpe
-    # get_text("words") sur les glyphes d'espace, pas seulement sur
-    # l'écart visuel. Un espace minuscule ne décale pas le mot suivant
-    # (positionné indépendamment) mais empêche "GÉNÉRALEDES" quand le
-    # gap OCR reste sous le seuil interne de MuPDF.
-    largeur_finale = police.text_length(texte, fontsize=taille)
-    etat["tw"].append(
-        pymupdf.Point(point.x + largeur_finale, point.y),
-        " ",
-        font=police,
-        fontsize=0.5,
-    )
-    report["mots_inseres"] = report.get("mots_inseres", 0) + 1
-
+    point = pymupdf.Point(rect.x0, baseline_y)
+    writers["tw"].append(point, texte_complet, font=police, fontsize=fontsize)
+    report["mots_inseres"] = report.get("mots_inseres", 0) + len(span["mots"])
+    
 
 def render_rebuilt_pdf(doc: Document, output_path: str, source_pdf: str = None,
                        dpi: int = 300, simple_sort=False) -> str:
     """
-    Reconstruit un PDF neuf, texte visible et sélectionnable, à la même
-    position que le source.
-
-    - Copie les images et dessins du PDF source (en excluant les tracés de
-      glyphes des mots vectorisés/OCRisés).
-    - Réinjecte page.resolved.words (sortie de compile/compiler.py --
-      déjà en ordre de lecture, césures/ligatures fusionnées, arbitrage
-      natif/OCR appliqué), à la même position.
-    - Calibre les lignes de base pour un alignement vertical parfait.
-    - Échantillonne les couleurs des glyphes vectoriels.
-    - Utilise LiberationSans (embarquée) pour couvrir '€'.
-
-    Retourne le chemin du fichier écrit.
+    Reconstruit un PDF neuf, texte VISIBLE et sélectionnable, à la même position
+    que le source en utilisant l'approche par Spans / Lignes.
     """
     source_path = source_pdf or doc.metadata.source_pdf
     if not source_path:
@@ -494,46 +389,22 @@ def render_rebuilt_pdf(doc: Document, output_path: str, source_pdf: str = None,
                 "dessins_ignores": 0,
                 "dessins_exclus_glyphes": 0,
                 "mots_inseres": 0,
-                "taille_heuristique": 0,
+                "spans_traites": 0,
             }
 
-            # Source unique : page.resolved.words, la sortie de
-            # compile/compiler.py (resoudre(doc), appelé en amont dans
-            # pipeline.py avant le rendu). DÉJÀ en ordre de lecture
-            # (reading_order.ordonner tourne en premier dans
-            # compiler._resoudre_page), césures fusionnées et ligatures
-            # normalisées (typography.normaliser), et arbitrage natif/OCR
-            # appliqué (alignment + conflict_resolution) si de l'OCR
-            # page-entière était disponible.
-            #
-            # AVANT : ce module rappelait reading_order.ordonner()
-            # directement sur page.native.words -- un jeu de mots
-            # DIFFÉRENT de resolved.words (qui les copie puis les modifie
-            # en aval). Le PDF rendu ne reflétait alors AUCUNE correction
-            # produite par compile/ (fusion de césure en particulier :
-            # resolved.words a moins de mots que native.words dès qu'une
-            # ligne se termine par un trait d'union), d'où un écart de
-            # contenu entre le PDF et le JSON, détecté par
-            # test_regression_word_count.py sur pratiquement tout document
-            # contenant au moins une césure de fin de ligne.
             ordre = model_page.resolved.words
-            baseline_par_id = _calibrer_lignes(ordre)
 
-            # Bbox des mots reconstruits/vectorisés : leurs tracés de glyphes
-            # dans le source ne doivent pas être recopiés (double impression).
+            # Exclusion des tracés vectoriels de glyphes
             mots_exclus = [
                 w for w in ordre
                 if w.bbox and (w.reconstructed or w.is_vectorized or w.source == "ocr_vectoriel")
             ]
 
-            # Copier images et dessins, et récupérer les couleurs échantillonnées
+            # Copier les images et tracés graphiques
             couleurs_echantillonnees = _copier_images_et_dessins(
                 src_page, dst_page, report, exclure=mots_exclus
             )
 
-<<<<<<< Updated upstream
-            # Insérer les mots avec TextWriter (un writer par couleur)
-=======
             # Calibrage des baselines par ligne visuelle (niveau mot, sur
             # ordre AVANT le groupement en spans -- cf. docstring de
             # _calibrer_lignes pour pourquoi).
@@ -544,24 +415,14 @@ def render_rebuilt_pdf(doc: Document, output_path: str, source_pdf: str = None,
             report["spans_traites"] = len(spans)
 
             # Injection du texte avec TextWriter
->>>>>>> Stashed changes
             writers = {
                 "tw": pymupdf.TextWriter(dst_page.rect),
                 "couleur_cle": (0.0, 0.0, 0.0),
                 "segments": [],
-                "couleurs_echantillonnees": couleurs_echantillonnees,
             }
 
-<<<<<<< Updated upstream
-            for mot in ordre:
-                _inserer_mot(
-                    writers, dst_page.rect, mot, baseline_par_id, report,
-                    voisin=_voisin_droit(mot, ordre),
-                )
-=======
             for span in spans:
                 _inserer_span(writers, dst_page.rect, span, report, baseline_par_id=baseline_par_id)
->>>>>>> Stashed changes
 
             writers["segments"].append((writers["couleur_cle"], writers["tw"]))
             for couleur_rgb, tw in writers["segments"]:
