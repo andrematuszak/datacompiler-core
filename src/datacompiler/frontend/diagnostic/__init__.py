@@ -4,7 +4,7 @@ de l'objet Document DÉJÀ EXTRAIT. Ne rouvre jamais le PDF."""
 from datacompiler.model.document import Document
 from datacompiler.model.metadata import Diagnostic
 
-from .categorize import SEUIL_QUALITE_CORROMPU, categoriser
+from .categorize import SEUIL_QUALITE_CORROMPU, categoriser, evaluer_segmentation_page
 from . import blind_spots, container, spatial_integrity, text_integrity, vector_text, visual_integrity
 
 def _diagnostiquer_page(page) -> Diagnostic:
@@ -114,6 +114,7 @@ def _diagnostiquer_page(page) -> Diagnostic:
     diag.notes = notes
     diag.vectorized_text_detected = texte_vectorise
     diag.has_images_with_text = images_avec_texte
+    evaluer_segmentation_page(page, diag)
     diag.categorie = categoriser(diag.has_native_text, diag.embedded_ocr_detected, diag.native_text_quality, diag.native_text_coverage)
     return diag
 
@@ -134,6 +135,8 @@ def diagnostiquer(doc: Document) -> Document:
     a_images_pleine_page = False
     ocr_integre_detecte = False
     ocr_pleine_page_recommande = False
+    segmentation_recommandee = False
+    raisons_segmentation = []
     dpi_bas_detecte = False
     chevauchement_detecte = False
     hors_limites_detecte = False
@@ -158,6 +161,11 @@ def diagnostiquer(doc: Document) -> Document:
             ocr_integre_detecte = True
         if pd.recommend_full_ocr:
             ocr_pleine_page_recommande = True
+        if pd.recommend_segmentation:
+            segmentation_recommandee = True
+        for reason in pd.segmentation_reasons:
+            if reason not in raisons_segmentation:
+                raisons_segmentation.append(reason)
         if pd.low_dpi_images_detected:
             dpi_bas_detecte = True
         if pd.overlapping_text_detected:
@@ -216,6 +224,8 @@ def diagnostiquer(doc: Document) -> Document:
     doc.diagnostic.image_quality = None
     doc.diagnostic.recommend_ocr = recommend_ocr
     doc.diagnostic.recommend_full_ocr = ocr_pleine_page_recommande
+    doc.diagnostic.recommend_segmentation = segmentation_recommandee
+    doc.diagnostic.segmentation_reasons = raisons_segmentation
     doc.diagnostic.ocr_reasons = ocr_reasons
     doc.diagnostic.encrypted = encrypted
     doc.diagnostic.suspect_producer = suspect

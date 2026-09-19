@@ -251,7 +251,87 @@ def _voisin_droit(mot, ordre, tolerance_y=3.0):
     return meilleur
 
 
+<<<<<<< Updated upstream
 def _inserer_mot(etat, page_rect, mot, baseline_par_id, report, voisin=None):
+=======
+def _calibrer_lignes(ordre, tolerance=3.0):
+    """
+    Calcule une ligne de base COMMUNE par ligne visuelle.
+
+    L'ancienne méthode utilisait `bbox.y1`, ce qui provoquait un
+    flottement vertical car `y1` inclut les descendantes (p, q, j).
+    On calcule ici la VRAIE baseline typographique (y0 + ascender)
+    pour chaque mot de la ligne, et on en extrait la médiane.
+    Le texte est ainsi parfaitement rectiligne.
+    """
+    candidats = [w for w in ordre if w.bbox]
+
+    lignes = []
+    ligne_courante = None
+    for w in candidats:
+        b = w.bbox
+        meme_ligne = (
+            ligne_courante is not None
+            and abs(b.y0 - ligne_courante["y0_ref"]) <= tolerance
+            and b.x0 >= ligne_courante["x1_max"] - 5.0
+        )
+        if meme_ligne:
+            ligne_courante["mots"].append(w)
+            ligne_courante["x1_max"] = max(ligne_courante["x1_max"], b.x1)
+        else:
+            ligne_courante = {"y0_ref": b.y0, "x1_max": b.x1, "mots": [w]}
+            lignes.append(ligne_courante)
+
+    baseline_par_id = {}
+    for ligne in lignes:
+        mots_ligne = ligne["mots"]
+
+        def _calc_baseline_mot(w):
+            gras = bool(w.bold) or "bold" in (getattr(w, "font", "") or "").lower()
+            italic = bool(w.italic) or "italic" in (getattr(w, "font", "") or "").lower()
+            police, _ = _font_objet(gras, italic)
+            asc = getattr(police, "ascender", 0.8)
+            if asc > 1.0:
+                asc /= 1000.0
+            if asc <= 0:
+                asc = 0.8
+            hauteur = w.bbox.y1 - w.bbox.y0
+            taille = w.font_size or max(4.0, hauteur)
+            return w.bbox.y0 + (taille * asc)
+
+        # Mots natifs comme référence (métrique de ligne fiable)
+        natifs = [w for w in mots_ligne if not w.is_vectorized]
+        if natifs:
+            baselines = sorted(_calc_baseline_mot(w) for w in natifs)
+            baseline = baselines[len(baselines) // 2]  # médiane des baselines typographiques
+        else:
+            baselines = sorted(_calc_baseline_mot(w) for w in mots_ligne)
+            baseline = baselines[len(baselines) // 2]
+
+        for w in mots_ligne:
+            baseline_par_id[id(w)] = baseline
+            
+    return baseline_par_id
+
+
+def _recalage_necessaire(mot) -> bool:
+    """Un mot natif intact porte déjà sa taille de police exacte -- le
+    recalage horizontal le déforme inutilement (cf. cas , police
+    monospace mesurée avec une police de substitution : le recalage
+    inconditionnel la déformait sans raison). Nécessaire seulement pour
+    les mots dont le texte ou la provenance impose une reconstruction."""
+    texte_modifie = mot.resolved_text is not None and mot.resolved_text != mot.text
+    return bool(
+        mot.reconstructed
+        or getattr(mot, "is_corrected", False)
+        or mot.is_vectorized
+        or mot.source == "ocr_vectoriel"
+        or texte_modifie
+    )
+
+
+def _inserer_span(writers, page_rect, span, report, baseline_par_id=None):
+>>>>>>> Stashed changes
     """
     Ajoute le mot à un pymupdf.TextWriter.
 
@@ -267,6 +347,7 @@ def _inserer_mot(etat, page_rect, mot, baseline_par_id, report, voisin=None):
     if bbox is None:
         return
 
+<<<<<<< Updated upstream
     gras = bool(mot.bold) or "bold" in (mot.font or "").lower()
     italic = bool(mot.italic) or "italic" in (mot.font or "").lower()
     police, _ = _font_objet(gras, italic)
@@ -316,6 +397,42 @@ def _inserer_mot(etat, page_rect, mot, baseline_par_id, report, voisin=None):
         couleur_rgb = tuple(couleurs_echantillonnees[mot_id])
     else:
         couleur_rgb = _hex_to_rgb(mot.color)
+=======
+    # 1. Baseline : priorité au calibrage par ligne (médiane des mots
+    # natifs de cette ligne visuelle, cf. _calibrer_lignes) -- plus
+    # stable qu'un calcul par ascender seul, surtout quand plusieurs
+    # spans coexistent sur la même ligne (coupure de couleur en plein
+    # milieu d'une ligne, par exemple). Repli sur l'ascender si ce span
+    # n'a pas de baseline calibrée (ne devrait pas arriver en pratique,
+    # défensif).
+    baseline_par_id = baseline_par_id or {}
+    baseline_calibree = baseline_par_id.get(id(span["mots"][0])) if span["mots"] else None
+
+    if baseline_calibree is not None:
+        baseline_y = baseline_calibree
+    else:
+        asc = getattr(police, "ascender", 0.8)
+        if asc > 1.0:
+            asc /= 1000.0  # Normalisation si l'ascender est sur l'échelle 1000 em
+        if asc <= 0:
+            asc = 0.8
+        baseline_y = rect.y0 + (fontsize * asc)
+
+    # 2. Ajustement de la taille de police SEULEMENT si le span en a
+    # réellement besoin (cf. _recalage_necessaire) -- un span 100% natif
+    # et intact garde sa taille exacte, pas de déformation systématique.
+    # Un seul mot du span suffit à déclencher le recalage pour tout le
+    # span (impossible de redimensionner juste une partie d'un span
+    # rendu en un seul appel TextWriter) -- cas mixte natif+reconstruit
+    # peu probable de toute façon vu que le groupement en spans exige
+    # déjà une taille quasi identique entre mots (tolérance 1.5pt).
+    if any(_recalage_necessaire(m) for m in span["mots"]):
+        largeur_mesuree = police.text_length(texte_complet, fontsize=fontsize)
+        largeur_cible = max(rect.width, 0.1)
+        if largeur_mesuree > 0 and largeur_cible < largeur_mesuree:
+            ratio = min(largeur_cible / largeur_mesuree, 1.0)
+            fontsize = fontsize * ratio
+>>>>>>> Stashed changes
 
     couleur_cle = tuple(round(c, 3) for c in couleur_rgb)
     if couleur_cle != etat["couleur_cle"]:
@@ -414,7 +531,20 @@ def render_rebuilt_pdf(doc: Document, output_path: str, source_pdf: str = None,
                 src_page, dst_page, report, exclure=mots_exclus
             )
 
+<<<<<<< Updated upstream
             # Insérer les mots avec TextWriter (un writer par couleur)
+=======
+            # Calibrage des baselines par ligne visuelle (niveau mot, sur
+            # ordre AVANT le groupement en spans -- cf. docstring de
+            # _calibrer_lignes pour pourquoi).
+            baseline_par_id = _calibrer_lignes(ordre)
+
+            # Regrouper le texte par spans homogènes
+            spans = _grouper_en_spans(ordre, couleurs_echantillonnees=couleurs_echantillonnees)
+            report["spans_traites"] = len(spans)
+
+            # Injection du texte avec TextWriter
+>>>>>>> Stashed changes
             writers = {
                 "tw": pymupdf.TextWriter(dst_page.rect),
                 "couleur_cle": (0.0, 0.0, 0.0),
@@ -422,11 +552,16 @@ def render_rebuilt_pdf(doc: Document, output_path: str, source_pdf: str = None,
                 "couleurs_echantillonnees": couleurs_echantillonnees,
             }
 
+<<<<<<< Updated upstream
             for mot in ordre:
                 _inserer_mot(
                     writers, dst_page.rect, mot, baseline_par_id, report,
                     voisin=_voisin_droit(mot, ordre),
                 )
+=======
+            for span in spans:
+                _inserer_span(writers, dst_page.rect, span, report, baseline_par_id=baseline_par_id)
+>>>>>>> Stashed changes
 
             writers["segments"].append((writers["couleur_cle"], writers["tw"]))
             for couleur_rgb, tw in writers["segments"]:
