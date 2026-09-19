@@ -56,6 +56,11 @@ def afficher(doc: Document) -> None:
         print(_ligne("Catégorie", d.categorie))
 
     print("-" * 64)
+    print(_ligne("RECOMMANDATION SEGMENTATION", "OUI" if getattr(d, "recommend_segmentation", False) else "NON"))
+    if getattr(d, "segmentation_reasons", []):
+        print(_ligne("Raisons segmentation", ", ".join(d.segmentation_reasons)))
+
+    print("-" * 64)
     print(_ligne("RECOMMANDATION OCR", "OUI" if d.recommend_ocr else "NON"))
     print(_ligne("OCR pleine page", "OUI" if d.recommend_full_ocr else "NON"))
     if d.ocr_reasons:

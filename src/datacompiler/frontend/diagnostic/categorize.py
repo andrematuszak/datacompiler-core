@@ -53,3 +53,32 @@ def categoriser(
     if native_text_coverage is not None and native_text_coverage < SEUIL_COUVERTURE_MIXTE:
         return CATEGORIE_NATIF_MIXTE
     return CATEGORIE_NATIF_PROPRE
+
+
+def evaluer_segmentation_page(page, diag_page):
+    """Évalue si une page individuelle nécessite la macro-segmentation."""
+    reasons = []
+
+    graphics = getattr(page, "graphics", None)
+    tables = getattr(graphics, "tables", []) if graphics else []
+    if len(tables) > 0:
+        reasons.append("tableaux détectés")
+
+    vector_zones = getattr(page, "vector_zones", [])
+    if getattr(diag_page, "vectorized_text_detected", False) or len(vector_zones) > 0:
+        reasons.append("texte vectorisé présent")
+
+    images = getattr(graphics, "images", []) if graphics else []
+    if images:
+        reasons.append("images détectées")
+
+    reading_score = getattr(diag_page, "reading_order_score", None)
+    if reading_score is not None and reading_score < 0.8:
+        reasons.append("désordre spatial natif")
+
+    if reasons:
+        diag_page.recommend_segmentation = True
+        diag_page.segmentation_reasons = reasons
+    else:
+        diag_page.recommend_segmentation = False
+        diag_page.segmentation_reasons = []

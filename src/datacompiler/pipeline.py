@@ -8,6 +8,7 @@ from pathlib import Path
 from datacompiler.frontend.diagnostic.vector_text import zones_texte_vectorise_probable
 from datacompiler.model.document import Document
 from datacompiler.frontend.extract import extraire
+from datacompiler.frontend.layout import segmenter_page
 from datacompiler.frontend import diagnostiquer, report as diagnostic_report
 from datacompiler.frontend.ocr.paddle import PaddleOCRBackend
 from datacompiler.frontend.ocr.vector_zones import recuperer_texte_vectorise
@@ -62,10 +63,10 @@ def executer_pipeline(pdf_path, strategy="overlay", sauver_json=True,
       - "vector" : Exécute uniquement l'OCR ciblé sur zones vectorielles
     """
     pdf_path = str(Path(pdf_path).resolve())
-    logger.info("[1/5] Extraction : %s", pdf_path)
+    logger.info("[1/6] Extraction : %s", pdf_path)
     doc = extraire(Document(), pdf_path)
 
-    logger.info("[2/5] Diagnostic...")
+    logger.info("[2/6] Diagnostic...")
     diagnostiquer(doc)
     diagnostic_report.afficher(doc)
 
@@ -75,7 +76,7 @@ def executer_pipeline(pdf_path, strategy="overlay", sauver_json=True,
     )
 
 
-    logger.info("[3/5] Traitement OCR...")
+    logger.info("[3/6] Traitement OCR...")
 
     if ocr_mode == "skip":
         logger.info("      [OCR] Mode 'skip' : Aucun OCR exécuté.")
@@ -100,11 +101,25 @@ def executer_pipeline(pdf_path, strategy="overlay", sauver_json=True,
                 lang=paddle_lang, dpi=dpi_ocr_vectoriel,
             )
 
-    logger.info("[4/5] Compilation...")
+
+    segmentation_activee = False
+    for page in doc.pages:
+        # Déclenchement ciblé selon les recommandations du diagnostic
+        if getattr(page.diagnostic, "recommend_segmentation", False):
+            segmenter_page(page)
+            segmentation_activee = True
+
+    if segmentation_activee:
+        logger.info("[4/6] Macro-segmentation exécutée sur les pages complexes.")
+    else:
+        logger.info("[4/6] Segmentation non nécessaire.")
+
+
+    logger.info("[5/6] Compilation...")
     resoudre(doc)
 
     base = str(Path(pdf_path).with_suffix(""))
-    logger.info("[5/5] Rendu (stratégie : %s)...", strategy)
+    logger.info("[6/6] Rendu (stratégie : %s)...", strategy)
     if strategy in ("overlay", "clean_overlay", "rasterized"):
         fichier_sortie = base + "_propre.pdf"
         render_faithful_pdf(doc, fichier_sortie, strategy=strategy, dpi=dpi)
