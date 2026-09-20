@@ -136,3 +136,57 @@ def mot_dans_cellule(mot, cell_bbox) -> bool:
     cy = (mot.bbox.y0 + mot.bbox.y1) / 2
     return cell_bbox.x0 <= cx <= cell_bbox.x1 and cell_bbox.y0 <= cy <= cell_bbox.y1
 
+def ordonner_par_lignes(boites, seuil_chevauchement=0.3):
+    """Regroupe des boîtes hétérogènes (tout objet portant un `.bbox` avec
+    x0/y0/x1/y1) en rangées par chevauchement vertical, PUIS trie chaque
+    rangée par x0 -- jamais un tri plat (y0, x0) global.
+
+    Une nouvelle boîte est comparée à la BANDE COMMUNE de la rangée en
+    cours (intersection courante des bornes y de tous les membres déjà
+    admis), pas à un membre pris isolément. La bande ne peut que RÉTRÉCIR
+    à chaque ajout, jamais s'élargir -- ça borne la dérive à l'ancre
+    initiale de la rangée. Sans ça, une rangée peut dériver
+    transitivement loin de son ancre : A chevauche B, B chevauche C, mais
+    A et C ne se chevauchent jamais -- A, B et C finiraient quand même
+    dans la même rangée avec une comparaison "n'importe quel membre déjà
+    présent". Confirmé empiriquement plusieurs fois sur ce projet.
+
+    Même algorithme que reading_order.py::_ordonner_par_boites,
+    généralisé ici pour ne pas être limité aux Word -- réutilisable par
+    layout/builder.py sur des LayoutBox (images, tables, zones
+    vectorielles mélangées)."""
+    boites_triees = sorted(boites, key=lambda b: b.bbox.y0)
+    rangees = []
+    rangee_courante = []
+    bande_y0 = bande_y1 = None
+
+    def chevauchement_bande(boite):
+        inter = min(bande_y1, boite.bbox.y1) - max(bande_y0, boite.bbox.y0)
+        if inter <= 0:
+            return 0.0
+        plus_petite_hauteur = min(bande_y1 - bande_y0, boite.bbox.y1 - boite.bbox.y0)
+        if plus_petite_hauteur <= 0:
+            return 0.0
+        return inter / plus_petite_hauteur
+
+    for boite in boites_triees:
+        if not rangee_courante:
+            rangee_courante = [boite]
+            bande_y0, bande_y1 = boite.bbox.y0, boite.bbox.y1
+            continue
+        if chevauchement_bande(boite) >= seuil_chevauchement:
+            rangee_courante.append(boite)
+            bande_y0 = max(bande_y0, boite.bbox.y0)
+            bande_y1 = min(bande_y1, boite.bbox.y1)
+        else:
+            rangees.append(rangee_courante)
+            rangee_courante = [boite]
+            bande_y0, bande_y1 = boite.bbox.y0, boite.bbox.y1
+    if rangee_courante:
+        rangees.append(rangee_courante)
+
+    resultat = []
+    for rangee in rangees:
+        resultat.extend(sorted(rangee, key=lambda b: b.bbox.x0))
+    return resultat
+    

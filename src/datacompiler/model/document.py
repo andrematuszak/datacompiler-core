@@ -56,11 +56,12 @@ class Word:
 @dataclass
 class LayoutBox:
     bbox: Optional[BBox] = None
-    type: str = "container"  # "page" | "image" | "vector_text" | "native_text" | "table" | "container"
+    type: str = "container"
     reading_order: int = 0
     word_ids: List[int] = field(default_factory=list)
     children: List["LayoutBox"] = field(default_factory=list)
-
+    metadata: Dict[str, Any] = field(default_factory=dict)  # <-- ajouter cette ligne
+    
 
 @dataclass
 class NativeContainer:
@@ -209,6 +210,7 @@ class Document:
                 reading_order=d.get("reading_order", 0),
                 word_ids=list(d.get("word_ids", [])),
                 children=[layout_box(c) for c in d.get("children", [])],
+                metadata=dict(d.get("metadata", {})),  # <-- ajouter cette ligne
             )
 
         pages = []

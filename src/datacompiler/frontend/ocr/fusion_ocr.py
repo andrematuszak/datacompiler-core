@@ -75,29 +75,36 @@ def fusionner_candidats_ocr(candidats: dict) -> list:
     for nom_backend, mots in candidats.items():
         for mot in mots:
             conflit_idx = None
-            for i, existant in enumerate(fusion):
-                if _chevauche(existant, mot):
+            for i, (backend_existant, existant) in enumerate(fusion):
+                # Un même moteur peut légitimement produire deux lignes dont
+                # les bbox se touchent : ce n'est jamais un arbitrage OCR.
+                if backend_existant != nom_backend and _chevauche(existant, mot):
                     conflit_idx = i
                     break
 
             if conflit_idx is None:
-                mot.notes = list(mot.notes or []) + [f"candidat unique ({nom_backend}), aucun chevauchement"]
-                fusion.append(mot)
+                mot.notes = list(mot.notes or []) + [
+                    f"candidat unique ({nom_backend}), aucun chevauchement inter-backend"
+                ]
+                fusion.append((nom_backend, mot))
                 continue
 
-            existant = fusion[conflit_idx]
+            backend_existant, existant = fusion[conflit_idx]
             if _confiance(mot) > _confiance(existant):
                 mot.notes = list(mot.notes or []) + [
                     f"retenu ({nom_backend}, conf={mot.confidence}) au détriment de "
-                    f"{existant.source!r} (texte écarté : {existant.text!r}, conf={existant.confidence})"
+                    f"{backend_existant} (texte écarté : {existant.text!r}, "
+                    f"conf={existant.confidence})"
                 ]
-                fusion[conflit_idx] = mot
+                fusion[conflit_idx] = (nom_backend, mot)
             else:
                 existant.notes = list(existant.notes or []) + [
-                    f"conservé face à {nom_backend} (texte écarté : {mot.text!r}, conf={mot.confidence})"
+                    f"conservé face à {nom_backend} "
+                    f"(texte écarté : {mot.text!r}, conf={mot.confidence})"
                 ]
 
-    return fusion
+    return [mot for _, mot in fusion]
+   
 
 
 def fusionner_zone_multi_backend(image, offset: tuple, backends: dict, dpi: int = None, lang: str = None) -> list:
