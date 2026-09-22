@@ -74,8 +74,8 @@ def extraire_page_pdfplumber(
     # correctif définitivement sûr partout.
     geometrie_fiable = page_plumb.rects + page_plumb.lines
     table_settings = {
-        "vertical_strategy": "explicit",
-        "horizontal_strategy": "explicit",
+        "vertical_strategy": "lines",
+        "horizontal_strategy": "lines",
         "explicit_vertical_lines": geometrie_fiable,
         "explicit_horizontal_lines": geometrie_fiable,
     }
