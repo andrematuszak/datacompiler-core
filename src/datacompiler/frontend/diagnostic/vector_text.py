@@ -24,7 +24,7 @@ from typing import List, Tuple
 SEUIL_DENSITE_MIN = 8            # nb d'éléments vectoriels minimum dans une zone pour la considérer
 HAUTEUR_MAX_LIGNE_TEXTE = 25.0   # pt -- au-delà, ça ne ressemble plus à une ligne de texte
 HAUTEUR_MIN_LIGNE_TEXTE = 4.0
-RATIO_LARGEUR_HAUTEUR_MIN = 1.5  # une ligne de texte est nettement plus large que haute
+RATIO_LARGEUR_HAUTEUR_MIN = 1.13  # une ligne de texte est nettement plus large que haute
 
 
 def _elements_vectoriels(page) -> list:
