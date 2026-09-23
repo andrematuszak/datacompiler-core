@@ -36,6 +36,20 @@ def _convertir_couleur(srgb_int: int | None) -> str:
     return f"#{r:02x}{g:02x}{b:02x}"
 
 
+def _convertir_couleur_float(rgb: tuple | None) -> str | None:
+    """Convertit un tuple couleur PyMuPDF (r, g, b) en flottants 0-1, tel que
+    retourné par `drawing.get("color")`/`drawing.get("fill")` de
+    `page.get_drawings()`, en hexadécimal -- même format que
+    `_convertir_couleur` (sRGB int), mais source différente : les dessins
+    vectoriels (drawings) exposent leur couleur en float RGB, pas en int
+    sRGB comme les spans de texte. Pas de fusion des deux fonctions : deux
+    formats d'entrée différents, pas de bénéfice à les unifier."""
+    if rgb is None:
+        return None
+    r, g, b = (round(c * 255) for c in rgb)
+    return f"#{r:02x}{g:02x}{b:02x}"
+
+
 def _extraire_zones_vectorielles(page_pymupdf: pymupdf.Page) -> List[Dict[str, Any]]:
     """
     Extrait les zones vectorielles (dessins) de la page qui pourraient correspondre
@@ -46,6 +60,13 @@ def _extraire_zones_vectorielles(page_pymupdf: pymupdf.Page) -> List[Dict[str, A
     zones_vectorielles = []
     
     for drawing in drawings:
+        # Couleur portée par le drawing entier (pas par item) -- priorité au
+        # trait (`color`), repli sur le remplissage (`fill`) si le trait est
+        # absent. Confirmé empiriquement sur un document réel (avis
+        # d'impôt) : les encadrés de section ("Vos références", "Vos
+        # contacts") sont des quads non remplis (fill=None), la couleur qui
+        # les caractérise est le trait.
+        couleur = _convertir_couleur_float(drawing.get("color") or drawing.get("fill"))
         for item in drawing.get("items", []):
             if item[0] == "l":  # ligne
                 p1, p2 = item[1], item[2]
@@ -55,7 +76,8 @@ def _extraire_zones_vectorielles(page_pymupdf: pymupdf.Page) -> List[Dict[str, A
                     "type": "line",
                     "bbox": (x0, y0, x1, y1),
                     "width": x1 - x0,
-                    "height": y1 - y0
+                    "height": y1 - y0,
+                    "color": couleur,
                 })
             elif item[0] == "re":  # rectangle
                 rect = item[1]
@@ -63,7 +85,19 @@ def _extraire_zones_vectorielles(page_pymupdf: pymupdf.Page) -> List[Dict[str, A
                     "type": "rect",
                     "bbox": (rect.x0, rect.y0, rect.x1, rect.y1),
                     "width": rect.x1 - rect.x0,
-                    "height": rect.y1 - rect.y0
+                    "height": rect.y1 - rect.y0,
+                    "color": couleur,
+                })
+            elif item[0] == "qu":  # quad -- confirmé être le type utilisé pour
+                # les encadrés de section sur le document de test (pas "re") ;
+                # `.rect` donne la bbox englobante axis-aligned du quadrilatère.
+                rect = item[1].rect
+                zones_vectorielles.append({
+                    "type": "rect",
+                    "bbox": (rect.x0, rect.y0, rect.x1, rect.y1),
+                    "width": rect.x1 - rect.x0,
+                    "height": rect.y1 - rect.y0,
+                    "color": couleur,
                 })
             elif item[0] == "c":  # courbe (bezier)
                 # Pour les courbes, on prend la bbox englobante des points de contrôle
@@ -74,7 +108,8 @@ def _extraire_zones_vectorielles(page_pymupdf: pymupdf.Page) -> List[Dict[str, A
                     "type": "curve",
                     "bbox": (min(xs), min(ys), max(xs), max(ys)),
                     "width": max(xs) - min(xs),
-                    "height": max(ys) - min(ys)
+                    "height": max(ys) - min(ys),
+                    "color": couleur,
                 })
     
     return zones_vectorielles
@@ -170,7 +205,7 @@ def extraire_page_pymupdf(page_pymupdf, page_number, start_word_id):
 
     for zone in _extraire_zones_vectorielles(page_pymupdf):
         x0, y0, x1, y1 = zone["bbox"]
-        vector = GraphicVector(bbox=BBox(x0, y0, x1, y1))
+        vector = GraphicVector(bbox=BBox(x0, y0, x1, y1), color=zone.get("color"))
         if zone["type"] == "line":
             page_obj.graphics.lines.append(vector)
         elif zone["type"] == "rect":
