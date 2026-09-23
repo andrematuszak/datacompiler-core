@@ -465,23 +465,26 @@ def ordonner(page, simple_sort=False) -> list:
     # Tri géographique de base : haut → bas, gauche → droite
         return sorted(page.native.words, key=lambda w: (w.bbox.y0, w.bbox.x0))
 
-    # 1. Séparation : mots hors table (pour tri complexe) vs mots dans table
-    #    (sauvegarde) -- inchangé par rapport à l'ancienne version.
-    mots_hors_table = [
-        deepcopy(w)
-        for w in page.native.words
-        if w.bbox and not _dans_un_tableau(w, tables)
-    ]
-    mots_dans_table = [
-        deepcopy(w)
-        for w in page.native.words
-        if w.bbox and _dans_un_tableau(w, tables)
-    ]
-
-    # 2. ENCADRÉS : les mots dans un encadré détecté (rectangle/quad coloré,
+    # 1. ENCADRÉS : les mots dans un encadré détecté (rectangle/quad coloré,
     #    cf. frontend/layout/detectors.py) sont retirés du bassin général et
     #    ordonnés À PART, récursivement, par le même algorithme
     #    (_ordonner_sous_ensemble).
+    #
+    #    PRIORITÉ ENCADRÉ > TABLE (déplacé avant l'exclusion table, qui
+    #    était l'étape 1 dans une version précédente) : un mot à la fois
+    #    dans un encadré ET dans une "table" détectée par pdfplumber doit
+    #    être traité comme un mot d'encadré, jamais comme un mot de table.
+    #    Confirmé empiriquement sur le document fiscal réel : la table
+    #    détectée par pdfplumber à (223.6,307.0)-(535.9,583.9) est un FAUX
+    #    POSITIF -- ses propres bordures d'encadré bleu ("Somme qui vous
+    #    est remboursée" + le paragraphe qui suit) sont prises pour une
+    #    grille de table par pdfplumber (cf. project notes : "Table
+    #    detection is an unsolved problem"). Avant ce réordonnancement, ces
+    #    mots étaient exclus du bassin encadré dès l'étape table (l'ancienne
+    #    étape 1), geré par `_ordonner_mots_table` via une grille de
+    #    cellules qui n'a pas de sens sur une fausse table, et se
+    #    retrouvaient plaqués tout à la fin du document, après même le
+    #    paragraphe pied de page.
     #
     #    CORRECTIF (première version cassée, cf. historique) : un encadré
     #    NE DOIT JAMAIS participer au tri par CHEVAUCHEMENT de rangées
@@ -500,11 +503,18 @@ def ordonner(page, simple_sort=False) -> list:
     #    rangée avec quoi que ce soit -- positionné dans la séquence finale
     #    par un simple TRI STABLE sur son propre y0 (cf. section 4), pas par
     #    ré-appariement de chevauchement.
+    tous_mots = [deepcopy(w) for w in page.native.words if w.bbox]
     encadres = detecter_boites_encadres(page)
-    mots_par_encadre, mots_hors_encadre = _repartir_par_encadre(mots_hors_table, encadres)
+    mots_par_encadre, mots_restants = _repartir_par_encadre(tous_mots, encadres)
 
-    # 3. Reste de page (hors encadrés) : algorithme boîtes/rangées INCHANGÉ,
-    #    sans aucune connaissance des encadrés -- exactement le même calcul
+    # 2. Séparation, sur le RESTE seulement (hors encadré) : mots hors table
+    #    (pour tri complexe) vs mots dans table (sauvegarde) -- même logique
+    #    qu'avant, juste appliquée après la priorité encadré ci-dessus.
+    mots_hors_encadre = [w for w in mots_restants if not _dans_un_tableau(w, tables)]
+    mots_dans_table = [w for w in mots_restants if _dans_un_tableau(w, tables)]
+
+    # 3. Reste de page (hors encadrés, hors tables) : algorithme
+    #    boîtes/rangées INCHANGÉ, sans aucune connaissance des encadrés -- exactement le même calcul
     #    que si les encadrés n'existaient pas, sur ce sous-ensemble de mots.
     natifs = [w for w in mots_hors_encadre if not getattr(w, "is_vectorized", False)]
     vectos = [w for w in mots_hors_encadre if getattr(w, "is_vectorized", False)]
