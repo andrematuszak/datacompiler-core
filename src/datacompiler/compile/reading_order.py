@@ -102,6 +102,34 @@ confirmé : "C"/"T" du document fiscal, juste sous la bbox du tableau
 d'en-têtes, jamais inclus dans mots_dans_table). Ce cas-là reste traité par
 le moteur boîtes/rangées général, pas par cette intégration -- un problème
 de géométrie de détection en amont (extract/pdfplumber.py), pas d'ordre.
+
+INTÉGRATION CHIRURGICALE #2 (encadrés colorés, cf.
+frontend/layout/detectors.py::detecter_boites_encadres) : même principe que
+l'intégration table ci-dessus, appliquée aux rectangles/quads détectés par
+couleur (ex. les encadrés bleus "Vos références"/"Vos contacts" du document
+fiscal). Un mot dont le centre tombe dans un encadré est retiré du bassin
+général et ordonné À PART, récursivement, par le même algorithme
+boîtes/rangées (`_ordonner_sous_ensemble`).
+
+Chaque encadré est ensuite réinséré dans la séquence finale comme un ITEM
+ATOMIQUE, positionné par un simple TRI STABLE sur son propre y0 -- PAS par
+le mécanisme de chevauchement de `_ordonner_par_boites`. Version précédente
+cassée, gardée en mémoire ici : y faire participer l'encadré comme UNE
+Boite unique (bbox = toute sa hauteur, ex. 190pt pour "Vos références")
+recréait exactement le RISQUE CONNU documenté plus haut ("boîte nettement
+plus haute que ses voisines absorbe tout ce qui la chevauche à 30%") --
+confirmé empiriquement : "DUPONT ..." (hors de tout encadré, mais
+verticalement contenu dans sa plage y) se retrouvait réinjecté AU MILIEU de
+ses lignes plutôt qu'après.
+
+LIMITE CONNUE, NON RÉSOLUE par cette intégration : un mot logiquement
+rattaché à un encadré mais physiquement situé en dehors de sa bbox (ex.
+confirmé sur le document fiscal : le libellé destinataire "DUPONT
+..." lui-même, qui précède "Vos références" dans l'ordre idéal sans
+être dans AUCUN encadré) n'est pas résolu par cette intégration -- il reste
+positionné par le moteur boîtes/rangées général, à sa position géométrique
+naturelle. Reste un problème ouvert pour une itération suivante si le
+résultat empirique le confirme.
 """
 
 import itertools
@@ -109,6 +137,7 @@ from copy import deepcopy
 from collections import defaultdict
 
 from datacompiler.utils.heuristics_geometry import dans_un_tableau, mot_dans_cellule
+from datacompiler.frontend.layout.detectors import detecter_boites_encadres
 
 
 SEUIL_CHEVAUCHEMENT_RANGEE = 0.3   # fraction de la + petite hauteur, pour dire "même rangée"
@@ -330,6 +359,51 @@ def _ordonner_par_boites(boites, seuil=SEUIL_CHEVAUCHEMENT_RANGEE):
     return resultat, rangees
 
 
+def _ordonner_sous_ensemble(mots):
+    """Applique l'algorithme boîtes/rangées (natif/vectorisé -> boîtes par
+    ligne -> rangées par chevauchement -> tri x0) à un sous-ensemble de mots
+    DÉJÀ ISOLÉ -- extraction pure du corps historique de `ordonner()`, sans
+    changement de comportement. Réutilisée deux fois : sur le "reste de
+    page" (hors encadrés) et, récursivement, sur le contenu de CHAQUE
+    encadré détecté (cf. `ordonner()`, section ENCADRÉS)."""
+    natifs = [w for w in mots if not getattr(w, "is_vectorized", False)]
+    vectos = [w for w in mots if getattr(w, "is_vectorized", False)]
+    boites_natives = _construire_boites_natives(natifs)
+    boites_vectorisees = _construire_boites_vectorisees(vectos)
+    toutes_boites = boites_natives + boites_vectorisees
+    boites_ordonnees, _rangees = _ordonner_par_boites(toutes_boites)
+    resultat = []
+    for boite in boites_ordonnees:
+        resultat.extend(_grouper_par_ligne_tolerant(boite.mots))
+    return resultat
+
+
+def _repartir_par_encadre(mots, encadres):
+    """Partitionne `mots` (déjà hors table) entre les encadrés détectés
+    (centre du mot dans la bbox de l'encadré -- même convention que
+    `mot_dans_cellule`/`dans_un_tableau`, réutilisée telle quelle) et le
+    reste de la page. Retourne (dict index_encadre -> [mots],
+    [mots hors de tout encadré]).
+
+    Un mot n'est jamais compté dans deux encadrés : le premier encadré qui
+    le capte (dans l'ordre de la liste `encadres`) l'emporte -- même
+    principe défensif que l'assignation table-par-table plus bas dans ce
+    fichier, au cas où deux zones détectées se chevaucheraient."""
+    par_encadre = defaultdict(list)
+    restants = list(mots)
+    for idx, encadre in enumerate(encadres):
+        bbox = encadre.get("bbox") if isinstance(encadre, dict) else None
+        if bbox is None:
+            continue
+        captes, non_captes = [], []
+        for w in restants:
+            (captes if mot_dans_cellule(w, bbox) else non_captes).append(w)
+        if captes:
+            par_encadre[idx] = captes
+        restants = non_captes
+    return par_encadre, restants
+
+
 def _ordonner_mots_table(mots_table, table):
     """Ordonne les mots d'UNE table selon sa grille `cell_bboxes` (ligne
     par ligne, cellule par cellule gauche->droite) -- remplace le tri plat
@@ -404,22 +478,62 @@ def ordonner(page, simple_sort=False) -> list:
         if w.bbox and _dans_un_tableau(w, tables)
     ]
 
-    # 2. Séparation natif / vectorisé, construction des boîtes, ordre par
-    #    rangées -- remplace l'ancien tri par colonnes globales.
-    natifs = [w for w in mots_hors_table if not getattr(w, "is_vectorized", False)]
-    vectos = [w for w in mots_hors_table if getattr(w, "is_vectorized", False)]
+    # 2. ENCADRÉS : les mots dans un encadré détecté (rectangle/quad coloré,
+    #    cf. frontend/layout/detectors.py) sont retirés du bassin général et
+    #    ordonnés À PART, récursivement, par le même algorithme
+    #    (_ordonner_sous_ensemble).
+    #
+    #    CORRECTIF (première version cassée, cf. historique) : un encadré
+    #    NE DOIT JAMAIS participer au tri par CHEVAUCHEMENT de rangées
+    #    (_ordonner_par_boites) en tant que boîte unique. Sa hauteur totale
+    #    (jusqu'à 190pt pour "Vos références") en fait exactement la
+    #    "boîte nettement plus haute que ses voisines" que le RISQUE CONNU
+    #    documenté plus haut dans ce fichier décrit déjà : elle n'a besoin
+    #    de chevaucher que 30% de la hauteur d'une petite boîte pour
+    #    l'absorber dans SA rangée. Confirmé empiriquement sur le document
+    #    fiscal réel avec la version précédente de cette intégration :
+    #    "DUPONT ..." (hors de tout encadré, mais verticalement
+    #    contenu dans la plage y de l'encadré "Vos références") se
+    #    retrouvait réinjecté AU MILIEU de ses lignes plutôt qu'après.
+    #
+    #    Un encadré est donc désormais un ITEM ATOMIQUE, jamais fusionné en
+    #    rangée avec quoi que ce soit -- positionné dans la séquence finale
+    #    par un simple TRI STABLE sur son propre y0 (cf. section 4), pas par
+    #    ré-appariement de chevauchement.
+    encadres = detecter_boites_encadres(page)
+    mots_par_encadre, mots_hors_encadre = _repartir_par_encadre(mots_hors_table, encadres)
+
+    # 3. Reste de page (hors encadrés) : algorithme boîtes/rangées INCHANGÉ,
+    #    sans aucune connaissance des encadrés -- exactement le même calcul
+    #    que si les encadrés n'existaient pas, sur ce sous-ensemble de mots.
+    natifs = [w for w in mots_hors_encadre if not getattr(w, "is_vectorized", False)]
+    vectos = [w for w in mots_hors_encadre if getattr(w, "is_vectorized", False)]
 
     boites_natives = _construire_boites_natives(natifs)
     boites_vectorisees = _construire_boites_vectorisees(vectos)
-    toutes_boites = boites_natives + boites_vectorisees
+    boites_ordonnees, _rangees = _ordonner_par_boites(boites_natives + boites_vectorisees)
 
-    boites_ordonnees, _rangees = _ordonner_par_boites(toutes_boites)
+    # 4. FUSION FINALE : chaque boîte hors-encadré (déjà dans le bon ordre
+    #    rangées/x0 entre elles) et chaque encadré (ordonné en interne par
+    #    _ordonner_sous_ensemble) devient un ITEM (y0_repere, mots),
+    #    positionné par un TRI STABLE sur y0 uniquement -- jamais par
+    #    chevauchement. C'est ce qui reproduit le motif "zigzag" de l'ordre
+    #    idéal (Vos références y0=167 -> DUPONT y0=181 -> Somme... y0=289
+    #    -> Vos contacts y0=368 -> Revenu fiscal... y0=589) sans jamais
+    #    réabsorber un encadré dans une rangée voisine : chaque encadré
+    #    reste un bloc contigu dans le résultat, quel que soit ce qui le
+    #    chevauche verticalement par ailleurs.
+    items = [(boite.y0, _grouper_par_ligne_tolerant(boite.mots)) for boite in boites_ordonnees]
+    for mots_encadre in mots_par_encadre.values():
+        y0_repere = min(w.bbox.y0 for w in mots_encadre)
+        items.append((y0_repere, _ordonner_sous_ensemble(mots_encadre)))
+    items.sort(key=lambda item: item[0])
 
     resultat = []
-    for boite in boites_ordonnees:
-        resultat.extend(_grouper_par_ligne_tolerant(boite.mots))
+    for _y0, mots in items:
+        resultat.extend(mots)
 
-    # 3. RÉINTÉGRATION : mots de table, ordonnés PAR TABLE via sa grille de
+    # 5. RÉINTÉGRATION : mots de table, ordonnés PAR TABLE via sa propre grille de
     #    cellules (cf. _ordonner_mots_table) plutôt qu'un tri plat unique
     #    sur l'ensemble des tables mélangées. Tables elles-mêmes triées par
     #    y0 -- l'ordre de page.graphics.tables n'est pas garanti être déjà

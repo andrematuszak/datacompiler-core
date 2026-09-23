@@ -94,6 +94,7 @@ class TableElement:
 class GraphicVector:
     bbox: Optional[BBox] = None
     keep_original: bool = True
+    color: Optional[str] = None  # hex "#rrggbb", ex. les encadrés colorés (cf. frontend/layout/detectors.py)
 
 
 @dataclass

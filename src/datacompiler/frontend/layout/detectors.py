@@ -73,6 +73,69 @@ def detecter_boites_vectorielles(page, zones_deja_prises: List[Dict[str, Any]] =
     return zones
 
 
+def _couleur_proche(couleur_hex: str, reference_hex: str, tolerance: int = 12) -> bool:
+    """Compare deux couleurs hex canal par canal, avec tolérance -- pas
+    d'égalité stricte, la couleur PyMuPDF (float RGB -> hex) et une
+    référence choisie à la main peuvent différer de quelques niveaux
+    d'arrondi."""
+    if not couleur_hex or not reference_hex:
+        return False
+    c = couleur_hex.lstrip("#")
+    r = reference_hex.lstrip("#")
+    if len(c) != 6 or len(r) != 6:
+        return False
+    for i in (0, 2, 4):
+        if abs(int(c[i:i+2], 16) - int(r[i:i+2], 16)) > tolerance:
+            return False
+    return True
+
+
+# Bleu caractéristique observé sur le document de test (avis d'impôt) pour
+# les encadrés de section ("Vos références", "Vos contacts") et les liens
+# ("impots.gouv.fr") -- RGB float (0.365, 0.565, 0.780) converti en hex.
+# Volontairement une constante à ce stade (pas de détection générique
+# "toute couleur non noire/blanche") : on n'a qu'un seul document réel
+# testé, cf. compile/reading_order.py pour la même prudence méthodologique
+# ("pas de champs inventés tant qu'un test réel n'en précise le besoin").
+COULEUR_ENCADRE_REFERENCE = "#5d90c7"
+
+
+def detecter_boites_encadres(page, couleur_reference: str = COULEUR_ENCADRE_REFERENCE,
+                              taille_min: float = 5.0) -> List[Dict[str, Any]]:
+    """Détecte les rectangles/quads de `page.graphics.rects` dont la couleur
+    est proche de `couleur_reference` -- les encadrés de section (ex. "Vos
+    références", "Vos contacts" du document fiscal de test), invisibles à
+    `detecter_boites_tables`/`detecter_boites_images` puisque ce sont des
+    tracés vectoriels PyMuPDF (type `qu`, cf. extract_pymupdf.py), pas des
+    tableaux pdfplumber ni des images.
+
+    ÉTAPE ISOLÉE : PAS encore appelée par `detecter_toutes_les_zones` --
+    volontairement, en attendant de vérifier son comportement sur le
+    document réel avant de la brancher sur l'arbre de layout / l'ordre de
+    lecture (cf. discussion projet : "on commence petit à petit")."""
+    zones = []
+    rects = getattr(getattr(page, "graphics", None), "rects", []) or []
+    idx = 0
+    for vector in rects:
+        bbox = getattr(vector, "bbox", None)
+        if not bbox:
+            continue
+        largeur = bbox.x1 - bbox.x0
+        hauteur = bbox.y1 - bbox.y0
+        if largeur < taille_min or hauteur < taille_min:
+            continue
+        if not _couleur_proche(getattr(vector, "color", None), couleur_reference):
+            continue
+        zones.append({
+            "type": "encadre",
+            "label": f"encadre_{idx}",
+            "bbox": bbox,
+            "color": vector.color,
+        })
+        idx += 1
+    return zones
+
+
 def detecter_toutes_les_zones(page) -> List[Dict[str, Any]]:
     zones = []
     zones.extend(detecter_boites_images(page))
