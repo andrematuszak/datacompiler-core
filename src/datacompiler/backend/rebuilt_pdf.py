@@ -212,6 +212,16 @@ def _grouper_en_spans(mots, couleurs_echantillonnees=None, tolerance_y=3.0, ecar
             span_courant["textes"].append(texte)
             span_courant["bbox"] |= b  # Étendre la bounding box du span
         else:
+            # Même ligne, écart faible, mais nouveau span (taille/style/couleur
+            # différents) : le flux PDF ne contiendrait AUCUN caractère espace
+            # entre les deux, et Chrome/pdfium décide alors seul d'après l'écart
+            # géométrique rendu -- faux si l'écart est sous son seuil (cas
+            # "DES"/"FINANCES" : ~1,6 pt à 10 pt de corps). On matérialise
+            # l'espace dans le texte du span précédent. Au-delà d'1 corps de
+            # police d'écart, pdfium infère déjà l'espace : on n'ajoute rien
+            # (évite un double espace, ex. "(C) :" / "13 86 ...").
+            if meme_ligne and (b.x0 - span_courant["bbox"].x1) <= span_courant["size"]:
+                span_courant["espace_apres"] = True
             spans.append(span_courant)
             span_courant = {
                 "mots": [w],
@@ -311,6 +321,7 @@ def _inserer_span(writers, page_rect, span, report, baseline_par_id=None):
     Repositionne verticalement via l'ascender typographique et ajuste la taille si dépassement.
     """
     texte_complet = " ".join(span["textes"])
+    espace_apres = bool(span.get("espace_apres"))
     rect = span["bbox"]
     fontsize = span["size"]
     couleur_key = span["color"]
@@ -359,6 +370,8 @@ def _inserer_span(writers, page_rect, span, report, baseline_par_id=None):
         writers["couleur_cle"] = couleur_key
 
     point = pymupdf.Point(rect.x0, baseline_y)
+    if espace_apres:  # ajouté APRÈS le recalage de taille : n'influence pas la largeur mesurée
+        texte_complet += " "
     writers["tw"].append(point, texte_complet, font=police, fontsize=fontsize)
     report["mots_inseres"] = report.get("mots_inseres", 0) + len(span["mots"])
     
