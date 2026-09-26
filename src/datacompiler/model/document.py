@@ -46,7 +46,14 @@ class Word:
     decision: Optional[Decision] = None
     notes: List[str] = field(default_factory=list)
     is_vectorized: bool = False
-    flags: List[Flag] = field(default_factory=list) 
+    flags: List[Flag] = field(default_factory=list)
+    # Densite d'encre relative au fond local (0-1), calculee UNIQUEMENT pour
+    # les mots recuperes par OCR vectoriel (cf. ocr/paddle.py
+    # _ratio_encre_relatif). Sert a decider `bold` par seuillage relatif a
+    # la mediane de la page (cf. ocr/vector_zones.py _assigner_gras_relatif)
+    # -- PAS une info de police, un proxy geometrique. None pour tout mot
+    # natif ou non mesure.
+    ink_ratio: Optional[float] = None
 
     @property
     def output_text(self) -> str:
