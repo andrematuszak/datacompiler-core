@@ -10,6 +10,39 @@ from datacompiler.frontend.ocr.base import OcrBackend
 
 logger = logging.getLogger(__name__)
 
+# Seuil de distance couleur (espace RGB, 0-441) pour distinguer "encre" de
+# "fond" -- EMPIRIQUE, teste sur test-impots-revenu.pdf uniquement. Un
+# seuil de LUMINOSITE ABSOLUE (ex. "pixel sombre") a ete essaye et rejete :
+# il confond fond colore (ex. bandeaux bleus "Vos references"/"Vos
+# contacts") et texte gras -- les deux sont "sombres" en absolu, la
+# distance a la couleur de fond LOCALE du crop les distingue mieux.
+_SEUIL_DISTANCE_ENCRE = 60
+
+
+def _ratio_encre_relatif(image: Image.Image, x0: float, y0: float, x1: float, y1: float, marge_px: float = 8.0):
+    """Densite d'encre d'UN mot, relative a la couleur de fond LOCALE du
+    crop (pas un seuil de luminosite absolu -- cf. _SEUIL_DISTANCE_ENCRE
+    ci-dessus). Fond estime par la couleur mediane des pixels de bordure
+    du crop -- suppose que le mot n'occupe pas toute la bordure, correct
+    tant que `marge_px` degage un peu d'espace autour du mot.
+
+    PROXY GEOMETRIQUE, PAS UNE DETECTION DE POLICE. Teste sur
+    test-impots-revenu.pdf (session du 25/09/2026) : separation mesurable
+    mais imparfaite entre libelles gras et non-gras connus -- pas de
+    validation sur corpus elargi. Retourne None si le crop est trop petit
+    pour etre fiable (mot tronque, artefact de zone).
+    """
+    gx0, gy0 = max(0, int(x0 - marge_px)), max(0, int(y0 - marge_px))
+    gx1, gy1 = min(image.width, int(x1 + marge_px)), min(image.height, int(y1 + marge_px))
+    if gx1 - gx0 < 3 or gy1 - gy0 < 3:
+        return None
+    crop = np.array(image.crop((gx0, gy0, gx1, gy1)).convert("RGB")).astype(int)
+    bordure = np.concatenate([crop[0, :], crop[-1, :], crop[:, 0], crop[:, -1]])
+    fond = np.median(bordure, axis=0)
+    distance = np.sqrt(((crop - fond) ** 2).sum(axis=2))
+    encre = distance > _SEUIL_DISTANCE_ENCRE
+    return float(encre.sum() / encre.size)
+
 
 class PaddleOcrBackend(OcrBackend):
     name = "paddleocr"
@@ -126,7 +159,10 @@ class PaddleOcrBackend(OcrBackend):
                 source="ocr_vectoriel_paddle",
                 is_vectorized=True,
                 reconstructed=True,
-                notes=["texte vectorisé récupéré par OCR ciblé (PaddleOCR, zone crop)"],
+                ink_ratio=(ratio := _ratio_encre_relatif(image, m["x0"], m["y0"], m["x1"], m["y1"])),
+                notes=["texte vectorisé récupéré par OCR ciblé (PaddleOCR, zone crop)",
+                       f"ink_ratio={ratio:.4f}" if ratio is not None else "ink_ratio=None",
+                       "bold decide au niveau page, cf. vector_zones._assigner_gras_relatif"],
             ))
         return mots
 
