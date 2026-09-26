@@ -49,11 +49,25 @@ class Word:
     flags: List[Flag] = field(default_factory=list)
     # Densite d'encre relative au fond local (0-1), calculee UNIQUEMENT pour
     # les mots recuperes par OCR vectoriel (cf. ocr/paddle.py
-    # _ratio_encre_relatif). Sert a decider `bold` par seuillage relatif a
-    # la mediane de la page (cf. ocr/vector_zones.py _assigner_gras_relatif)
-    # -- PAS une info de police, un proxy geometrique. None pour tout mot
-    # natif ou non mesure.
+    # _ratio_encre_relatif / _ratio_encre_connue). PLUS UTILISEE pour decider
+    # `bold` depuis la session du 26/09/2026 (cf. stroke_width ci-dessous) --
+    # invalidee empiriquement sur "DIRECTION" : sans marge blanche disponible
+    # autour du mot (crop colle a un mot natif voisin), la densite relative a
+    # la bbox du mot se confond avec celle d'un mot gras, quelle que soit la
+    # methode d'estimation du fond (bordure ou couleur d'encre connue).
+    # Conservee a titre diagnostique/traçable (cf. notes) uniquement.
     ink_ratio: Optional[float] = None
+    # Epaisseur de trait estimee en points (2*Aire/Perimetre du tracé
+    # vectoriel de CHAQUE glyphe, mediane par mot) -- cf. ocr/vector_zones.py
+    # _epaisseur_mediane_zone. Calculee en espace VECTORIEL directement
+    # depuis get_drawings(), independamment de tout raster/DPI/marge de crop
+    # -- remplace ink_ratio comme critere de decision pour `bold` (mots
+    # vectorises uniquement). Insensible a la forme de la lettre (I vs O),
+    # contrairement a une densite aire/bbox -- valide empiriquement sur
+    # test-impots-revenu.pdf (session du 26/09/2026) : separation nette
+    # (~0,84-0,88 non-gras vs ~1,01-1,54 gras, seuil Otsu a 0,93). None pour
+    # tout mot natif (pas de tracé vectoriel a mesurer) ou non mesure.
+    stroke_width: Optional[float] = None
 
     @property
     def output_text(self) -> str:

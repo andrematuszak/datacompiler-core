@@ -21,6 +21,9 @@ apparaissait dans le dict (cf. fusion_ocr.fusionner_zone_multi_backend,
 qui journalise et saute tout backend en échec plutôt que de planter).
 """
 
+import math
+from collections import Counter
+
 import pymupdf
 
 from datacompiler.frontend.diagnostic.vector_text import zones_texte_vectorise_probable
@@ -29,6 +32,61 @@ from datacompiler.frontend.ocr.fusion_ocr import fusionner_zone_multi_backend
 from datacompiler.model.document import BBox, Document
 
 MARGE_ZONE = 2.0  # pt -- contexte autour de la bbox détectée ; une zone trop serrée nuit à Tesseract
+
+
+def _hex_vers_rgb(hex_color: str) -> tuple:
+    """Convertit '#rrggbb' -> (r, g, b) en entiers 0-255. Duplique volontairement
+    _hex_to_rgb de backend/rebuilt_pdf.py et faithful_pdf.py (frontend ne doit
+    pas importer backend, cf. metaphore compilateur en tete de pipeline.py)."""
+    h = hex_color.lstrip("#")
+    return tuple(int(h[i:i + 2], 16) for i in (0, 2, 4))
+
+
+def _couleur_encre_zone(page, zone: BBox):
+    """Lit la couleur de remplissage REELLE des elements vectoriels
+    (lignes/courbes/rects) qui recouvrent `zone` -- deja capturee a
+    l'extraction (GraphicVector.color, cf. extract_pymupdf.py
+    _extraire_zones_vectorielles), jamais exploitee jusqu'ici pour le gras.
+
+    REMPLACE l'estimation du fond par bordure de crop (ocr/paddle.py
+    _ratio_encre_relatif v1) : cette estimation supposait toujours un peu
+    de marge blanche disponible en bordure du crop -- fausse sur "DIRECTION"
+    (session du 26/09/2026, test-impots-revenu.pdf) ou les lettres touchent
+    les bords du crop (zone rognee a zero marge par _clipper_marge_sur_natifs,
+    collee a "Impôt sur les revenus de 2020" juste en dessous) : la bordure
+    echantillonnee contenait alors une partie des lettres elles-memes,
+    assombrissant le fond estime et gonflant artificiellement ink_ratio pour
+    TOUTE la ligne du titre (5 mots concernes, pas seulement DIRECTION).
+
+    Lire la couleur d'encre directement dans le tracé evite le probleme par
+    construction : plus besoin de marge blanche nulle part, la couleur est
+    connue, pas estimee. Valide empiriquement (meme session) : ecart net
+    (~0,05) entre libelles gras (~0,19) et le titre non-gras (~0,13),
+    contre un chevauchement quasi total (0,001 d'ecart) avec l'ancienne
+    methode -- cf. session_recap pour le detail des mesures.
+
+    Retourne un tuple RGB (0-255) ou None si aucun element trouve (repli
+    attendu sur l'estimation par bordure, cf. paddle.py).
+    """
+    x0, y0, x1, y1 = zone.x0, zone.y0, zone.x1, zone.y1
+    couleurs = []
+    for coll in (page.graphics.lines, page.graphics.curves, page.graphics.rects):
+        for el in coll:
+            if el.bbox is None or el.color is None:
+                continue
+            b = el.bbox
+            ix0, iy0 = max(b.x0, x0), max(b.y0, y0)
+            ix1, iy1 = min(b.x1, x1), min(b.y1, y1)
+            if ix0 < ix1 and iy0 < iy1:
+                couleurs.append(el.color)
+    if not couleurs:
+        return None
+    # Couleur la plus frequente parmi les elements recouvrant la zone --
+    # PAS une mediane par canal (un mot peut chevaucher a la marge un
+    # element de couleur differente, ex. un trait de bordure de tableau ;
+    # le mode resiste mieux a un petit nombre d'intrus que la mediane).
+    plus_frequente = Counter(couleurs).most_common(1)[0][0]
+    return _hex_vers_rgb(plus_frequente)
 
 
 def _clipper_marge_sur_natifs(bbox_orig: BBox, marge: float, mots_natifs) -> BBox:
@@ -73,6 +131,129 @@ def _clipper_marge_sur_natifs(bbox_orig: BBox, marge: float, mots_natifs) -> BBo
             else:
                 mx1 = min(mx1, b.x0)
     return BBox(mx0, my0, mx1, my1)
+
+def _sous_traces_drawing(d: dict) -> list:
+    """Reconstitue les sous-tracés FERMÉS d'un drawing PyMuPDF (get_drawings())
+    à partir de sa liste `items` (segments 'l'/'c' mis bout à bout, 're' pour
+    un rectangle) -- un glyphe = un contour extérieur + un contour intérieur
+    par contre-forme (ex. le trou du 'D'), chacun tracé dans un sens opposé
+    par construction des polices (utile pour _epaisseur_trait_glyphe : la
+    somme des aires signées se soustrait naturellement). Une rupture de
+    continuité (le point de départ d'un item ne rejoint pas le point
+    d'arrivée du précédent) marque le passage à un nouveau sous-tracé.
+    Les courbes 'c' sont réduites à leur corde (point de départ -> point
+    d'arrivée, sans échantillonner la Bézier) -- approximation suffisante
+    pour une mesure d'épaisseur, pas pour un rendu fidèle."""
+    items = d.get("items", [])
+    sous_traces, courant, dernier_point = [], [], None
+    for it in items:
+        typ = it[0]
+        if typ in ("l", "c"):
+            p0, p1 = it[1], it[-1]
+            if dernier_point is not None and (
+                abs(p0.x - dernier_point[0]) > 1e-4 or abs(p0.y - dernier_point[1]) > 1e-4
+            ):
+                if len(courant) >= 3:
+                    sous_traces.append(courant)
+                courant = []
+            if not courant:
+                courant.append((p0.x, p0.y))
+            courant.append((p1.x, p1.y))
+            dernier_point = (p1.x, p1.y)
+        elif typ == "re":
+            rect = it[1]
+            sous_traces.append([(rect.x0, rect.y0), (rect.x1, rect.y0), (rect.x1, rect.y1), (rect.x0, rect.y1)])
+            courant, dernier_point = [], None
+    if len(courant) >= 3:
+        sous_traces.append(courant)
+    return sous_traces
+
+
+def _aire_signee(points: list) -> float:
+    """Formule du lacet (shoelace) -- aire signée d'un polygone fermé."""
+    n = len(points)
+    return sum(
+        points[i][0] * points[(i + 1) % n][1] - points[(i + 1) % n][0] * points[i][1]
+        for i in range(n)
+    ) / 2.0
+
+
+def _perimetre(points: list) -> float:
+    n = len(points)
+    return sum(
+        math.hypot(points[(i + 1) % n][0] - points[i][0], points[(i + 1) % n][1] - points[i][1])
+        for i in range(n)
+    )
+
+
+def _epaisseur_trait_glyphe(d: dict):
+    """Estime l'épaisseur de trait d'UN glyphe via 2*Aire/Périmètre --
+    approximation classique (stroke width transform) : exacte pour un ruban
+    rectangulaire, bonne approximation pour un jambage de lettre. Ne dépend
+    QUE de l'épaisseur locale du trait, pas de la forme globale de la lettre
+    -- contrairement à Aire/AireBbox (rejeté, cf. session du 26/09/2026 :
+    confondait "lettre à faible/fort contre-poinçon", ex. 'I' vs 'O', avec le
+    gras lui-même). Retourne None si le glyphe n'a aucun tracé exploitable."""
+    sous_traces = _sous_traces_drawing(d)
+    if not sous_traces:
+        return None
+    aire = sum(abs(_aire_signee(st)) for st in sous_traces)
+    perimetre = sum(_perimetre(st) for st in sous_traces)
+    return 2 * aire / perimetre if perimetre > 0 else None
+
+
+def _epaisseur_mediane_zone(page_pymupdf, zone: BBox, seuil_recouvrement: float = 0.5):
+    """Épaisseur de trait MÉDIANE des glyphes vectoriels recouvrant `zone`
+    (chaque glyphe est son propre `drawing` PyMuPDF dans ce document, un
+    fill par lettre -- confirmé empiriquement, session du 26/09/2026).
+    Médiane plutôt que moyenne : robuste à un glyphe atypique isolé (point,
+    apostrophe, accent) sans lisser la mesure sur tout le mot.
+
+    REMPLACE ink_ratio (ocr/paddle.py) comme critère de décision pour
+    `bold` -- calculée directement en espace VECTORIEL depuis
+    page.get_drawings(), donc indépendante du DPI, de la marge de crop OCR,
+    et du backend utilisé (fonctionne même sans PaddleOCR). Résout le défaut
+    identifié sur "DIRECTION" : ink_ratio (bordure ESTIMÉE ou couleur
+    connue, l'une comme l'autre) dépendait d'une marge blanche disponible
+    autour du mot dans le crop rasterisé, absente ici par construction
+    (zone rognée à zéro par _clipper_marge_sur_natifs). Ici, aucun crop,
+    aucune marge nécessaire.
+
+    Validé empiriquement (même session, test-impots-revenu.pdf, page 1) :
+    sur les 27 zones vectorisées mesurables de la page, séparation nette
+    entre non-gras (~0,46-0,91) et gras confirmés (~1,01-1,54), seuil Otsu
+    à 0,93 -- écart d'environ 0,1, contre un chevauchement quasi total avec
+    ink_ratio. "DIRECTION" et les 4 autres mots du titre : 0,84-0,88,
+    correctement non-gras. Toujours un proxy géométrique, pas une détection
+    de police -- pas de validation sur corpus au-delà de ce document.
+
+    `seuil_recouvrement` : un drawing doit avoir au moins cette fraction de
+    sa propre aire (bbox) à l'intérieur de `zone` pour être compté -- évite
+    qu'un glyphe voisin, juste effleuré au bord de la zone, ne fausse la
+    médiane (même logique que _chevauche_natif, seuil différent car portée
+    différente : ici on filtre des GLYPHES individuels, pas des MOTS).
+
+    Retourne None si aucun glyphe mesurable (mot natif sans tracé
+    vectoriel, ou zone vide).
+    """
+    valeurs = []
+    for d in page_pymupdf.get_drawings():
+        r = d["rect"]
+        ix0, iy0 = max(r.x0, zone.x0), max(r.y0, zone.y0)
+        ix1, iy1 = min(r.x1, zone.x1), min(r.y1, zone.y1)
+        if ix0 >= ix1 or iy0 >= iy1:
+            continue
+        aire_rect = (r.x1 - r.x0) * (r.y1 - r.y0)
+        if aire_rect <= 0 or (ix1 - ix0) * (iy1 - iy0) / aire_rect < seuil_recouvrement:
+            continue
+        e = _epaisseur_trait_glyphe(d)
+        if e is not None:
+            valeurs.append(e)
+    if not valeurs:
+        return None
+    valeurs.sort()
+    return valeurs[len(valeurs) // 2]
+
 
 # EMPIRIQUE, teste sur test-impots-revenu.pdf uniquement (session du
 # 25/09/2026) -- pas de validation sur corpus elargi.
@@ -138,17 +319,23 @@ def _seuil_otsu(valeurs, nb_bins=NB_BINS_OTSU):
 
 
 def _assigner_gras_relatif(mots):
-    """Decide `bold`, par mot, a partir de `ink_ratio` -- PROXY
-    GEOMETRIQUE, PAS UNE DETECTION DE POLICE. Modifie `mots` en place."""
-    ratios = [m.ink_ratio for m in mots if m.ink_ratio is not None]
-    if len(ratios) < NB_MIN_MOTS_POUR_SEUIL:
+    """Decide `bold`, par mot, a partir de `stroke_width` (epaisseur de
+    trait mediane, cf. _epaisseur_mediane_zone) -- PROXY GEOMETRIQUE, PAS
+    UNE DETECTION DE POLICE. Modifie `mots` en place.
+
+    Utilisait `ink_ratio` jusqu'a la session du 26/09/2026 (cf. commentaire
+    Word.ink_ratio pour le defaut identifie sur "DIRECTION") -- meme
+    mecanisme de seuillage (Otsu par page, cf. notes v1/v2 ci-dessus),
+    seule la source du signal geometrique a change."""
+    valeurs = [m.stroke_width for m in mots if m.stroke_width is not None]
+    if len(valeurs) < NB_MIN_MOTS_POUR_SEUIL:
         return
-    seuil = _seuil_otsu(ratios)
+    seuil = _seuil_otsu(valeurs)
     if seuil is None:
         return
     for m in mots:
-        if m.ink_ratio is not None:
-            m.bold = m.ink_ratio > seuil
+        if m.stroke_width is not None:
+            m.bold = m.stroke_width > seuil
 
 def _chevauche_bbox(a, b):
     """AABB overlap -- même logique que _chevauche dans tesseract.py,
@@ -276,8 +463,10 @@ def recuperer_texte_vectorise(doc: Document, pdf_path: str, backends, lang: str 
             mots_page = []  # accumulés avant extend -- cf. _assigner_gras_relatif (seuil PAR PAGE)
             for zone in zones_a_traiter:
                 image, _ = rendre_zone_image(page_pymupdf, zone, dpi=dpi)
+                couleur_encre = _couleur_encre_zone(page, zone)
                 mots = fusionner_zone_multi_backend(
-                    image, offset=(zone.x0, zone.y0), backends=backends_utilisables, dpi=dpi, lang=lang
+                    image, offset=(zone.x0, zone.y0), backends=backends_utilisables, dpi=dpi, lang=lang,
+                    couleur_encre=couleur_encre,
                 )
                 if not mots:
                     continue
@@ -288,9 +477,19 @@ def recuperer_texte_vectorise(doc: Document, pdf_path: str, backends, lang: str 
                 # puisque fusion_ocr a déjà réduit à un seul candidat par zone
                 # de chevauchement avant qu'on arrive ici.
                 mots_valides = [m for m in mots if not _chevauche_natif(m, mots_natifs_existants)]
+                # Epaisseur de trait calculee UNE FOIS par zone (pas par mot) --
+                # tous les mots d'une meme zone partagent la meme mediane, cf.
+                # _epaisseur_mediane_zone. Remplace ink_ratio pour la decision
+                # `bold` (cf. _assigner_gras_relatif) ; ink_ratio reste calcule
+                # cote paddle.py a titre diagnostique (notes du mot) seulement.
+                epaisseur = _epaisseur_mediane_zone(page_pymupdf, zone)
                 for m in mots_valides:
                     m.id = prochain_id
                     prochain_id += 1
+                    m.stroke_width = epaisseur
+                    m.notes = list(m.notes or []) + [
+                        f"stroke_width={epaisseur:.4f}" if epaisseur is not None else "stroke_width=None"
+                    ]
                 mots_page.extend(mots_valides)
             _assigner_gras_relatif(mots_page)
             page.native.words.extend(mots_page)

@@ -11,26 +11,60 @@ from datacompiler.frontend.ocr.base import OcrBackend
 logger = logging.getLogger(__name__)
 
 # Seuil de distance couleur (espace RGB, 0-441) pour distinguer "encre" de
-# "fond" -- EMPIRIQUE, teste sur test-impots-revenu.pdf uniquement. Un
-# seuil de LUMINOSITE ABSOLUE (ex. "pixel sombre") a ete essaye et rejete :
-# il confond fond colore (ex. bandeaux bleus "Vos references"/"Vos
-# contacts") et texte gras -- les deux sont "sombres" en absolu, la
-# distance a la couleur de fond LOCALE du crop les distingue mieux.
+# "fond" -- EMPIRIQUE, teste sur test-impots-revenu.pdf uniquement.
 _SEUIL_DISTANCE_ENCRE = 60
 
 
-def _ratio_encre_relatif(image: Image.Image, x0: float, y0: float, x1: float, y1: float, marge_px: float = 8.0):
-    """Densite d'encre d'UN mot, relative a la couleur de fond LOCALE du
-    crop (pas un seuil de luminosite absolu -- cf. _SEUIL_DISTANCE_ENCRE
-    ci-dessus). Fond estime par la couleur mediane des pixels de bordure
-    du crop -- suppose que le mot n'occupe pas toute la bordure, correct
-    tant que `marge_px` degage un peu d'espace autour du mot.
+def _ratio_encre_connue(image: Image.Image, x0: float, y0: float, x1: float, y1: float,
+                         couleur_encre_rgb: tuple, marge_px: float = 8.0):
+    """Densite d'encre d'UN mot, par comparaison a une couleur d'encre
+    CONNUE (lue dans le tracé vectoriel, cf. vector_zones._couleur_encre_zone)
+    plutot qu'a un fond ESTIME depuis la bordure du crop (cf. version
+    precedente _ratio_encre_relatif, conservee ci-dessous en repli).
 
-    PROXY GEOMETRIQUE, PAS UNE DETECTION DE POLICE. Teste sur
-    test-impots-revenu.pdf (session du 25/09/2026) : separation mesurable
-    mais imparfaite entre libelles gras et non-gras connus -- pas de
-    validation sur corpus elargi. Retourne None si le crop est trop petit
-    pour etre fiable (mot tronque, artefact de zone).
+    CORRECTIF (session du 26/09/2026, test-impots-revenu.pdf) : l'ancienne
+    version supposait toujours un peu de fond blanc disponible en bordure
+    du crop pour estimer `fond`. Faux sur "DIRECTION" (et les 4 autres mots
+    du meme titre) : la zone y est rognee a zero marge par
+    _clipper_marge_sur_natifs (collee a "Impôt sur les revenus de 2020" en
+    dessous), les lettres touchent les bords du crop, et la bordure
+    echantillonnee contient alors une partie des lettres elles-memes --
+    fond estime anormalement sombre, ink_ratio gonfle pour toute la ligne.
+    Connaitre la couleur d'encre a priori evite le probleme par
+    construction (plus besoin de marge blanche du tout).
+
+    Validee empiriquement (meme session) : ecart net (~0,05) entre
+    libelles gras confirmes (~0,19) et le titre non-gras (~0,13), contre
+    un chevauchement quasi total (0,001 d'ecart, "DIRECTION" a 0,2507
+    coince entre "service" a 0,2472 et "rôle" a 0,2517) avec l'ancienne
+    methode -- toujours un proxy geometrique, pas une detection de police,
+    et toujours valide sur ce seul document.
+
+    Retourne None si le crop est trop petit pour etre fiable (mot tronque,
+    artefact de zone) -- meme garde que l'ancienne version.
+    """
+    gx0, gy0 = max(0, int(x0 - marge_px)), max(0, int(y0 - marge_px))
+    gx1, gy1 = min(image.width, int(x1 + marge_px)), min(image.height, int(y1 + marge_px))
+    if gx1 - gx0 < 3 or gy1 - gy0 < 3:
+        return None
+    crop = np.array(image.crop((gx0, gy0, gx1, gy1)).convert("RGB")).astype(int)
+    ref = np.array(couleur_encre_rgb)
+    distance = np.sqrt(((crop - ref) ** 2).sum(axis=2))
+    encre = distance < _SEUIL_DISTANCE_ENCRE  # PRES de l'encre connue (inverse de la version bordure : LOIN du fond)
+    return float(encre.sum() / encre.size)
+
+
+def _ratio_encre_relatif(image: Image.Image, x0: float, y0: float, x1: float, y1: float, marge_px: float = 8.0):
+    """REPLI seulement -- utilisee quand aucune couleur d'encre connue n'a
+    pu etre resolue pour la zone (cf. vector_zones._couleur_encre_zone
+    retournant None : aucun element graphique trouve en recouvrement).
+    Historiquement la seule version ; remplacee en usage normal par
+    _ratio_encre_connue (cf. docstring ci-dessus pour le defaut identifie
+    sur "DIRECTION"). Fond estime par la couleur mediane des pixels de
+    bordure du crop -- suppose que le mot n'occupe pas toute la bordure,
+    hypothese qui peut echouer dans les memes conditions que "DIRECTION"
+    (crop sans marge). A surveiller si ce repli se declenche souvent en
+    pratique (cf. notes du mot, "couleur_encre=None -- repli bordure").
     """
     gx0, gy0 = max(0, int(x0 - marge_px)), max(0, int(y0 - marge_px))
     gx1, gy1 = min(image.width, int(x1 + marge_px)), min(image.height, int(y1 + marge_px))
@@ -139,8 +173,18 @@ class PaddleOcrBackend(OcrBackend):
 
         return mots
 
-    def ocraliser_zone(self, image: Image.Image, offset: tuple = (0.0, 0.0), dpi: int = None, **kwargs) -> list:
-        """OCR ciblé sur une zone vectorielle croppée."""
+    def ocraliser_zone(self, image: Image.Image, offset: tuple = (0.0, 0.0), dpi: int = None,
+                        couleur_encre: tuple = None, **kwargs) -> list:
+        """OCR ciblé sur une zone vectorielle croppée.
+
+        couleur_encre : RGB (0-255) déjà résolu par
+        vector_zones._couleur_encre_zone à partir du tracé vectoriel réel de
+        la zone. None si aucun élément graphique n'a été trouvé en
+        recouvrement (repli sur l'estimation par bordure de crop, moins
+        fiable -- cf. _ratio_encre_relatif) : cas non rencontré sur
+        test-impots-revenu.pdf mais pas exclu sur un autre document, d'où le
+        repli plutôt qu'un crash ou un ink_ratio=None systématique.
+        """
         dpi = dpi or self.dpi
         scale = dpi / 72.0
         dx, dy = offset
@@ -150,6 +194,14 @@ class PaddleOcrBackend(OcrBackend):
             y = dy + m["y0"] / scale
             largeur = (m["x1"] - m["x0"]) / scale
             hauteur = (m["y1"] - m["y0"]) / scale
+            if couleur_encre is not None:
+                ratio = _ratio_encre_connue(image, m["x0"], m["y0"], m["x1"], m["y1"], couleur_encre)
+                note_methode = f"ink_ratio={ratio:.4f} (méthode couleur connue {couleur_encre})" \
+                    if ratio is not None else "ink_ratio=None"
+            else:
+                ratio = _ratio_encre_relatif(image, m["x0"], m["y0"], m["x1"], m["y1"])
+                note_methode = f"ink_ratio={ratio:.4f} (repli bordure -- couleur_encre=None)" \
+                    if ratio is not None else "ink_ratio=None"
             mots.append(Word(
                 id=-1,
                 text=m["text"],
@@ -159,9 +211,9 @@ class PaddleOcrBackend(OcrBackend):
                 source="ocr_vectoriel_paddle",
                 is_vectorized=True,
                 reconstructed=True,
-                ink_ratio=(ratio := _ratio_encre_relatif(image, m["x0"], m["y0"], m["x1"], m["y1"])),
+                ink_ratio=ratio,
                 notes=["texte vectorisé récupéré par OCR ciblé (PaddleOCR, zone crop)",
-                       f"ink_ratio={ratio:.4f}" if ratio is not None else "ink_ratio=None",
+                       note_methode,
                        "bold decide au niveau page, cf. vector_zones._assigner_gras_relatif"],
             ))
         return mots
