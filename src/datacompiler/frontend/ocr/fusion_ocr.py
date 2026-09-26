@@ -107,17 +107,23 @@ def fusionner_candidats_ocr(candidats: dict) -> list:
    
 
 
-def fusionner_zone_multi_backend(image, offset: tuple, backends: dict, dpi: int = None, lang: str = None) -> list:
+def fusionner_zone_multi_backend(image, offset: tuple, backends: dict, dpi: int = None, lang: str = None,
+                                  **kwargs) -> list:
     """Point d'entrée pratique : fait tourner plusieurs backends sur LA
-    MÊME image de zone déjà croppée, puis arbitre. Pas encore câblé dans
-    vector_zones.py (je n'ai pas ce fichier) -- à intégrer là où
-    recuperer_texte_vectorise() appelle actuellement un seul backend.
+    MÊME image de zone déjà croppée, puis arbitre.
 
     backends : dict {nom: instance_de_backend}, ex.
         {"tesseract": TesseractBackend(...), "paddleocr": PaddleOCRBackend(...)}
+
+    **kwargs : transmis tel quel a chaque ocraliser_zone() -- ex.
+    couleur_encre (cf. vector_zones._couleur_encre_zone) pour la detection
+    du gras cote paddle.py. Chaque backend expose deja **kwargs dans sa
+    propre signature (cf. ocr/base.py) et ignore silencieusement ce qu'il
+    ne consomme pas -- aucun changement requis cote tesseract.py/qwen_vl.py
+    pour absorber un nouveau kwarg ajoute plus tard.
     """
     candidats = {
-        nom: backend.ocraliser_zone(image, offset=offset, dpi=dpi, lang=lang)
+        nom: backend.ocraliser_zone(image, offset=offset, dpi=dpi, lang=lang, **kwargs)
         for nom, backend in backends.items()
     }
     return fusionner_candidats_ocr(candidats)
