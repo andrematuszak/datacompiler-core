@@ -22,6 +22,7 @@ qui journalise et saute tout backend en échec plutôt que de planter).
 """
 
 import math
+import statistics
 from collections import Counter
 
 import pymupdf
@@ -337,6 +338,47 @@ def _assigner_gras_relatif(mots):
         if m.stroke_width is not None:
             m.bold = m.stroke_width > seuil
 
+# à ajouter dans frontend/ocr/vector_zones.py, à côté de _assigner_gras_relatif
+
+TOLERANCE_LIGNE = 2.0  # pt -- écart vertical max entre mots considérés sur la MÊME ligne visuelle
+
+
+def _assigner_taille_lissee(mots):
+    """Lisse `font_size` par LIGNE VISUELLE plutôt que mot par mot --
+    PROXY GEOMETRIQUE, comme ink_ratio/bold (même session, cf.
+    _assigner_gras_relatif). La hauteur de bbox mesurée par l'OCR
+    (Paddle) a un bruit naturel de mesure d'un mot à l'autre ; en aval,
+    backend/rebuilt_pdf.py regroupe les mots en spans visuels et casse
+    le span dès que deux mots voisins ont une taille mesurée différant
+    de plus de 1.5pt (cf. _grouper_en_spans, tolérance de continuité) --
+    ce bruit NON LISSÉ se traduisait par des sauts de taille visibles au
+    sein d'une même ligne (ex. "DIRECTION"/"GÉNÉRALE DES"/"FINANCES
+    PUBLIQUES", session du 26/09/2026).
+
+    Modifie `mots` en place. Ne touche PAS les mots natifs -- leur
+    font_size est déjà exact, extrait du flux PDF (cf.
+    extract_pymupdf.py) ; l'écraser serait une régression, pas un fix.
+    """
+    candidats = [m for m in mots if m.is_vectorized and m.bbox is not None]
+    if not candidats:
+        return
+    candidats.sort(key=lambda m: m.bbox.y0)
+
+    def _cloturer(ligne):
+        hauteurs = [m.bbox.y1 - m.bbox.y0 for m in ligne]
+        mediane = statistics.median(hauteurs)
+        for m in ligne:
+            m.font_size = mediane
+
+    ligne = [candidats[0]]
+    for m in candidats[1:]:
+        if abs(m.bbox.y0 - ligne[-1].bbox.y0) <= TOLERANCE_LIGNE:
+            ligne.append(m)
+        else:
+            _cloturer(ligne)
+            ligne = [m]
+    _cloturer(ligne)
+
 def _chevauche_bbox(a, b):
     """AABB overlap -- même logique que _chevauche dans tesseract.py,
     appliquée ici aux ZONES (après expansion par MARGE_ZONE)."""
@@ -492,6 +534,7 @@ def recuperer_texte_vectorise(doc: Document, pdf_path: str, backends, lang: str 
                     ]
                 mots_page.extend(mots_valides)
             _assigner_gras_relatif(mots_page)
+            _assigner_taille_lissee(mots_page)
             page.native.words.extend(mots_page)
     finally:
         source.close()
