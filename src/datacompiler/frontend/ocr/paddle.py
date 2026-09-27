@@ -1,3 +1,5 @@
+import os
+import re
 import io
 import logging
 
@@ -9,14 +11,36 @@ from datacompiler.model.document import BBox, Word
 from datacompiler.frontend.ocr.base import OcrBackend
 
 logger = logging.getLogger(__name__)
+_DEBUG_DIR = os.environ.get("DATACOMPILER_DEBUG_INK_RATIO")
+_debug_compteur = 0
 
 # Seuil de distance couleur (espace RGB, 0-441) pour distinguer "encre" de
 # "fond" -- EMPIRIQUE, teste sur test-impots-revenu.pdf uniquement.
 _SEUIL_DISTANCE_ENCRE = 60
 
 
+def _sauver_debug(crop_img, ratio, texte_debug, extra=""):
+    """Sauvegarde le crop passe a une methode ink_ratio, si
+    DATACOMPILER_DEBUG_INK_RATIO est defini -- diagnostic pur, aucun effet
+    sur le comportement normal. Factorise entre _ratio_encre_connue et
+    _ratio_encre_relatif (session du 26/09/2026 : le dump n'etait cable
+    que dans le repli, jamais declenche puisque _ratio_encre_connue est la
+    methode reellement utilisee sur ce document)."""
+    if not _DEBUG_DIR:
+        return
+    global _debug_compteur
+    _debug_compteur += 1
+    try:
+        os.makedirs(_DEBUG_DIR, exist_ok=True)
+        nom = re.sub(r"[^A-Za-z0-9]+", "_", texte_debug or "mot").strip("_")[:40]
+        suffixe = f"_{extra}" if extra else ""
+        crop_img.save(os.path.join(_DEBUG_DIR, f"{_debug_compteur:04d}_{nom}_ratio{ratio:.4f}{suffixe}.png"))
+    except Exception:
+        pass  # jamais casser l'extraction pour un souci d'ecriture du debug
+
+
 def _ratio_encre_connue(image: Image.Image, x0: float, y0: float, x1: float, y1: float,
-                         couleur_encre_rgb: tuple, marge_px: float = 8.0):
+                         couleur_encre_rgb: tuple, marge_px: float = 8.0, texte_debug: str = ""):
     """Densite d'encre d'UN mot, par comparaison a une couleur d'encre
     CONNUE (lue dans le tracé vectoriel, cf. vector_zones._couleur_encre_zone)
     plutot qu'a un fond ESTIME depuis la bordure du crop (cf. version
@@ -47,14 +71,17 @@ def _ratio_encre_connue(image: Image.Image, x0: float, y0: float, x1: float, y1:
     gx1, gy1 = min(image.width, int(x1 + marge_px)), min(image.height, int(y1 + marge_px))
     if gx1 - gx0 < 3 or gy1 - gy0 < 3:
         return None
-    crop = np.array(image.crop((gx0, gy0, gx1, gy1)).convert("RGB")).astype(int)
-    ref = np.array(couleur_encre_rgb)
+    crop_img = image.crop((gx0, gy0, gx1, gy1)).convert("RGB")
+    crop = np.array(crop_img).astype(int)
+    ref = np.array(couleur_encre_rgb, dtype=int)  # BUG corrigé : `ref` n'était jamais défini (NameError garanti à l'appel)
     distance = np.sqrt(((crop - ref) ** 2).sum(axis=2))
     encre = distance < _SEUIL_DISTANCE_ENCRE  # PRES de l'encre connue (inverse de la version bordure : LOIN du fond)
-    return float(encre.sum() / encre.size)
+    ratio = float(encre.sum() / encre.size)
+    _sauver_debug(crop_img, ratio, texte_debug, extra=f"refcouleur{tuple(int(v) for v in ref)}")
+    return ratio
 
 
-def _ratio_encre_relatif(image: Image.Image, x0: float, y0: float, x1: float, y1: float, marge_px: float = 8.0):
+def _ratio_encre_relatif(image: Image.Image, x0: float, y0: float, x1: float, y1: float, marge_px: float = 8.0, texte_debug: str = ""):
     """REPLI seulement -- utilisee quand aucune couleur d'encre connue n'a
     pu etre resolue pour la zone (cf. vector_zones._couleur_encre_zone
     retournant None : aucun element graphique trouve en recouvrement).
@@ -70,12 +97,15 @@ def _ratio_encre_relatif(image: Image.Image, x0: float, y0: float, x1: float, y1
     gx1, gy1 = min(image.width, int(x1 + marge_px)), min(image.height, int(y1 + marge_px))
     if gx1 - gx0 < 3 or gy1 - gy0 < 3:
         return None
-    crop = np.array(image.crop((gx0, gy0, gx1, gy1)).convert("RGB")).astype(int)
+    crop_img = image.crop((gx0, gy0, gx1, gy1)).convert("RGB")
+    crop = np.array(crop_img).astype(int)
     bordure = np.concatenate([crop[0, :], crop[-1, :], crop[:, 0], crop[:, -1]])
     fond = np.median(bordure, axis=0)
     distance = np.sqrt(((crop - fond) ** 2).sum(axis=2))
     encre = distance > _SEUIL_DISTANCE_ENCRE
-    return float(encre.sum() / encre.size)
+    ratio = float(encre.sum() / encre.size)
+    _sauver_debug(crop_img, ratio, texte_debug, extra=f"fondestime{tuple(int(v) for v in fond)}")
+    return ratio
 
 
 class PaddleOcrBackend(OcrBackend):
@@ -195,11 +225,11 @@ class PaddleOcrBackend(OcrBackend):
             largeur = (m["x1"] - m["x0"]) / scale
             hauteur = (m["y1"] - m["y0"]) / scale
             if couleur_encre is not None:
-                ratio = _ratio_encre_connue(image, m["x0"], m["y0"], m["x1"], m["y1"], couleur_encre)
+                ratio = _ratio_encre_connue(image, m["x0"], m["y0"], m["x1"], m["y1"], couleur_encre, texte_debug=m["text"])
                 note_methode = f"ink_ratio={ratio:.4f} (méthode couleur connue {couleur_encre})" \
                     if ratio is not None else "ink_ratio=None"
             else:
-                ratio = _ratio_encre_relatif(image, m["x0"], m["y0"], m["x1"], m["y1"])
+                ratio = _ratio_encre_relatif(image, m["x0"], m["y0"], m["x1"], m["y1"], texte_debug=m["text"])
                 note_methode = f"ink_ratio={ratio:.4f} (repli bordure -- couleur_encre=None)" \
                     if ratio is not None else "ink_ratio=None"
             mots.append(Word(
