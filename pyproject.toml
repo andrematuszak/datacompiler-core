@@ -23,7 +23,8 @@ dependencies = [
     "transformers==4.49.0",
     "torch",
     "timm",
-    "einops"
+    "einops",
+    "fonttools"
 ]
 
 [project.optional-dependencies]
