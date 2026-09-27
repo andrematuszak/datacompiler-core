@@ -198,7 +198,7 @@ def _epaisseur_trait_glyphe(d: dict):
     sous_traces = _sous_traces_drawing(d)
     if not sous_traces:
         return None
-    aire = sum(abs(_aire_signee(st)) for st in sous_traces)
+    aire = abs(sum(_aire_signee(st) for st in sous_traces))
     perimetre = sum(_perimetre(st) for st in sous_traces)
     return 2 * aire / perimetre if perimetre > 0 else None
 
@@ -528,6 +528,7 @@ def recuperer_texte_vectorise(doc: Document, pdf_path: str, backends, lang: str 
                 for m in mots_valides:
                     m.id = prochain_id
                     prochain_id += 1
+                    epaisseur = _epaisseur_mediane_zone(page_pymupdf, m.bbox)
                     m.stroke_width = epaisseur
                     m.notes = list(m.notes or []) + [
                         f"stroke_width={epaisseur:.4f}" if epaisseur is not None else "stroke_width=None"
