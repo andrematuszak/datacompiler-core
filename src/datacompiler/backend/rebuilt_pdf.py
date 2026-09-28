@@ -1,20 +1,24 @@
 """
-rebuilt_pdf.py — Reconstruction fidèle d'un PDF neuf, texte VISIBLE et
-sélectionnable, à la même position que le source.
+rebuilt_pdf.py — Reconstruction fidèle d'un PDF neuf, texte visuellement
+fidèle et sélectionnable, à la même position que le source.
 
 Architecture optimisée :
   1. Regroupement des mots consécutifs en Spans/Lignes continus (métrique de ligne stable).
   2. Calcul précis de la Baseline typographique basé sur l'ascender réel de la police.
   3. Compression horizontale ciblée via matrice (morphing PyMuPDF) sans altérer la hauteur.
   4. Préservation de la sélection du texte sans injection de hacks d'espaces fictifs.
-  5. Copie fidèle des images et éléments vectoriels non-textuels du document source.
+  5. Conservation des tracés des mots vectorisés inchangés ; les corrections
+     restent visibles dans la couche reconstruite.
+  6. Copie fidèle des images et éléments graphiques du document source.
 """
 
 import logging
+from functools import lru_cache
 from pathlib import Path
 import pymupdf
 
 from datacompiler.model.document import Document
+from datacompiler.utils.font_metrics import ratio_encre_em
 
 logger = logging.getLogger(__name__)
 
@@ -66,7 +70,8 @@ def _hex_to_rgb(hex_color):
 def _copier_images_et_dessins(src_page, dst_page, report, exclure=None):
     """
     Copie les images et dessins vectoriels du source vers la page de destination.
-    Exclut les tracés de glyphes des mots vectorisés/OCRisés pour éviter les doublons.
+    Les tracés de glyphes ne sont exclus que lorsque leur texte est reconstruit
+    visiblement ; les mots vectorisés inchangés gardent leur forme source.
     """
     exclure = exclure or []
 
@@ -156,8 +161,8 @@ def _copier_images_et_dessins(src_page, dst_page, report, exclure=None):
 
 def _grouper_en_spans(mots, couleurs_echantillonnees=None, tolerance_y=3.0, ecart_max_mot=8.0):
     """
-    Regroupe les mots consécutifs partageant la même ligne visuelle, le même style
-    et la même couleur en Spans de texte continus.
+    Regroupe les mots consécutifs partageant ligne, style, couleur et mode
+    de conservation des tracés source en spans continus.
     """
     if not mots:
         return []
@@ -177,6 +182,7 @@ def _grouper_en_spans(mots, couleurs_echantillonnees=None, tolerance_y=3.0, ecar
         gras = bool(w.bold) or "bold" in (w.font or "").lower()
         italic = bool(w.italic) or "italic" in (w.font or "").lower()
         taille = w.font_size or max(4.0, b.height)
+        source_graphic = bool(w.is_vectorized and w.resolved_text == w.text)
 
         mot_id = id(w)
         if mot_id in couleurs_echantillonnees:
@@ -194,6 +200,7 @@ def _grouper_en_spans(mots, couleurs_echantillonnees=None, tolerance_y=3.0, ecar
                 "bold": gras,
                 "italic": italic,
                 "color": couleur_key,
+                "source_graphic": source_graphic,
             }
             continue
 
@@ -203,6 +210,7 @@ def _grouper_en_spans(mots, couleurs_echantillonnees=None, tolerance_y=3.0, ecar
             span_courant["bold"] == gras
             and span_courant["italic"] == italic
             and span_courant["color"] == couleur_key
+            and span_courant["source_graphic"] == source_graphic
             and abs(span_courant["size"] - taille) <= 1.5
         )
         proche = (b.x0 - span_courant["bbox"].x1) <= ecart_max_mot
@@ -231,6 +239,7 @@ def _grouper_en_spans(mots, couleurs_echantillonnees=None, tolerance_y=3.0, ecar
                 "bold": gras,
                 "italic": italic,
                 "color": couleur_key,
+                "source_graphic": source_graphic,
             }
 
     if span_courant:
@@ -239,15 +248,32 @@ def _grouper_en_spans(mots, couleurs_echantillonnees=None, tolerance_y=3.0, ecar
     return spans
 
 
+@lru_cache(maxsize=None)
+def _ascender_police_source(fontname, gras, italic):
+    ascender = None
+    if fontname:
+        try:
+            ascender = getattr(pymupdf.Font(fontname), "ascender", None)
+        except Exception as exc:
+            logger.warning(
+                "Métrique de police source '%s' indisponible (%s) -- "
+                "repli sur la police de substitution",
+                fontname, exc,
+            )
+    if ascender is None:
+        ascender = getattr(_font_objet(gras, italic)[0], "ascender", 0.8)
+    return ascender / 1000.0 if ascender > 10.0 else ascender
+
+
 def _calibrer_lignes(ordre, tolerance=3.0):
     """
     Calcule une ligne de base COMMUNE par ligne visuelle.
 
     L'ancienne méthode utilisait `bbox.y1`, ce qui provoquait un
     flottement vertical car `y1` inclut les descendantes (p, q, j).
-    On calcule ici la VRAIE baseline typographique (y0 + ascender)
-    pour chaque mot de la ligne, et on en extrait la médiane.
-    Le texte est ainsi parfaitement rectiligne.
+    Les mots natifs réutilisent l'ascendante de la police source ; les
+    mots vectorisés utilisent leur hauteur d'encre propre. La médiane des
+    baselines obtenues aligne les spans d'une même ligne.
     """
     candidats = [w for w in ordre if w.bbox]
 
@@ -274,14 +300,16 @@ def _calibrer_lignes(ordre, tolerance=3.0):
         def _calc_baseline_mot(w):
             gras = bool(w.bold) or "bold" in (getattr(w, "font", "") or "").lower()
             italic = bool(w.italic) or "italic" in (getattr(w, "font", "") or "").lower()
-            police, _ = _font_objet(gras, italic)
-            asc = getattr(police, "ascender", 0.8)
-            if asc > 1.0:
-                asc /= 1000.0
-            if asc <= 0:
-                asc = 0.8
             hauteur = w.bbox.y1 - w.bbox.y0
             taille = w.font_size or max(4.0, hauteur)
+            if w.is_vectorized:
+                texte = w.resolved_text or w.text or ""
+                ratio = ratio_encre_em(texte, gras, italic)
+                if ratio is not None and ratio > 0:
+                    return w.bbox.y0 + (taille * ratio)
+            asc = _ascender_police_source(w.font, gras, italic)
+            if asc <= 0:
+                asc = 0.8
             return w.bbox.y0 + (taille * asc)
 
         # Mots natifs comme référence (métrique de ligne fiable)
@@ -318,7 +346,8 @@ def _recalage_necessaire(mot) -> bool:
 def _inserer_span(writers, page_rect, span, report, baseline_par_id=None):
     """
     Insère un Span complet de texte dans le TextWriter correspondant à sa couleur.
-    Repositionne verticalement via l'ascender typographique et ajuste la taille si dépassement.
+    Repositionne verticalement par baseline et comprime horizontalement
+    les spans reconstruits sans réduire leur corps vertical.
     """
     texte_complet = " ".join(span["textes"])
     espace_apres = bool(span.get("espace_apres"))
@@ -327,6 +356,9 @@ def _inserer_span(writers, page_rect, span, report, baseline_par_id=None):
     couleur_key = span["color"]
 
     police, _ = _font_objet(span["bold"], span["italic"])
+
+    est_vectorise = any(w.is_vectorized for w in span["mots"])
+    render_mode = 3 if span["source_graphic"] else 0
 
     # 1. Baseline : priorité au calibrage par ligne (médiane des mots
     # natifs de cette ligne visuelle, cf. _calibrer_lignes) -- plus
@@ -341,38 +373,63 @@ def _inserer_span(writers, page_rect, span, report, baseline_par_id=None):
     if baseline_calibree is not None:
         baseline_y = baseline_calibree
     else:
-        asc = getattr(police, "ascender", 0.8)
-        if asc > 1.0:
-            asc /= 1000.0  # Normalisation si l'ascender est sur l'échelle 1000 em
-        if asc <= 0:
-            asc = 0.8
-        baseline_y = rect.y0 + (fontsize * asc)
+        ratio = ratio_encre_em(texte_complet, span["bold"], span["italic"]) if est_vectorise else None
+        if ratio is not None and ratio > 0:
+            baseline_y = rect.y0 + (fontsize * ratio)
+        else:
+            asc = getattr(police, "ascender", 0.8)
+            if asc > 10.0:
+                asc /= 1000.0  # Normalisation si l'ascender est sur l'échelle 1000 em
+            if asc <= 0:
+                asc = 0.8
+            baseline_y = rect.y0 + (fontsize * asc)
 
-    # 2. Ajustement de la taille de police SEULEMENT si le span en a
-    # réellement besoin (cf. _recalage_necessaire) -- un span 100% natif
-    # et intact garde sa taille exacte, pas de déformation systématique.
-    # Un seul mot du span suffit à déclencher le recalage pour tout le
-    # span (impossible de redimensionner juste une partie d'un span
-    # rendu en un seul appel TextWriter) -- cas mixte natif+reconstruit
-    # peu probable de toute façon vu que le groupement en spans exige
-    # déjà une taille quasi identique entre mots (tolérance 1.5pt).
+    # 2. Les reconstructions vectorisées gardent leur corps mesuré sur les
+    # tracés source ; seule leur largeur est ajustée. Les autres corrections
+    # conservent le recalage existant.
+    morph = None
     if any(_recalage_necessaire(m) for m in span["mots"]):
         largeur_mesuree = police.text_length(texte_complet, fontsize=fontsize)
         largeur_cible = max(rect.width, 0.1)
         if largeur_mesuree > 0 and largeur_cible < largeur_mesuree:
             ratio = min(largeur_cible / largeur_mesuree, 1.0)
-            fontsize = fontsize * ratio
+            if est_vectorise:
+                morph = (
+                    pymupdf.Point(rect.x0, baseline_y),
+                    pymupdf.Matrix(ratio, 0, 0, 1, 0, 0),
+                )
+            else:
+                fontsize = fontsize * ratio
 
-    # 3. Séparation des TextWriter par groupe de couleur
-    if couleur_key != writers["couleur_cle"]:
-        writers["segments"].append((writers["couleur_cle"], writers["tw"]))
+    # 3. Séparation des TextWriter par couleur, visibilité et morphologie
+    if (
+        couleur_key != writers["couleur_cle"]
+        or render_mode != writers["render_mode"]
+    ):
+        if writers["pending"]:
+            writers["segments"].append((
+                writers["couleur_cle"], writers["tw"], None, writers["render_mode"]
+            ))
         writers["tw"] = pymupdf.TextWriter(page_rect)
         writers["couleur_cle"] = couleur_key
+        writers["render_mode"] = render_mode
 
     point = pymupdf.Point(rect.x0, baseline_y)
-    if espace_apres:  # ajouté APRÈS le recalage de taille : n'influence pas la largeur mesurée
+    if espace_apres:
         texte_complet += " "
-    writers["tw"].append(point, texte_complet, font=police, fontsize=fontsize)
+    if morph is not None:
+        if writers["pending"]:
+            writers["segments"].append((
+                writers["couleur_cle"], writers["tw"], None, writers["render_mode"]
+            ))
+            writers["tw"] = pymupdf.TextWriter(page_rect)
+            writers["pending"] = False
+        tw_span = pymupdf.TextWriter(page_rect)
+        tw_span.append(point, texte_complet, font=police, fontsize=fontsize)
+        writers["segments"].append((couleur_key, tw_span, morph, render_mode))
+    else:
+        writers["tw"].append(point, texte_complet, font=police, fontsize=fontsize)
+        writers["pending"] = True
     report["mots_inseres"] = report.get("mots_inseres", 0) + len(span["mots"])
     
 
@@ -410,7 +467,9 @@ def render_rebuilt_pdf(doc: Document, output_path: str, source_pdf: str = None,
             # Exclusion des tracés vectoriels de glyphes
             mots_exclus = [
                 w for w in ordre
-                if w.bbox and (w.reconstructed or w.is_vectorized or w.source == "ocr_vectoriel")
+                if w.bbox
+                and (w.reconstructed or w.is_vectorized or w.source == "ocr_vectoriel")
+                and not (w.is_vectorized and w.resolved_text == w.text)
             ]
 
             # Copier les images et tracés graphiques
@@ -431,15 +490,23 @@ def render_rebuilt_pdf(doc: Document, output_path: str, source_pdf: str = None,
             writers = {
                 "tw": pymupdf.TextWriter(dst_page.rect),
                 "couleur_cle": (0.0, 0.0, 0.0),
+                "render_mode": 0,
                 "segments": [],
+                "pending": False,
             }
 
             for span in spans:
                 _inserer_span(writers, dst_page.rect, span, report, baseline_par_id=baseline_par_id)
 
-            writers["segments"].append((writers["couleur_cle"], writers["tw"]))
-            for couleur_rgb, tw in writers["segments"]:
-                tw.write_text(dst_page, color=couleur_rgb, render_mode=0, opacity=1.0)
+            if writers["pending"]:
+                writers["segments"].append((
+                    writers["couleur_cle"], writers["tw"], None, writers["render_mode"]
+                ))
+            for couleur_rgb, tw, morph, render_mode in writers["segments"]:
+                tw.write_text(
+                    dst_page, color=couleur_rgb, render_mode=render_mode,
+                    opacity=1.0, morph=morph
+                )
 
             logger.info("page %s : %s", model_page.number, report)
 
