@@ -359,6 +359,73 @@ def _ordonner_par_boites(boites, seuil=SEUIL_CHEVAUCHEMENT_RANGEE):
     return resultat, rangees
 
 
+def _deferer_satellites(rangees, ecart_x0=3.0, seuil_densite=0.5, min_pile=3):
+    """Lit les boîtes SATELLITES d'une pile APRÈS la pile, au lieu de les
+    intercaler dans la rangée où elles tombent par simple chevauchement
+    vertical.
+
+    Cas réel (test-impots-revenu.pdf, 27/09/2026) : "AVIS_IR_RG" (petit
+    repère à droite, y=33-39) chevauche verticalement la ligne "Impôt sur
+    les revenus de 2020" (y=27.9-47.2) -> même rangée -> lu juste après
+    elle, AVANT "Avis d'impôt établi en 2021", qui fait pourtant partie du
+    même titre (trois lignes alignées à gauche, x0 = 128.3 / 128.0 /
+    127.6).
+
+    Définitions :
+      - ancre d'une rangée = sa boîte la plus à gauche ;
+      - pile = ancres consécutives alignées à gauche (x0 à `ecart_x0` près)
+        et verticalement jointives (écart <= hauteur de la plus petite) ;
+      - satellites = boîtes non-ancres des rangées d'une pile.
+    Si peu de rangées de la pile ont un partenaire (proportion <
+    `seuil_densite`), les partenaires ne sont pas des "valeurs" appariées
+    ligne à ligne mais des annexes : elles passent après la pile.
+
+    Ne touche pas au cas "libellé / valeur" (chaque libellé de la pile a
+    sa valeur : proportion 1.0 -> intact). Vérifié sur la page 1 du
+    document de test : seule AVIS_IR_RG change de place (2 boîtes déplacées
+    sur 41 rangées). NON vérifié sur d'autres documents ; approximation
+    (bbox d'encre des tracés, pas les bbox Paddle) pour la validation.
+    Retourne (rangées triées par x0, {id(satellite): y0 repère}) : le
+    repère sert au tri final par y0 de `ordonner()`, qui sinon remettrait
+    le satellite avant la fin de la pile."""
+    if not rangees:
+        return [], {}
+
+    def ancre(r):
+        return min(r, key=lambda b: b.x0)
+
+    piles, cur = [], [0]
+    for i in range(1, len(rangees)):
+        a_prev, a = ancre(rangees[cur[-1]]), ancre(rangees[i])
+        ecart = a.y0 - a_prev.y1
+        hmin = min(a_prev.y1 - a_prev.y0, a.y1 - a.y0)
+        if abs(a.x0 - a_prev.x0) <= ecart_x0 and ecart <= hmin:
+            cur.append(i)
+        else:
+            piles.append(cur)
+            cur = [i]
+    piles.append(cur)
+
+    resultat = [sorted(r, key=lambda b: b.x0) for r in rangees]
+    reperes = {}  # id(boite satellite) -> y0 repère (celui de l'ancre de fin de pile)
+    for pile in piles:
+        if len(pile) < min_pile:
+            continue
+        avec_partenaire = [i for i in pile if len(rangees[i]) >= 2]
+        if not avec_partenaire or len(avec_partenaire) / len(pile) >= seuil_densite:
+            continue
+        satellites = []
+        for i in avec_partenaire:
+            a = ancre(rangees[i])
+            satellites += [b for b in rangees[i] if b is not a]
+            resultat[i] = [a]
+        resultat[pile[-1]] = resultat[pile[-1]] + sorted(satellites, key=lambda b: (b.y0, b.x0))
+        y0_fin = ancre(rangees[pile[-1]]).y0
+        for b in satellites:
+            reperes[id(b)] = y0_fin
+    return resultat, reperes
+
+
 def _ordonner_sous_ensemble(mots):
     """Applique l'algorithme boîtes/rangées (natif/vectorisé -> boîtes par
     ligne -> rangées par chevauchement -> tri x0) à un sous-ensemble de mots
@@ -371,7 +438,9 @@ def _ordonner_sous_ensemble(mots):
     boites_natives = _construire_boites_natives(natifs)
     boites_vectorisees = _construire_boites_vectorisees(vectos)
     toutes_boites = boites_natives + boites_vectorisees
-    boites_ordonnees, _rangees = _ordonner_par_boites(toutes_boites)
+    _boites_plates, _rangees = _ordonner_par_boites(toutes_boites)
+    _rangees_def, _reperes = _deferer_satellites(_rangees)
+    boites_ordonnees = [b for rangee in _rangees_def for b in rangee]
     resultat = []
     for boite in boites_ordonnees:
         resultat.extend(_grouper_par_ligne_tolerant(boite.mots))
@@ -521,7 +590,9 @@ def ordonner(page, simple_sort=False) -> list:
 
     boites_natives = _construire_boites_natives(natifs)
     boites_vectorisees = _construire_boites_vectorisees(vectos)
-    boites_ordonnees, _rangees = _ordonner_par_boites(boites_natives + boites_vectorisees)
+    _boites_plates, _rangees = _ordonner_par_boites(boites_natives + boites_vectorisees)
+    _rangees_def, reperes_satellites = _deferer_satellites(_rangees)
+    boites_ordonnees = [b for rangee in _rangees_def for b in rangee]
 
     # 4. FUSION FINALE : chaque boîte hors-encadré (déjà dans le bon ordre
     #    rangées/x0 entre elles) et chaque encadré (ordonné en interne par
@@ -533,7 +604,8 @@ def ordonner(page, simple_sort=False) -> list:
     #    réabsorber un encadré dans une rangée voisine : chaque encadré
     #    reste un bloc contigu dans le résultat, quel que soit ce qui le
     #    chevauche verticalement par ailleurs.
-    items = [(boite.y0, _grouper_par_ligne_tolerant(boite.mots)) for boite in boites_ordonnees]
+    items = [(reperes_satellites.get(id(boite), boite.y0), _grouper_par_ligne_tolerant(boite.mots))
+             for boite in boites_ordonnees]
     for mots_encadre in mots_par_encadre.values():
         y0_repere = min(w.bbox.y0 for w in mots_encadre)
         items.append((y0_repere, _ordonner_sous_ensemble(mots_encadre)))
