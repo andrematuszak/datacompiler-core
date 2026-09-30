@@ -33,7 +33,8 @@ from datacompiler.frontend.ocr.fusion_ocr import fusionner_zone_multi_backend
 from datacompiler.model.document import BBox, Document
 from datacompiler.utils.font_metrics import ratio_encre_em
 
-MARGE_ZONE = 2.0  # pt -- contexte autour de la bbox détectée ; une zone trop serrée nuit à Tesseract
+MARGE_ZONE = 2.0  # pt -- contexte autour de la bbox détectée ; une zone trop serrée nuit à la reconnaissance OCR
+MARGE_PONCTUATION_ISOLEE = 8.0  # pt -- contexte vertical/horizontal pour ponctuation entre mots natifs
 
 
 def _hex_vers_rgb(hex_color: str) -> tuple:
@@ -565,7 +566,13 @@ def recuperer_texte_vectorise(doc: Document, pdf_path: str, backends, lang: str 
 
             mots_natifs_existants = page.native.words  # référence avant tout ajout, pour cette page -- deplacé avant zones_marginees, cf. _clipper_marge_sur_natifs
             zones_marginees = [
-                _clipper_marge_sur_natifs(BBox(x0, y0, x1, y1), MARGE_ZONE, mots_natifs_existants)
+                _clipper_marge_sur_natifs(
+                    BBox(x0, y0, x1, y1),
+                    MARGE_PONCTUATION_ISOLEE
+                    if x1 - x0 <= 4.0 and y1 - y0 <= 12.0
+                    else MARGE_ZONE,
+                    mots_natifs_existants,
+                )
                 for x0, y0, x1, y1 in zones
             ]
             zones_a_traiter = _fusionner_zones_chevauchantes(zones_marginees)
