@@ -127,11 +127,13 @@ def _mot_natif_present(page, bbox, seuil_recouvrement=0.5) -> bool:
     return False
 
 
-def _rattacher_petits_glyphes(zones, petits):
+def _rattacher_petits_glyphes(zones, petits, mots_natifs=()):
     """Étend chaque zone retenue avec les petits glyphes rejetés par le filtre de
     ratio qui la jouxtent sur la même ligne (écart <= ECART_MAX_RATTACHEMENT).
     Un glyphe est rattaché à la zone la plus proche (à égalité : celle de gauche,
-    ordre de lecture). Un glyphe sans zone voisine reste ignoré, comme avant."""
+    ordre de lecture). Un glyphe isolé entre des mots natifs devient aussi une
+    zone OCR autonome : c'est notamment le cas d'une barre oblique vectorielle
+    entre deux chiffres natifs."""
     zones = [list(z) for z in zones]
     for gx0, gy0, gx1, gy1 in petits:
         h = gy1 - gy0
@@ -150,6 +152,20 @@ def _rattacher_petits_glyphes(zones, petits):
             z = zones[meilleur[1]]
             z[0], z[1] = min(z[0], gx0), min(z[1], gy0)
             z[2], z[3] = max(z[2], gx1), max(z[3], gy1)
+            continue
+
+        proche_natif = False
+        for mot in mots_natifs:
+            if not mot.bbox or h <= 0:
+                continue
+            b = mot.bbox
+            recouvrement = min(gy1, b.y1) - max(gy0, b.y0)
+            ecart = gx0 - b.x1 if gx0 >= b.x1 else (b.x0 - gx1 if gx1 <= b.x0 else 0.0)
+            if recouvrement / h >= RECOUVREMENT_VERTICAL_MIN and ecart <= ECART_MAX_RATTACHEMENT:
+                proche_natif = True
+                break
+        if proche_natif:
+            zones.append([gx0, gy0, gx1, gy1])
     return [tuple(z) for z in zones]
 
 
@@ -163,10 +179,21 @@ def zones_texte_vectorise_probable(page) -> List[Tuple[float, float, float, floa
     resultat = []
     petits_glyphes = []
     for g in _grouper_par_proximite(elements):
-        if len(g["elements"]) < SEUIL_DENSITE_MIN:
-            continue
         x0, y0, x1, y1 = g["bbox"]
         largeur, hauteur = x1 - x0, y1 - y0
+        if len(g["elements"]) < SEUIL_DENSITE_MIN:
+            # Les glyphes de ponctuation (deux points, barre oblique) n'ont
+            # pas la densité nécessaire pour former seuls une zone de texte.
+            # Garder les petits groupes proches d'un mot vectorisé ou natif
+            # permet de les rattacher ensuite sans OCR de traits décoratifs.
+            ponctuation = (
+                0 < hauteur <= HAUTEUR_MAX_LIGNE_TEXTE
+                and largeur / hauteur < RATIO_LARGEUR_HAUTEUR_MIN
+                and largeur <= 4.0
+            )
+            if ponctuation:
+                petits_glyphes.append((x0, y0, x1, y1))
+            continue
         if hauteur <= 0 or not (HAUTEUR_MIN_LIGNE_TEXTE <= hauteur <= HAUTEUR_MAX_LIGNE_TEXTE):
             continue
         if _mot_natif_present(page, (x0, y0, x1, y1)):
@@ -175,7 +202,7 @@ def zones_texte_vectorise_probable(page) -> List[Tuple[float, float, float, floa
             petits_glyphes.append((x0, y0, x1, y1))  # candidat au rattachement
             continue
         resultat.append((x0, y0, x1, y1))
-    return _rattacher_petits_glyphes(resultat, petits_glyphes)
+    return _rattacher_petits_glyphes(resultat, petits_glyphes, page.native.words)
 
 
 def couverture_texte_natif(page) -> float | None:

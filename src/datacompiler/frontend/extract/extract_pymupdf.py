@@ -175,6 +175,45 @@ def _mot_dans_zone_vectorielle(word_bbox: BBox, zone_bbox: List[float]) -> bool:
     return x0 <= cx <= x1 and y0 <= cy <= y1
 
 
+def _sous_mots_typographiques(word_bbox, texte, spans_typo):
+    """Sépare un token PyMuPDF lorsque ses glyphes traversent plusieurs
+    spans de styles différents (ex. référence en exposant suivie de pointillés).
+    PyMuPDF regroupe parfois ces glyphes en un seul mot et le centre du mot
+    attribue alors à tort la typographie du span le plus long."""
+    if not texte or any(caractere.isspace() for caractere in texte):
+        return []
+
+    x0, y0, x1, y1 = word_bbox
+    candidats = []
+    for span in spans_typo:
+        sx0, sy0, sx1, sy1 = span["bbox"]
+        ix0, iy0 = max(x0, sx0), max(y0, sy0)
+        ix1, iy1 = min(x1, sx1), min(y1, sy1)
+        aire_span = (sx1 - sx0) * (sy1 - sy0)
+        if ix0 >= ix1 or iy0 >= iy1 or aire_span <= 0:
+            continue
+        if (ix1 - ix0) * (iy1 - iy0) / aire_span < 0.5:
+            continue
+        texte_span = re.sub(r"\s+", "", span.get("text", ""))
+        if texte_span:
+            candidats.append((span, texte_span))
+    candidats.sort(key=lambda element: element[0]["bbox"][0])
+
+    texte_normalise = re.sub(r"\s+", "", texte)
+    if len(candidats) < 2 or "".join(t for _, t in candidats) != texte_normalise:
+        return []
+
+    styles = {
+        (
+            span["font"], span["font_size"], span["bold"], span["italic"], span["color"]
+        )
+        for span, _ in candidats
+    }
+    if len(styles) < 2:
+        return []
+    return [span for span, _ in candidats]
+
+
 def extraire_metadonnees(doc_pymupdf: pymupdf.Document, pdf_path: str) -> dict:
     """Extrait l'ensemble des métadonnées système du fichier PDF."""
     return {
@@ -256,6 +295,7 @@ def extraire_page_pymupdf(page_pymupdf, page_number, start_word_id):
                         "bbox": bbox_span, "block": text_block_idx,
                         "font": font_name, "font_size": font_size,
                         "bold": bold, "italic": italic, "color": color_hex,
+                        "text": s.get("text", ""),
                     })
             bbox_ligne = l.get("bbox")
             if bbox_ligne:
@@ -302,6 +342,27 @@ def extraire_page_pymupdf(page_pymupdf, page_number, start_word_id):
         # mots. Le contexte doit donc aussi couvrir le token isolé « � » / « ¤ ».
         if texte in {"�", "¤"} and re.search(r"\d[.,]\d{2}$", texte_precedent):
             texte = "€"
+        sous_mots = _sous_mots_typographiques((x0, y0, x1, y1), texte, spans_typo)
+        if sous_mots:
+            for span in sous_mots:
+                sx0, sy0, sx1, sy1 = span["bbox"]
+                page_obj.native.words.append(Word(
+                    id=word_global_id,
+                    text=_reparer_texte_cmap(span["text"].strip()),
+                    bbox=BBox(sx0, sy0, sx1, sy1),
+                    block=int(w[5]),
+                    line=int(w[6]),
+                    word=int(w[7]),
+                    font=span["font"],
+                    font_size=span["font_size"],
+                    bold=span["bold"],
+                    italic=span["italic"],
+                    color=span["color"],
+                    rotation=float(page_pymupdf.rotation),
+                ))
+                word_global_id += 1
+            texte_precedent = texte
+            continue
         lt = _typo_correspondante((x0, y0, x1, y1))
         page_obj.native.words.append(Word(
             id=word_global_id,

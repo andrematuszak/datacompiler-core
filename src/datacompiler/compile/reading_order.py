@@ -190,6 +190,31 @@ def _grouper_par_ligne_tolerant(mots, tolerance=TOLERANCE_LIGNE):
     return resultat
 
 
+def _ordonner_items_par_ligne(items, tolerance=TOLERANCE_LIGNE):
+    """Fusionne dans une même ligne les blocs dont le y0 diffère légèrement,
+    puis les lit de gauche à droite. Le tri final par y0 seul séparait parfois
+    les fragments natifs et vectorisés d'une même ligne."""
+    items_tries = sorted(items, key=lambda item: item[0])
+    lignes = []
+    ligne_courante = []
+    y_ref = None
+    for item in items_tries:
+        if ligne_courante and abs(item[0] - y_ref) <= tolerance:
+            ligne_courante.append(item)
+        else:
+            if ligne_courante:
+                lignes.append(ligne_courante)
+            ligne_courante = [item]
+            y_ref = item[0]
+    if ligne_courante:
+        lignes.append(ligne_courante)
+
+    resultat = []
+    for ligne in lignes:
+        resultat.extend(sorted(ligne, key=lambda item: item[1]))
+    return resultat
+
+
 class Boite:
     """Région rectangulaire regroupant un ou plusieurs mots déjà reconnus
     comme faisant partie de la même ligne physique (native ou vectorisée).
@@ -604,15 +629,38 @@ def ordonner(page, simple_sort=False) -> list:
     #    réabsorber un encadré dans une rangée voisine : chaque encadré
     #    reste un bloc contigu dans le résultat, quel que soit ce qui le
     #    chevauche verticalement par ailleurs.
-    items = [(reperes_satellites.get(id(boite), boite.y0), _grouper_par_ligne_tolerant(boite.mots))
-             for boite in boites_ordonnees]
+    items = []
+    for rangee in _rangees_def:
+        boites_principales = [
+            boite for boite in rangee if id(boite) not in reperes_satellites
+        ]
+        if boites_principales:
+            mots_rangee = [
+                mot
+                for boite in boites_principales
+                for mot in _grouper_par_ligne_tolerant(boite.mots)
+            ]
+            mots_rangee.sort(key=lambda mot: mot.bbox.x0)
+            items.append((
+                min(boite.y0 for boite in boites_principales),
+                min(boite.x0 for boite in boites_principales),
+                mots_rangee,
+            ))
+        for boite in rangee:
+            if id(boite) in reperes_satellites:
+                items.append((
+                    reperes_satellites[id(boite)],
+                    boite.x0,
+                    _grouper_par_ligne_tolerant(boite.mots),
+                ))
     for mots_encadre in mots_par_encadre.values():
         y0_repere = min(w.bbox.y0 for w in mots_encadre)
-        items.append((y0_repere, _ordonner_sous_ensemble(mots_encadre)))
-    items.sort(key=lambda item: item[0])
+        x0_repere = min(w.bbox.x0 for w in mots_encadre)
+        items.append((y0_repere, x0_repere, _ordonner_sous_ensemble(mots_encadre)))
+    items = _ordonner_items_par_ligne(items)
 
     resultat = []
-    for _y0, mots in items:
+    for _y0, _x0, mots in items:
         resultat.extend(mots)
 
     # 5. RÉINTÉGRATION : mots de table, ordonnés PAR TABLE via sa propre grille de

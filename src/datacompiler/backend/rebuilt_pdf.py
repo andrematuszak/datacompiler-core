@@ -312,17 +312,39 @@ def _calibrer_lignes(ordre, tolerance=3.0):
                 asc = 0.8
             return w.bbox.y0 + (taille * asc)
 
-        # Mots natifs comme référence (métrique de ligne fiable)
+        # Les mots de corps normal servent de référence. Un petit mot placé
+        # au-dessus de cette baseline (référence légale, par exemple) doit
+        # garder sa position source au lieu d'être abaissé sur la ligne.
         natifs = [w for w in mots_ligne if not w.is_vectorized]
-        if natifs:
-            baselines = sorted(_calc_baseline_mot(w) for w in natifs)
+        tailles_natives = {
+            id(w): (w.font_size or max(4.0, w.bbox.y1 - w.bbox.y0))
+            for w in natifs
+        }
+        taille_reference = max(tailles_natives.values(), default=0.0)
+        mots_reference = [
+            w for w in natifs
+            if tailles_natives[id(w)] >= taille_reference * 0.8
+        ]
+        if mots_reference:
+            baselines = sorted(_calc_baseline_mot(w) for w in mots_reference)
             baseline = baselines[len(baselines) // 2]  # médiane des baselines typographiques
+        elif natifs:
+            baselines = sorted(_calc_baseline_mot(w) for w in natifs)
+            baseline = baselines[len(baselines) // 2]
         else:
             baselines = sorted(_calc_baseline_mot(w) for w in mots_ligne)
             baseline = baselines[len(baselines) // 2]
 
         for w in mots_ligne:
-            baseline_par_id[id(w)] = baseline
+            baseline_mot = _calc_baseline_mot(w)
+            taille_mot = w.font_size or max(4.0, w.bbox.y1 - w.bbox.y0)
+            est_exposant = (
+                not w.is_vectorized
+                and taille_reference > 0
+                and taille_mot < taille_reference * 0.8
+                and baseline_mot < baseline - 0.75
+            )
+            baseline_par_id[id(w)] = baseline_mot if est_exposant else baseline
             
     return baseline_par_id
 
