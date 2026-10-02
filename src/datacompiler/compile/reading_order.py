@@ -657,31 +657,55 @@ def ordonner(page, simple_sort=False) -> list:
         y0_repere = min(w.bbox.y0 for w in mots_encadre)
         x0_repere = min(w.bbox.x0 for w in mots_encadre)
         items.append((y0_repere, x0_repere, _ordonner_sous_ensemble(mots_encadre)))
-    items = _ordonner_items_par_ligne(items)
-
-    resultat = []
-    for _y0, _x0, mots in items:
-        resultat.extend(mots)
 
     # 5. RÉINTÉGRATION : mots de table, ordonnés PAR TABLE via sa propre grille de
     #    cellules (cf. _ordonner_mots_table) plutôt qu'un tri plat unique
-    #    sur l'ensemble des tables mélangées. Tables elles-mêmes triées par
-    #    y0 -- l'ordre de page.graphics.tables n'est pas garanti être déjà
-    #    l'ordre de lecture (dépend de pdfplumber.find_tables()).
+    #    sur l'ensemble des tables mélangées. Chaque table redevient un bloc
+    #    de lecture ancré à sa position physique, au lieu d'être ajoutée après
+    #    tout le texte hors tableau.
     #
     #    Un mot n'est assigné qu'à la PREMIÈRE table qui le capte (retiré
     #    du bassin avant de passer à la suivante) -- protège contre une
     #    duplication si deux tables détectées ont des bbox qui se
     #    chevauchent (cas non rencontré sur le document de test, mais pas
     #    à exclure sur un autre document).
+    mots_tables_natifs = []
     if mots_dans_table:
         tables_triees = sorted(tables, key=lambda t: t.bbox.y0 if t.bbox else 0.0)
         bassin = list(mots_dans_table)
         for table in tables_triees:
             mots_de_cette_table = [w for w in bassin if _dans_un_tableau(w, [table])]
             if mots_de_cette_table:
-                resultat.extend(_ordonner_mots_table(mots_de_cette_table, table))
+                mots_ordonnes_table = _ordonner_mots_table(mots_de_cette_table, table)
+                if any(getattr(w, "is_vectorized", False) for w in mots_de_cette_table):
+                    items.append((
+                        min(w.bbox.y0 for w in mots_ordonnes_table),
+                        min(w.bbox.x0 for w in mots_ordonnes_table),
+                        mots_ordonnes_table,
+                    ))
+                else:
+                    # Conserver l'ordre historique des tableaux purement
+                    # natifs; le déplacement à leur ancre physique corrige
+                    # ici le cas page 2 où l'OCR vectoriel des en-têtes de
+                    # tableau était ajouté après tout le reste de la page.
+                    mots_tables_natifs.extend(mots_ordonnes_table)
                 dejas_assignes = {id(w) for w in mots_de_cette_table}
                 bassin = [w for w in bassin if id(w) not in dejas_assignes]
+
+        if bassin:
+            if any(getattr(w, "is_vectorized", False) for w in bassin):
+                mots_restants_table = _grouper_par_ligne_tolerant(bassin)
+                items.append((
+                    min(w.bbox.y0 for w in bassin),
+                    min(w.bbox.x0 for w in bassin),
+                    mots_restants_table,
+                ))
+            else:
+                mots_tables_natifs.extend(sorted(bassin, key=lambda w: (w.bbox.y0, w.bbox.x0)))
+
+    resultat = []
+    for _y0, _x0, mots in _ordonner_items_par_ligne(items):
+        resultat.extend(mots)
+    resultat.extend(mots_tables_natifs)
 
     return resultat

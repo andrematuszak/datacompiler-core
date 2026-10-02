@@ -22,6 +22,7 @@ qui journalise et saute tout backend en échec plutôt que de planter).
 """
 
 import math
+import re
 import statistics
 from collections import Counter
 
@@ -30,7 +31,7 @@ import pymupdf
 from datacompiler.frontend.diagnostic.vector_text import zones_texte_vectorise_probable
 from datacompiler.frontend.extract.extract_pymupdf import rendre_zone_image
 from datacompiler.frontend.ocr.fusion_ocr import fusionner_zone_multi_backend
-from datacompiler.model.document import BBox, Document
+from datacompiler.model.document import BBox, Document, Word
 from datacompiler.utils.font_metrics import ratio_encre_em
 
 MARGE_ZONE = 2.0  # pt -- contexte autour de la bbox détectée ; une zone trop serrée nuit à la reconnaissance OCR
@@ -533,6 +534,56 @@ def _chevauche_natif(mot, mots_natifs, seuil_recouvrement=0.5):
     return False
 
 
+def _barre_oblique_entre_nombres(zone: BBox, mots_natifs) -> Word | None:
+    """Reconnaît une barre oblique vectorielle isolée entre deux nombres natifs.
+
+    Un OCR de la bbox du glyphe seul est peu fiable; si la forme étroite et
+    inclinée est encadrée par deux nombres sur la même ligne, le contexte
+    géométrique suffit à reconstruire le séparateur sans dupliquer ces nombres.
+    """
+    largeur, hauteur = zone.x1 - zone.x0, zone.y1 - zone.y0
+    if not (1.5 <= largeur <= 4.0 and 5.0 <= hauteur <= 10.0):
+        return None
+    ratio = largeur / hauteur
+    if not 0.25 <= ratio <= 0.55:
+        return None
+
+    chevauchement_min = 0.6 * hauteur
+    gauche = [
+        mot for mot in mots_natifs
+        if mot.bbox
+        and re.fullmatch(r"\d+", (mot.text or "").strip())
+        and mot.bbox.x1 <= zone.x0
+        and zone.x0 - mot.bbox.x1 <= 8.0
+        and min(zone.y1, mot.bbox.y1) - max(zone.y0, mot.bbox.y0) >= chevauchement_min
+    ]
+    droite = [
+        mot for mot in mots_natifs
+        if mot.bbox
+        and re.fullmatch(r"\d+", (mot.text or "").strip())
+        and mot.bbox.x0 >= zone.x1
+        and mot.bbox.x0 - zone.x1 <= 8.0
+        and min(zone.y1, mot.bbox.y1) - max(zone.y0, mot.bbox.y0) >= chevauchement_min
+    ]
+    if not gauche or not droite:
+        return None
+    if max(gauche, key=lambda mot: mot.bbox.x1).text.strip() == min(
+        droite, key=lambda mot: mot.bbox.x0
+    ).text.strip():
+        return None
+
+    return Word(
+        id=-1,
+        text="/",
+        resolved_text="/",
+        bbox=zone,
+        source="vector_geometry",
+        is_vectorized=True,
+        reconstructed=True,
+        notes=["barre oblique vectorielle entre deux nombres natifs"],
+    )
+
+
 def recuperer_texte_vectorise(doc: Document, pdf_path: str, backends, lang: str = "fra", dpi: int = 300) -> Document:
     """
     backends : dict {nom: instance_de_backend}, ex.
@@ -565,15 +616,25 @@ def recuperer_texte_vectorise(doc: Document, pdf_path: str, backends, lang: str 
                 continue
 
             mots_natifs_existants = page.native.words  # référence avant tout ajout, pour cette page -- deplacé avant zones_marginees, cf. _clipper_marge_sur_natifs
+            zones_ocr = []
+            mots_page = []
+            for coords in zones:
+                zone = BBox(*coords)
+                barre = _barre_oblique_entre_nombres(zone, mots_natifs_existants)
+                if barre is not None:
+                    mots_page.append(barre)
+                else:
+                    zones_ocr.append(zone)
+
             zones_marginees = [
                 _clipper_marge_sur_natifs(
-                    BBox(x0, y0, x1, y1),
+                    zone,
                     MARGE_PONCTUATION_ISOLEE
-                    if x1 - x0 <= 4.0 and y1 - y0 <= 12.0
+                    if zone.x1 - zone.x0 <= 4.0 and zone.y1 - zone.y0 <= 12.0
                     else MARGE_ZONE,
                     mots_natifs_existants,
                 )
-                for x0, y0, x1, y1 in zones
+                for zone in zones_ocr
             ]
             zones_a_traiter = _fusionner_zones_chevauchantes(zones_marginees)
 
@@ -589,7 +650,10 @@ def recuperer_texte_vectorise(doc: Document, pdf_path: str, backends, lang: str 
             # sur l'unicité de l'id, mais bloquant pour LayoutBox.word_ids
             # (impossible de savoir lequel de plusieurs -1 est référencé).
             prochain_id = max((w.id for w in mots_natifs_existants if w.id and w.id > 0), default=0) + 1
-            mots_page = []  # accumulés avant extend -- cf. _assigner_gras_relatif (seuil PAR PAGE)
+            for mot in mots_page:
+                mot.id = prochain_id
+                prochain_id += 1
+            # accumulés avant extend -- cf. _assigner_gras_relatif (seuil PAR PAGE)
             zones_par_mot = {}
             for zone in zones_a_traiter:
                 image, _ = rendre_zone_image(page_pymupdf, zone, dpi=dpi)
