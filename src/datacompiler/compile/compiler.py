@@ -81,7 +81,7 @@ def _cle_valeur_mot(mot):
 
 
 def _snapshot(etape, page, mots, max_exemples=6):
-    n = getattr(page, "number", "?")
+    n_page = getattr(page, "number", "?")
     total = len(mots)
 
     cles = [_cle_valeur_mot(m) for m in mots]

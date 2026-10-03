@@ -143,6 +143,11 @@ from datacompiler.frontend.layout.detectors import detecter_boites_encadres
 SEUIL_CHEVAUCHEMENT_RANGEE = 0.3   # fraction de la + petite hauteur, pour dire "même rangée"
 DILATATION_CLUSTERING_VECTO = 8.0  # pt, marge de tolérance pour fusionner des mots vectorisés proches
 TOLERANCE_LIGNE = 3.5              # pt, écart de y0 toléré pour dire "même ligne" (bruit OCR)
+# Un partenaire dont le y0 est à moins de ECART_Y0_MEME_LIGNE de celui de l'ancre de sa rangée est
+# sur la MÊME LIGNE que l'ancre : c'est la valeur d'un « libellé ....... valeur », pas une annexe.
+# Volontairement plus serré que TOLERANCE_LIGNE : l'annexe réelle de la page 1 (AVIS_IR_RG) est à
+# 5,2 pt de son ancre, les valeurs de la page 3 sont à 0,0.
+ECART_Y0_MEME_LIGNE = 2.0
 
 
 # _dans_un_tableau extraite vers geometry.py (partagée avec qa.py) --
@@ -410,6 +415,15 @@ def _deferer_satellites(rangees, ecart_x0=3.0, seuil_densite=0.5, min_pile=3):
     document de test : seule AVIS_IR_RG change de place (2 boîtes déplacées
     sur 41 rangées). NON vérifié sur d'autres documents ; approximation
     (bbox d'encre des tracés, pas les bbox Paddle) pour la validation.
+    EXCEPTION -- valeurs sur la même ligne que leur libellé (page 3 de l'avis
+    d'impôt : « Plafond total de 2019 ..... 15810 », « Revenu fiscal de
+    référence ..... 28548 »...). Ces partenaires sont alignés sur l'ancre
+    (|y0 - y0 de l'ancre| <= ECART_Y0_MEME_LIGNE) : ce sont des valeurs
+    lues avec leur libellé, pas des annexes. La décision de différer reste
+    celle de la densité (inchangée), mais seuls les satellites NON alignés
+    sont déplacés ; sans cette exception, toute une colonne de montants
+    partait à la fin de la pile, loin de ses libellés.
+
     Retourne (rangées triées par x0, {id(satellite): y0 repère}) : le
     repère sert au tri final par y0 de `ordonner()`, qui sinon remettrait
     le satellite avant la fin de la pile."""
@@ -442,8 +456,13 @@ def _deferer_satellites(rangees, ecart_x0=3.0, seuil_densite=0.5, min_pile=3):
         satellites = []
         for i in avec_partenaire:
             a = ancre(rangees[i])
-            satellites += [b for b in rangees[i] if b is not a]
-            resultat[i] = [a]
+            annexes = [b for b in rangees[i]
+                       if b is not a and abs(b.y0 - a.y0) > ECART_Y0_MEME_LIGNE]
+            satellites += annexes
+            resultat[i] = [b for b in rangees[i] if b is a or all(b is not x for x in annexes)]
+            resultat[i].sort(key=lambda b: b.x0)
+        if not satellites:
+            continue
         resultat[pile[-1]] = resultat[pile[-1]] + sorted(satellites, key=lambda b: (b.y0, b.x0))
         y0_fin = ancre(rangees[pile[-1]]).y0
         for b in satellites:
