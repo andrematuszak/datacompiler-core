@@ -372,8 +372,17 @@ def _ajuster_ligne_sur_traces(ligne, dessins, zones_par_mot):
     zx1 = max(zone[2] for zone in coords)
     zy1 = max(zone[3] for zone in coords)
 
-    line_y0 = min(m.bbox.y0 for m in ligne)
-    line_y1 = max(m.bbox.y1 for m in ligne)
+    # Seuls les mots issus d'une zone OCR (présents dans zones_par_mot) sont recalés sur les
+    # tracés. Un mot reconstruit par géométrie (ex. la barre oblique de « 1 / 2 », cf.
+    # _barre_oblique_entre_nombres) a déjà sa bbox exacte et n'a pas de zone : l'inclure dans
+    # x0_ocr/x1_ocr puis dans la mise à l'échelle l'écrasait contre le dernier tracé OCR de la
+    # ligne (page 2 : « / » déplacé de x=530 à x=510, sur l'emplacement du « : »).
+    mots_ocr = [m for m in ligne if zones_par_mot.get(id(m)) is not None]
+    if not mots_ocr:
+        return False
+
+    line_y0 = min(m.bbox.y0 for m in mots_ocr)
+    line_y1 = max(m.bbox.y1 for m in mots_ocr)
     traces = []
     for dessin in dessins:
         rect = dessin.get("rect")
@@ -387,7 +396,7 @@ def _ajuster_ligne_sur_traces(ligne, dessins, zones_par_mot):
             continue
         traces.append(rect)
 
-    ratios = [_ratio_encre_mot(m) for m in ligne]
+    ratios = [_ratio_encre_mot(m) for m in mots_ocr]
     ratios = [ratio for ratio in ratios if ratio is not None]
     if not traces or not ratios:
         return False
@@ -400,18 +409,20 @@ def _ajuster_ligne_sur_traces(ligne, dessins, zones_par_mot):
     if taille <= 0:
         return False
 
-    x0_ocr = min(m.bbox.x0 for m in ligne)
-    x1_ocr = max(m.bbox.x1 for m in ligne)
+    x0_ocr = min(m.bbox.x0 for m in mots_ocr)
+    x1_ocr = max(m.bbox.x1 for m in mots_ocr)
     largeur_ocr = x1_ocr - x0_ocr
     largeur_traces = x1_traces - x0_traces
     if largeur_ocr > 0 and largeur_traces > 0:
         echelle_x = largeur_traces / largeur_ocr
-        for mot in ligne:
+        for mot in mots_ocr:
             mot.bbox.x0 = x0_traces + (mot.bbox.x0 - x0_ocr) * echelle_x
             mot.bbox.x1 = x0_traces + (mot.bbox.x1 - x0_ocr) * echelle_x
 
     for mot in ligne:
         mot.font_size = taille
+        if zones_par_mot.get(id(mot)) is None:
+            continue   # géométrie déjà exacte : on ne lui donne que la taille de la ligne
         ratio = _ratio_encre_mot(mot)
         if ratio is not None:
             decalage_y = baseline - taille * ratio - mot.bbox.y0
