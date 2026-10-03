@@ -394,6 +394,17 @@ def _ajuster_ligne_sur_traces(ligne, dessins, zones_par_mot):
             continue
         if rect.y1 <= line_y0 or rect.y0 >= line_y1:
             continue
+        # Le trait doit appartenir à UN des mots de la ligne (centre dans sa bbox) : un simple
+        # chevauchement vertical avec la plage de la ligne ramassait aussi l'encre de la ligne
+        # voisine. Page 2 : « PARTS » (y0 147,4) est rattaché aux quatre « handicapés » (y0 ~150)
+        # par la tolérance de ligne, ce qui étend la plage jusqu'à 147,4 -- et les lettres de
+        # « enfants mineurs ou » / « dont enfants » (bas de l'encre à 148,2) y entraient. Leur
+        # sommet (142,6) devenait alors le haut de « encre de la ligne », et tous les mots de la
+        # ligne étaient remontés sur la ligne du dessus (y0 150,6 -> 142,6, x décalés, ordre
+        # de lecture inversé dans les cellules).
+        cx, cy = (rect.x0 + rect.x1) / 2, (rect.y0 + rect.y1) / 2
+        if not any(m.bbox.x0 <= cx <= m.bbox.x1 and m.bbox.y0 <= cy <= m.bbox.y1 for m in mots_ocr):
+            continue
         traces.append(rect)
 
     ratios = [_ratio_encre_mot(m) for m in mots_ocr]
