@@ -29,29 +29,83 @@ RATIO_LARGEUR_HAUTEUR_MIN = 1.13  # une ligne de texte est nettement plus large 
 # filtre de ratio, et dessinés à 3-4 pt du mot voisin (> tolérance de regroupement). On ne
 # les envoie pas à l'OCR seuls (un ":" isolé n'est pas détecté) : on les RATTACHE à la zone
 # de texte retenue voisine sur la même ligne, pour que l'OCR voie "avis :" d'un seul tenant.
+# Éléments STRUCTURELS (cadres de cellules, bordures de tableau) : ce ne sont pas des traits de
+# glyphes, mais ils touchent leurs voisins (cellules accolées à ~0-1 pt) et, avec la fusion
+# transitive de _grouper_par_proximite, soudent toute une rangée -- voire deux rangées -- de
+# cellules en un seul groupe. Page 2 de l'avis d'impôt : le bandeau "RÉSIDENCE EXCLUSIVE /
+# ALTERNÉE" (14 pt) et les cellules du dessous (23 pt) se touchent -> un groupe de 36,9 pt de haut
+# (> HAUTEUR_MAX_LIGNE_TEXTE) rejeté en bloc, donc tout le texte vectorisé de ces deux lignes
+# n'arrivait jamais à l'OCR. Les glyphes, eux, sont des traits fins et courts.
+TOLERANCE_GROUPE_X = 3.0         # pt -- écart horizontal max entre traits d'un même groupe
+TOLERANCE_GROUPE_Y = 1.25        # pt -- écart vertical max (plus faible : sépare les lignes serrées)
+FILTRER_ELEMENTS_STRUCTURELS = True  # False = ancien comportement (utile pour un A/B de non-régression)
+EPAISSEUR_MIN_BOITE = 6.0        # pt -- un rect dont les 2 côtés dépassent ça est une boîte, pas un trait de lettre
+LONGUEUR_MIN_STRUCTURE = 60.0    # pt -- un trait/rect plus long que ça n'est pas un glyphe
+TOLERANCE_BORD = 0.6             # pt -- un trait posé sur le bord d'une boîte structurelle en fait partie
 ECART_MAX_RATTACHEMENT = 8.0      # pt -- écart horizontal max entre le petit glyphe et la zone voisine
 RECOUVREMENT_VERTICAL_MIN = 0.6   # part de la hauteur du glyphe qui doit chevaucher la zone
+
+
+def _rect_structurel(b) -> bool:
+    """Boîte (cellule, cadre) ou rect très long : jamais un trait de lettre."""
+    w, h = b.x1 - b.x0, b.y1 - b.y0
+    return min(w, h) >= EPAISSEUR_MIN_BOITE or max(w, h) >= LONGUEUR_MIN_STRUCTURE
+
+
+def _trait_structurel(b, boites) -> bool:
+    """Trait long, ou posé sur le bord d'une boîte structurelle (bordure de cellule)."""
+    w, h = b.x1 - b.x0, b.y1 - b.y0
+    if max(w, h) >= LONGUEUR_MIN_STRUCTURE:
+        return True
+    t = TOLERANCE_BORD
+    if h <= t:        # horizontal : sur le bord haut ou bas d'une boîte, dans son étendue
+        for r in boites:
+            if (abs(b.y0 - r.y0) <= t or abs(b.y0 - r.y1) <= t) and b.x0 >= r.x0 - t and b.x1 <= r.x1 + t:
+                return True
+    elif w <= t:      # vertical : sur le bord gauche ou droit
+        for r in boites:
+            if (abs(b.x0 - r.x0) <= t or abs(b.x0 - r.x1) <= t) and b.y0 >= r.y0 - t and b.y1 <= r.y1 + t:
+                return True
+    return False
+
+
+def _dans_un_lien(b, liens) -> bool:
+    """Centre de la bbox à l'intérieur d'un rectangle de lien (annotation /Link)."""
+    cx, cy = (b.x0 + b.x1) / 2, (b.y0 + b.y1) / 2
+    return any(x0 <= cx <= x1 and y0 <= cy <= y1 for x0, y0, x1, y1 in liens)
 
 
 def _elements_vectoriels(page) -> list:
     """Rassemble lignes, courbes et rects fins (souvent utilisés pour des
     traits de lettres) en une seule liste de bbox. Suppose page.graphics a
     .lines/.curves/.rects, chacun avec un attribut .bbox -- comme dans le
-    modèle d'origine. À confirmer si ça a changé dans la réorganisation."""
+    modèle d'origine. À confirmer si ça a changé dans la réorganisation.
+
+    Les éléments STRUCTURELS (cadres de cellules, bordures de tableau, traits
+    longs) sont écartés : ils soudaient les cellules voisines entre elles
+    (cf. EPAISSEUR_MIN_BOITE) et faisaient rejeter des lignes entières de
+    texte vectorisé par le filtre de hauteur."""
+    rects = [r.bbox for r in getattr(page.graphics, "rects", []) if r.bbox]
+    boites = [b for b in rects if _rect_structurel(b)] if FILTRER_ELEMENTS_STRUCTURELS else []
+    liens = getattr(page, "link_rects", None) or []
     elements = []
     for l in getattr(page.graphics, "lines", []):
-        if l.bbox:
+        if l.bbox and not (FILTRER_ELEMENTS_STRUCTURELS and _trait_structurel(l.bbox, boites)):
             elements.append(l.bbox)
     for c in getattr(page.graphics, "curves", []):
         if c.bbox:
             elements.append(c.bbox)
-    for r in getattr(page.graphics, "rects", []):
-        if r.bbox and (r.bbox.y1 - r.bbox.y0) < HAUTEUR_MAX_LIGNE_TEXTE:
-            elements.append(r.bbox)
+    for r in rects:
+        if (r.y1 - r.y0) < HAUTEUR_MAX_LIGNE_TEXTE and not (FILTRER_ELEMENTS_STRUCTURELS and _rect_structurel(r)):
+            elements.append(r)
+    # Zones cliquables (liens) : exclues pour l'instant, elles seront traitées à part dans
+    # l'extraction. Même résultat qu'avant sur l'encadré « La notice de cet avis… ».
+    if liens:
+        elements = [e for e in elements if not _dans_un_lien(e, liens)]
     return elements
 
 
-def _grouper_par_proximite(elements, tolerance=3.0):
+def _grouper_par_proximite(elements, tolerance=TOLERANCE_GROUPE_X, tolerance_y=None):
     """Regroupe les éléments par recouvrement/proximité de bbox -- fusion
     TRANSITIVE (union-find), pas une passe gloutonne à arrêt au premier
     groupe trouvé.
@@ -65,6 +119,8 @@ def _grouper_par_proximite(elements, tolerance=3.0):
     pratique sur test-impots-revenu (phénomène 2 : mots fragmentés
     chevauchants type "Date ate d'établ lissement").
     """
+    if tolerance_y is None:
+        tolerance_y = TOLERANCE_GROUPE_Y
     n = len(elements)
     parent = list(range(n))
 
@@ -83,7 +139,7 @@ def _grouper_par_proximite(elements, tolerance=3.0):
 
     def proche(a, b):
         return not (a.x1 < b.x0 - tolerance or a.x0 > b.x1 + tolerance or
-                    a.y1 < b.y0 - tolerance or a.y0 > b.y1 + tolerance)
+                    a.y1 < b.y0 - tolerance_y or a.y0 > b.y1 + tolerance_y)
 
     # Comparaison par paire -- O(n²), largement suffisant vu la volumétrie
     # attendue (quelques centaines d'éléments vectoriels par page au plus).

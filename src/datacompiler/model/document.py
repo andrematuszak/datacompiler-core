@@ -3,7 +3,7 @@ depuis native/ocr/resolved), conteneurs de page, Page, Document."""
 
 import json
 from dataclasses import asdict, dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from datacompiler.model.geometry import BBox, Polygon
 from datacompiler.model.font import Font
@@ -161,6 +161,10 @@ class Page:
     ocr: OcrContainer = field(default_factory=OcrContainer)
     resolved: ResolvedContainer = field(default_factory=ResolvedContainer)
     layout_root: Optional[LayoutBox] = None
+    # Rectangles des liens (annotations /Link) de la page, (x0, y0, x1, y1). Provisoire : sert
+    # à exclure de la détection de texte vectorisé les zones cliquables, qui seront traitées
+    # à part dans l'extraction.
+    link_rects: List[Tuple[float, float, float, float]] = field(default_factory=list)
 
 
 @dataclass
