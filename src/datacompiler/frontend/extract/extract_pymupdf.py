@@ -237,6 +237,11 @@ def extraire_page_pymupdf(page_pymupdf, page_number, start_word_id):
         rotation=float(page_pymupdf.rotation),
     )
 
+    for lien in page_pymupdf.get_links():
+        r = lien.get("from")
+        if r is not None:
+            page_obj.link_rects.append((float(r.x0), float(r.y0), float(r.x1), float(r.y1)))
+
     page_dict = page_pymupdf.get_text("dict")
     words_pymupdf = page_pymupdf.get_text("words")
     font_map = {}
