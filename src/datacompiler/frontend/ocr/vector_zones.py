@@ -589,10 +589,9 @@ def _barre_oblique_entre_nombres(zone: BBox, mots_natifs) -> Word | None:
     ]
     if not gauche or not droite:
         return None
-    if max(gauche, key=lambda mot: mot.bbox.x1).text.strip() == min(
-        droite, key=lambda mot: mot.bbox.x0
-    ).text.strip():
-        return None
+    # Pas de garde « nombre de gauche != nombre de droite » : « Feuillet n° : 2 / 2 » (page 3 de
+    # l'avis d'impôt, dernier feuillet = nombre de feuillets) a deux nombres identiques de part
+    # et d'autre de la barre, qui était alors perdue.
 
     return Word(
         id=-1,
