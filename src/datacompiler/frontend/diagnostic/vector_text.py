@@ -37,7 +37,12 @@ RATIO_LARGEUR_HAUTEUR_MIN = 1.13  # une ligne de texte est nettement plus large 
 # (> HAUTEUR_MAX_LIGNE_TEXTE) rejeté en bloc, donc tout le texte vectorisé de ces deux lignes
 # n'arrivait jamais à l'OCR. Les glyphes, eux, sont des traits fins et courts.
 TOLERANCE_GROUPE_X = 3.0         # pt -- écart horizontal max entre traits d'un même groupe
-TOLERANCE_GROUPE_Y = 1.25        # pt -- écart vertical max (plus faible : sépare les lignes serrées)
+# pt -- écart vertical max (plus faible que l'horizontal : sépare les lignes serrées). Plateau
+# de stabilité mesuré sur l'avis d'impôt avec le texte du lien « La notice de cet avis… » pris en
+# compte : 0,85 à 1,0 donne les 12 zones du lien, 1 seule zone pour AVIS_IR_RG et 35 / 9 zones sur
+# les pages 2 / 3 ; 1,05 et plus fusionne « disponible » et « cliquant ici » (descendantes du p
+# contre montantes du l, q, t à 0,8 pt) ; 0,80 et moins coupe AVIS_IR_RG en 3 zones.
+TOLERANCE_GROUPE_Y = 0.92
 FILTRER_ELEMENTS_STRUCTURELS = True  # False = ancien comportement (utile pour un A/B de non-régression)
 EPAISSEUR_MIN_BOITE = 6.0        # pt -- un rect dont les 2 côtés dépassent ça est une boîte, pas un trait de lettre
 LONGUEUR_MIN_STRUCTURE = 60.0    # pt -- un trait/rect plus long que ça n'est pas un glyphe
@@ -69,12 +74,6 @@ def _trait_structurel(b, boites) -> bool:
     return False
 
 
-def _dans_un_lien(b, liens) -> bool:
-    """Centre de la bbox à l'intérieur d'un rectangle de lien (annotation /Link)."""
-    cx, cy = (b.x0 + b.x1) / 2, (b.y0 + b.y1) / 2
-    return any(x0 <= cx <= x1 and y0 <= cy <= y1 for x0, y0, x1, y1 in liens)
-
-
 def _elements_vectoriels(page) -> list:
     """Rassemble lignes, courbes et rects fins (souvent utilisés pour des
     traits de lettres) en une seule liste de bbox. Suppose page.graphics a
@@ -87,7 +86,6 @@ def _elements_vectoriels(page) -> list:
     texte vectorisé par le filtre de hauteur."""
     rects = [r.bbox for r in getattr(page.graphics, "rects", []) if r.bbox]
     boites = [b for b in rects if _rect_structurel(b)] if FILTRER_ELEMENTS_STRUCTURELS else []
-    liens = getattr(page, "link_rects", None) or []
     elements = []
     for l in getattr(page.graphics, "lines", []):
         if l.bbox and not (FILTRER_ELEMENTS_STRUCTURELS and _trait_structurel(l.bbox, boites)):
@@ -98,10 +96,6 @@ def _elements_vectoriels(page) -> list:
     for r in rects:
         if (r.y1 - r.y0) < HAUTEUR_MAX_LIGNE_TEXTE and not (FILTRER_ELEMENTS_STRUCTURELS and _rect_structurel(r)):
             elements.append(r)
-    # Zones cliquables (liens) : exclues pour l'instant, elles seront traitées à part dans
-    # l'extraction. Même résultat qu'avant sur l'encadré « La notice de cet avis… ».
-    if liens:
-        elements = [e for e in elements if not _dans_un_lien(e, liens)]
     return elements
 
 

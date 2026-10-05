@@ -142,6 +142,11 @@ from datacompiler.frontend.layout.detectors import detecter_boites_encadres
 
 SEUIL_CHEVAUCHEMENT_RANGEE = 0.3   # fraction de la + petite hauteur, pour dire "même rangée"
 DILATATION_CLUSTERING_VECTO = 8.0  # pt, marge de tolérance pour fusionner des mots vectorisés proches
+# Un lien (annotation /Link) dont la zone cliquable couvre plus de cette part de la page n'est pas
+# un petit encadré de texte (ex. lien sur toute la page, sur une table) : il n'est pas traité comme
+# un conteneur de lecture.
+PART_PAGE_MAX_CONTENEUR_LIEN = 0.15
+
 TOLERANCE_LIGNE = 3.5              # pt, écart de y0 toléré pour dire "même ligne" (bruit OCR)
 # Un partenaire dont le y0 est à moins de ECART_Y0_MEME_LIGNE de celui de l'ancre de sa rangée est
 # sur la MÊME LIGNE que l'ancre : c'est la valeur d'un « libellé ....... valeur », pas une annexe.
@@ -491,6 +496,26 @@ def _ordonner_sous_ensemble(mots):
     return resultat
 
 
+def _conteneurs_liens(page):
+    """Zones cliquables assez petites pour être lues comme UN bloc de texte (encadré-lien)."""
+    surface = max(1.0, page.width * page.height)
+    conteneurs = []
+    for lien in getattr(page, "links", []):
+        b = lien.bbox
+        if b is not None and (b.x1 - b.x0) * (b.y1 - b.y0) <= PART_PAGE_MAX_CONTENEUR_LIEN * surface:
+            conteneurs.append({"bbox": b, "type": "lien"})
+    return conteneurs
+
+
+def _ordonner_lignes_simple(mots, tolerance=TOLERANCE_LIGNE):
+    """Ordre de lecture d'un petit bloc de texte : lignes de haut en bas, mots de gauche à droite.
+    Pour un texte justifié, les grands écarts entre mots ne doivent PAS le couper en colonnes."""
+    resultat = []
+    for ligne in _grouper_lignes_par_tolerance(mots, tolerance):
+        resultat.extend(sorted(ligne, key=lambda w: w.bbox.x0))
+    return resultat
+
+
 def _repartir_par_encadre(mots, encadres):
     """Partitionne `mots` (déjà hors table) entre les encadrés détectés
     (centre du mot dans la bbox de l'encadré -- même convention que
@@ -618,6 +643,10 @@ def ordonner(page, simple_sort=False) -> list:
     #    ré-appariement de chevauchement.
     tous_mots = [deepcopy(w) for w in page.native.words if w.bbox]
     encadres = detecter_boites_encadres(page)
+    nb_encadres_detectes = len(encadres)
+    # Les liens passent APRÈS les encadrés détectés (un mot déjà pris par un encadré y reste) :
+    # le texte d'un encadré-lien est vectorisé, ses mots sont lus ligne par ligne comme un bloc.
+    encadres = encadres + _conteneurs_liens(page)
     mots_par_encadre, mots_restants = _repartir_par_encadre(tous_mots, encadres)
 
     # 2. Séparation, sur le RESTE seulement (hors encadré) : mots hors table
@@ -672,10 +701,14 @@ def ordonner(page, simple_sort=False) -> list:
                     boite.x0,
                     _grouper_par_ligne_tolerant(boite.mots),
                 ))
-    for mots_encadre in mots_par_encadre.values():
+    for idx_encadre, mots_encadre in mots_par_encadre.items():
         y0_repere = min(w.bbox.y0 for w in mots_encadre)
         x0_repere = min(w.bbox.x0 for w in mots_encadre)
-        items.append((y0_repere, x0_repere, _ordonner_sous_ensemble(mots_encadre)))
+        if idx_encadre >= nb_encadres_detectes:           # conteneur issu d'un lien
+            ordonnes = _ordonner_lignes_simple(mots_encadre)
+        else:
+            ordonnes = _ordonner_sous_ensemble(mots_encadre)
+        items.append((y0_repere, x0_repere, ordonnes))
 
     # 5. RÉINTÉGRATION : mots de table, ordonnés PAR TABLE via sa propre grille de
     #    cellules (cf. _ordonner_mots_table) plutôt qu'un tri plat unique

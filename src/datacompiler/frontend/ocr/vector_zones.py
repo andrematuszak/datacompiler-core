@@ -492,7 +492,22 @@ def _fusionner_zones_chevauchantes(zones):
     """Fusionne par composantes connexes les zones (déjà marginées) dont
     les bbox se chevauchent -- même principe que
     vector_text._grouper_par_proximite, appliqué aux zones plutôt qu'aux
-    éléments vectoriels bruts."""
+    éléments vectoriels bruts.
+
+    Répété jusqu'à stabilité : le rectangle ENGLOBANT d'une composante peut
+    recouvrir une zone qui n'en est pas membre (elle ne touche aucun membre,
+    mais tombe dans le rectangle). Sans cette répétition cette zone était lue
+    DEUX fois par l'OCR -- dans le grand rectangle puis seule -- et sortait en
+    double (page 1, encadré-lien : « en » entre « avis » et « sur »)."""
+    courantes = list(zones)
+    while True:
+        fusionnees = _fusionner_une_passe(courantes)
+        if len(fusionnees) == len(courantes):
+            return fusionnees
+        courantes = fusionnees
+
+
+def _fusionner_une_passe(zones):
     n = len(zones)
     parent = list(range(n))
 

@@ -128,6 +128,22 @@ class GraphicsContainer:
 
 
 @dataclass
+class LinkElement:
+    """Lien cliquable d'une page (annotation /Link du PDF source).
+
+    Le texte situé sous un lien est souvent vectorisé (tracés, pas de mots natifs) : il est lu
+    comme les autres zones vectorielles, puis rattaché au lien par `word_ids` (ids de
+    page.resolved.words, remplis par compile.links.associer_liens). `bbox` reste la zone
+    cliquable d'origine."""
+    id: int
+    bbox: Optional[BBox] = None
+    kind: str = "uri"                 # "uri" | "goto" | "autre"
+    uri: Optional[str] = None         # kind == "uri"
+    target_page: Optional[int] = None  # kind == "goto" : numéro de page cible, 1-based
+    word_ids: List[int] = field(default_factory=list)
+
+
+@dataclass
 class OcrBlock:
     bbox: Optional[BBox] = None
     type: str = "text"
@@ -161,10 +177,12 @@ class Page:
     ocr: OcrContainer = field(default_factory=OcrContainer)
     resolved: ResolvedContainer = field(default_factory=ResolvedContainer)
     layout_root: Optional[LayoutBox] = None
-    # Rectangles des liens (annotations /Link) de la page, (x0, y0, x1, y1). Provisoire : sert
-    # à exclure de la détection de texte vectorisé les zones cliquables, qui seront traitées
-    # à part dans l'extraction.
-    link_rects: List[Tuple[float, float, float, float]] = field(default_factory=list)
+    links: List[LinkElement] = field(default_factory=list)
+
+    @property
+    def link_rects(self) -> List[Tuple[float, float, float, float]]:
+        """Rectangles (x0, y0, x1, y1) des liens -- vue en lecture seule, non sérialisée."""
+        return [(l.bbox.x0, l.bbox.y0, l.bbox.x1, l.bbox.y1) for l in self.links if l.bbox]
 
 
 @dataclass
@@ -227,6 +245,12 @@ class Document:
             ]
             return TableElement(**{k: v for k, v in d.items() if k in TableElement.__dataclass_fields__})
 
+        def link(d):
+            d = dict(d)
+            d["bbox"] = BBox.from_dict(d.get("bbox"))
+            d["word_ids"] = list(d.get("word_ids", []))
+            return LinkElement(**{k: v for k, v in d.items() if k in LinkElement.__dataclass_fields__})
+
         def layout_box(d):
             if not d:
                 return None
@@ -269,6 +293,7 @@ class Document:
                 fonts=[font_obj(x) for x in resolved.get("fonts", []) if x]
             )
             page.layout_root = layout_box(raw.get("layout_root"))
+            page.links = [link(x) for x in raw.get("links", [])]
             pages.append(page)
 
         metadata = Metadata(**{k: v for k, v in data.get("metadata", {}).items() if k in Metadata.__dataclass_fields__})

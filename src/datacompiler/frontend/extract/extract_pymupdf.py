@@ -8,7 +8,7 @@ import re
 from typing import Dict, Tuple, Set, Any, List
 import pymupdf
 
-from datacompiler.model.document import BBox, Font, GraphicVector, Page, Word
+from datacompiler.model.document import BBox, Font, GraphicVector, LinkElement, Page, Word
 
 
 _MONTANT_EURO_CMAP = re.compile(r"(?<=\d[.,]\d{2}\s)[\ufffd\u00a4]$")
@@ -239,8 +239,20 @@ def extraire_page_pymupdf(page_pymupdf, page_number, start_word_id):
 
     for lien in page_pymupdf.get_links():
         r = lien.get("from")
-        if r is not None:
-            page_obj.link_rects.append((float(r.x0), float(r.y0), float(r.x1), float(r.y1)))
+        if r is None:
+            continue
+        genre = lien.get("kind")
+        if genre == pymupdf.LINK_URI and lien.get("uri"):
+            kind, uri, cible = "uri", lien["uri"], None
+        elif genre == pymupdf.LINK_GOTO and lien.get("page", -1) >= 0:
+            kind, uri, cible = "goto", None, int(lien["page"]) + 1
+        else:
+            kind, uri, cible = "autre", lien.get("uri"), None
+        page_obj.links.append(LinkElement(
+            id=len(page_obj.links) + 1,
+            bbox=BBox(float(r.x0), float(r.y0), float(r.x1), float(r.y1)),
+            kind=kind, uri=uri, target_page=cible,
+        ))
 
     page_dict = page_pymupdf.get_text("dict")
     words_pymupdf = page_pymupdf.get_text("words")
