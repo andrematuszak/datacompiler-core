@@ -17,6 +17,7 @@ import gc
 import logging
 import pymupdf
 
+from datacompiler.backend.liens_pdf import reinserer_liens
 from datacompiler.model.document import Document
 from datacompiler.compile.layout import grouper_par_ligne
 
@@ -309,6 +310,7 @@ def render_faithful_pdf(doc: Document, output_path: str,
                 del pix
                 # Insérer les mots en mode invisible
                 _inserer_tous_les_mots(target, model_page.resolved.words, render_mode=3)
+                reinserer_liens(target, model_page)
                 report["mots_inseres"] += len([w for w in model_page.resolved.words if w.resolved_text.strip()])
 
             output.set_metadata({"producer": "DataCleaner faithful_pdf (rasterized)",
@@ -332,6 +334,7 @@ def render_faithful_pdf(doc: Document, output_path: str,
                 # Insérer le texte résolu en mode visible (render_mode=0)
                 _inserer_tous_les_mots(new_page, model_page.resolved.words,
                                        render_mode=0, font_mapping=font_mapping)
+                reinserer_liens(new_page, model_page)
                 report["mots_inseres"] += len([w for w in model_page.resolved.words if w.resolved_text.strip()])
 
             output.set_metadata({"producer": "DataCleaner faithful_pdf (clean_overlay)",

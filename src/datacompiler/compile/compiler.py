@@ -58,7 +58,7 @@ import logging
 from datacompiler.model.document import Document
 
 
-from . import alignment, conflict_resolution, layout, qa, reading_order, typography
+from . import alignment, conflict_resolution, layout, links, qa, reading_order, typography
 
 logger = logging.getLogger(__name__)
 
@@ -152,4 +152,5 @@ def resoudre(doc: Document) -> Document:
         page.resolved.words = _resoudre_page(page)
         page.resolved.images = deepcopy(page.graphics.images)
         page.resolved.tables = deepcopy(page.graphics.tables)
+        links.associer_liens(page)
     return doc

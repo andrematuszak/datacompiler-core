@@ -17,6 +17,7 @@ from functools import lru_cache
 from pathlib import Path
 import pymupdf
 
+from datacompiler.backend.liens_pdf import reinserer_liens
 from datacompiler.model.document import Document
 from datacompiler.utils.font_metrics import ratio_encre_em
 
@@ -529,6 +530,8 @@ def render_rebuilt_pdf(doc: Document, output_path: str, source_pdf: str = None,
                     dst_page, color=couleur_rgb, render_mode=render_mode,
                     opacity=1.0, morph=morph
                 )
+
+            report["liens_inseres"] = reinserer_liens(dst_page, model_page)
 
             logger.info("page %s : %s", model_page.number, report)
 
