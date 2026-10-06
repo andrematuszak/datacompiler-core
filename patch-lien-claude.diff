@@ -1,0 +1,577 @@
+diff --git a/src/datacompiler/backend/faithful_pdf.py b/src/datacompiler/backend/faithful_pdf.py
+index ff6c086..cae3dbc 100644
+--- a/src/datacompiler/backend/faithful_pdf.py
++++ b/src/datacompiler/backend/faithful_pdf.py
+@@ -17,6 +17,7 @@ import gc
+ import logging
+ import pymupdf
+ 
++from datacompiler.backend.liens_pdf import reinserer_liens
+ from datacompiler.model.document import Document
+ from datacompiler.compile.layout import grouper_par_ligne
+ 
+@@ -309,6 +310,7 @@ def render_faithful_pdf(doc: Document, output_path: str,
+                 del pix
+                 # Insérer les mots en mode invisible
+                 _inserer_tous_les_mots(target, model_page.resolved.words, render_mode=3)
++                reinserer_liens(target, model_page)
+                 report["mots_inseres"] += len([w for w in model_page.resolved.words if w.resolved_text.strip()])
+ 
+             output.set_metadata({"producer": "DataCleaner faithful_pdf (rasterized)",
+@@ -332,6 +334,7 @@ def render_faithful_pdf(doc: Document, output_path: str,
+                 # Insérer le texte résolu en mode visible (render_mode=0)
+                 _inserer_tous_les_mots(new_page, model_page.resolved.words,
+                                        render_mode=0, font_mapping=font_mapping)
++                reinserer_liens(new_page, model_page)
+                 report["mots_inseres"] += len([w for w in model_page.resolved.words if w.resolved_text.strip()])
+ 
+             output.set_metadata({"producer": "DataCleaner faithful_pdf (clean_overlay)",
+diff --git a/src/datacompiler/backend/liens_pdf.py b/src/datacompiler/backend/liens_pdf.py
+new file mode 100644
+index 0000000..f91555d
+--- /dev/null
++++ b/src/datacompiler/backend/liens_pdf.py
+@@ -0,0 +1,29 @@
++"""liens_pdf.py -- remet les liens cliquables du modèle dans une page PDF de sortie.
++
++Partagé par rebuilt_pdf et faithful_pdf. La zone cliquable est celle du PDF source (link.bbox) :
++elle ne bouge pas avec le texte reconstruit. Les liens d'un autre genre que « uri » et « goto »
++(lancement de fichier, nom nommé...) ne sont pas recréés.
++"""
++import logging
++
++import pymupdf
++
++logger = logging.getLogger(__name__)
++
++
++def reinserer_liens(dst_page, model_page) -> int:
++    """Recrée les annotations /Link de model_page.links sur dst_page. Retourne le nombre inséré."""
++    inseres = 0
++    for lien in getattr(model_page, "links", []):
++        if lien.bbox is None:
++            continue
++        rect = pymupdf.Rect(lien.bbox.x0, lien.bbox.y0, lien.bbox.x1, lien.bbox.y1)
++        if lien.kind == "uri" and lien.uri:
++            dst_page.insert_link({"kind": pymupdf.LINK_URI, "from": rect, "uri": lien.uri})
++        elif lien.kind == "goto" and lien.target_page:
++            dst_page.insert_link({"kind": pymupdf.LINK_GOTO, "from": rect, "page": lien.target_page - 1})
++        else:
++            logger.warning("page %s : lien %s (%s) non recréé", model_page.number, lien.id, lien.kind)
++            continue
++        inseres += 1
++    return inseres
+diff --git a/src/datacompiler/backend/rebuilt_pdf.py b/src/datacompiler/backend/rebuilt_pdf.py
+index d00a763..dbe1ce2 100644
+--- a/src/datacompiler/backend/rebuilt_pdf.py
++++ b/src/datacompiler/backend/rebuilt_pdf.py
+@@ -17,6 +17,7 @@ from functools import lru_cache
+ from pathlib import Path
+ import pymupdf
+ 
++from datacompiler.backend.liens_pdf import reinserer_liens
+ from datacompiler.model.document import Document
+ from datacompiler.utils.font_metrics import ratio_encre_em
+ 
+@@ -530,6 +531,8 @@ def render_rebuilt_pdf(doc: Document, output_path: str, source_pdf: str = None,
+                     opacity=1.0, morph=morph
+                 )
+ 
++            report["liens_inseres"] = reinserer_liens(dst_page, model_page)
++
+             logger.info("page %s : %s", model_page.number, report)
+ 
+         Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+diff --git a/src/datacompiler/compile/compiler.py b/src/datacompiler/compile/compiler.py
+index 8eba950..e272e8c 100644
+--- a/src/datacompiler/compile/compiler.py
++++ b/src/datacompiler/compile/compiler.py
+@@ -58,7 +58,7 @@ import logging
+ from datacompiler.model.document import Document
+ 
+ 
+-from . import alignment, conflict_resolution, layout, qa, reading_order, typography
++from . import alignment, conflict_resolution, layout, links, qa, reading_order, typography
+ 
+ logger = logging.getLogger(__name__)
+ 
+@@ -152,4 +152,5 @@ def resoudre(doc: Document) -> Document:
+         page.resolved.words = _resoudre_page(page)
+         page.resolved.images = deepcopy(page.graphics.images)
+         page.resolved.tables = deepcopy(page.graphics.tables)
++        links.associer_liens(page)
+     return doc
+\ No newline at end of file
+diff --git a/src/datacompiler/compile/links.py b/src/datacompiler/compile/links.py
+new file mode 100644
+index 0000000..cacbb17
+--- /dev/null
++++ b/src/datacompiler/compile/links.py
+@@ -0,0 +1,25 @@
++"""links.py -- rattache les mots résolus d'une page à ses liens cliquables.
++
++Le texte sous un lien est souvent vectorisé (« La notice de cet avis est disponible en cliquant
++ici… » sur l'avis d'impôt) : il est lu par OCR comme les autres zones vectorielles, puis
++associé ici au LinkElement correspondant, par position. La zone cliquable d'origine (link.bbox)
++n'est PAS modifiée : le rendu PDF remet l'annotation exactement où elle était.
++
++Un mot appartient à un lien si son CENTRE tombe dans link.bbox. link.word_ids est dans l'ordre
++de lecture (ordre de page.resolved.words) et sert, côté traduction, à garder le lien attaché au
++segment qui contient ces mots.
++"""
++
++
++def associer_liens(page) -> None:
++    for lien in page.links:
++        lien.word_ids = []
++        if lien.bbox is None:
++            continue
++        for mot in page.resolved.words:
++            if mot.bbox is None:
++                continue
++            cx = (mot.bbox.x0 + mot.bbox.x1) / 2
++            cy = (mot.bbox.y0 + mot.bbox.y1) / 2
++            if lien.bbox.x0 <= cx <= lien.bbox.x1 and lien.bbox.y0 <= cy <= lien.bbox.y1:
++                lien.word_ids.append(mot.id)
+diff --git a/src/datacompiler/compile/reading_order.py b/src/datacompiler/compile/reading_order.py
+index bb7bd7f..913caec 100644
+--- a/src/datacompiler/compile/reading_order.py
++++ b/src/datacompiler/compile/reading_order.py
+@@ -142,6 +142,11 @@ from datacompiler.frontend.layout.detectors import detecter_boites_encadres
+ 
+ SEUIL_CHEVAUCHEMENT_RANGEE = 0.3   # fraction de la + petite hauteur, pour dire "même rangée"
+ DILATATION_CLUSTERING_VECTO = 8.0  # pt, marge de tolérance pour fusionner des mots vectorisés proches
++# Un lien (annotation /Link) dont la zone cliquable couvre plus de cette part de la page n'est pas
++# un petit encadré de texte (ex. lien sur toute la page, sur une table) : il n'est pas traité comme
++# un conteneur de lecture.
++PART_PAGE_MAX_CONTENEUR_LIEN = 0.15
++
+ TOLERANCE_LIGNE = 3.5              # pt, écart de y0 toléré pour dire "même ligne" (bruit OCR)
+ # Un partenaire dont le y0 est à moins de ECART_Y0_MEME_LIGNE de celui de l'ancre de sa rangée est
+ # sur la MÊME LIGNE que l'ancre : c'est la valeur d'un « libellé ....... valeur », pas une annexe.
+@@ -491,6 +496,26 @@ def _ordonner_sous_ensemble(mots):
+     return resultat
+ 
+ 
++def _conteneurs_liens(page):
++    """Zones cliquables assez petites pour être lues comme UN bloc de texte (encadré-lien)."""
++    surface = max(1.0, page.width * page.height)
++    conteneurs = []
++    for lien in getattr(page, "links", []):
++        b = lien.bbox
++        if b is not None and (b.x1 - b.x0) * (b.y1 - b.y0) <= PART_PAGE_MAX_CONTENEUR_LIEN * surface:
++            conteneurs.append({"bbox": b, "type": "lien"})
++    return conteneurs
++
++
++def _ordonner_lignes_simple(mots, tolerance=TOLERANCE_LIGNE):
++    """Ordre de lecture d'un petit bloc de texte : lignes de haut en bas, mots de gauche à droite.
++    Pour un texte justifié, les grands écarts entre mots ne doivent PAS le couper en colonnes."""
++    resultat = []
++    for ligne in _grouper_lignes_par_tolerance(mots, tolerance):
++        resultat.extend(sorted(ligne, key=lambda w: w.bbox.x0))
++    return resultat
++
++
+ def _repartir_par_encadre(mots, encadres):
+     """Partitionne `mots` (déjà hors table) entre les encadrés détectés
+     (centre du mot dans la bbox de l'encadré -- même convention que
+@@ -618,6 +643,10 @@ def ordonner(page, simple_sort=False) -> list:
+     #    ré-appariement de chevauchement.
+     tous_mots = [deepcopy(w) for w in page.native.words if w.bbox]
+     encadres = detecter_boites_encadres(page)
++    nb_encadres_detectes = len(encadres)
++    # Les liens passent APRÈS les encadrés détectés (un mot déjà pris par un encadré y reste) :
++    # le texte d'un encadré-lien est vectorisé, ses mots sont lus ligne par ligne comme un bloc.
++    encadres = encadres + _conteneurs_liens(page)
+     mots_par_encadre, mots_restants = _repartir_par_encadre(tous_mots, encadres)
+ 
+     # 2. Séparation, sur le RESTE seulement (hors encadré) : mots hors table
+@@ -672,10 +701,14 @@ def ordonner(page, simple_sort=False) -> list:
+                     boite.x0,
+                     _grouper_par_ligne_tolerant(boite.mots),
+                 ))
+-    for mots_encadre in mots_par_encadre.values():
++    for idx_encadre, mots_encadre in mots_par_encadre.items():
+         y0_repere = min(w.bbox.y0 for w in mots_encadre)
+         x0_repere = min(w.bbox.x0 for w in mots_encadre)
+-        items.append((y0_repere, x0_repere, _ordonner_sous_ensemble(mots_encadre)))
++        if idx_encadre >= nb_encadres_detectes:           # conteneur issu d'un lien
++            ordonnes = _ordonner_lignes_simple(mots_encadre)
++        else:
++            ordonnes = _ordonner_sous_ensemble(mots_encadre)
++        items.append((y0_repere, x0_repere, ordonnes))
+ 
+     # 5. RÉINTÉGRATION : mots de table, ordonnés PAR TABLE via sa propre grille de
+     #    cellules (cf. _ordonner_mots_table) plutôt qu'un tri plat unique
+diff --git a/src/datacompiler/frontend/diagnostic/vector_text.py b/src/datacompiler/frontend/diagnostic/vector_text.py
+index a2dd472..ed3d7ea 100644
+--- a/src/datacompiler/frontend/diagnostic/vector_text.py
++++ b/src/datacompiler/frontend/diagnostic/vector_text.py
+@@ -37,7 +37,12 @@ RATIO_LARGEUR_HAUTEUR_MIN = 1.13  # une ligne de texte est nettement plus large
+ # (> HAUTEUR_MAX_LIGNE_TEXTE) rejeté en bloc, donc tout le texte vectorisé de ces deux lignes
+ # n'arrivait jamais à l'OCR. Les glyphes, eux, sont des traits fins et courts.
+ TOLERANCE_GROUPE_X = 3.0         # pt -- écart horizontal max entre traits d'un même groupe
+-TOLERANCE_GROUPE_Y = 1.25        # pt -- écart vertical max (plus faible : sépare les lignes serrées)
++# pt -- écart vertical max (plus faible que l'horizontal : sépare les lignes serrées). Plateau
++# de stabilité mesuré sur l'avis d'impôt avec le texte du lien « La notice de cet avis… » pris en
++# compte : 0,85 à 1,0 donne les 12 zones du lien, 1 seule zone pour AVIS_IR_RG et 35 / 9 zones sur
++# les pages 2 / 3 ; 1,05 et plus fusionne « disponible » et « cliquant ici » (descendantes du p
++# contre montantes du l, q, t à 0,8 pt) ; 0,80 et moins coupe AVIS_IR_RG en 3 zones.
++TOLERANCE_GROUPE_Y = 0.92
+ FILTRER_ELEMENTS_STRUCTURELS = True  # False = ancien comportement (utile pour un A/B de non-régression)
+ EPAISSEUR_MIN_BOITE = 6.0        # pt -- un rect dont les 2 côtés dépassent ça est une boîte, pas un trait de lettre
+ LONGUEUR_MIN_STRUCTURE = 60.0    # pt -- un trait/rect plus long que ça n'est pas un glyphe
+@@ -69,12 +74,6 @@ def _trait_structurel(b, boites) -> bool:
+     return False
+ 
+ 
+-def _dans_un_lien(b, liens) -> bool:
+-    """Centre de la bbox à l'intérieur d'un rectangle de lien (annotation /Link)."""
+-    cx, cy = (b.x0 + b.x1) / 2, (b.y0 + b.y1) / 2
+-    return any(x0 <= cx <= x1 and y0 <= cy <= y1 for x0, y0, x1, y1 in liens)
+-
+-
+ def _elements_vectoriels(page) -> list:
+     """Rassemble lignes, courbes et rects fins (souvent utilisés pour des
+     traits de lettres) en une seule liste de bbox. Suppose page.graphics a
+@@ -87,7 +86,6 @@ def _elements_vectoriels(page) -> list:
+     texte vectorisé par le filtre de hauteur."""
+     rects = [r.bbox for r in getattr(page.graphics, "rects", []) if r.bbox]
+     boites = [b for b in rects if _rect_structurel(b)] if FILTRER_ELEMENTS_STRUCTURELS else []
+-    liens = getattr(page, "link_rects", None) or []
+     elements = []
+     for l in getattr(page.graphics, "lines", []):
+         if l.bbox and not (FILTRER_ELEMENTS_STRUCTURELS and _trait_structurel(l.bbox, boites)):
+@@ -98,10 +96,6 @@ def _elements_vectoriels(page) -> list:
+     for r in rects:
+         if (r.y1 - r.y0) < HAUTEUR_MAX_LIGNE_TEXTE and not (FILTRER_ELEMENTS_STRUCTURELS and _rect_structurel(r)):
+             elements.append(r)
+-    # Zones cliquables (liens) : exclues pour l'instant, elles seront traitées à part dans
+-    # l'extraction. Même résultat qu'avant sur l'encadré « La notice de cet avis… ».
+-    if liens:
+-        elements = [e for e in elements if not _dans_un_lien(e, liens)]
+     return elements
+ 
+ 
+diff --git a/src/datacompiler/frontend/extract/extract_pymupdf.py b/src/datacompiler/frontend/extract/extract_pymupdf.py
+index 0c29469..951e8fb 100644
+--- a/src/datacompiler/frontend/extract/extract_pymupdf.py
++++ b/src/datacompiler/frontend/extract/extract_pymupdf.py
+@@ -8,7 +8,7 @@ import re
+ from typing import Dict, Tuple, Set, Any, List
+ import pymupdf
+ 
+-from datacompiler.model.document import BBox, Font, GraphicVector, Page, Word
++from datacompiler.model.document import BBox, Font, GraphicVector, LinkElement, Page, Word
+ 
+ 
+ _MONTANT_EURO_CMAP = re.compile(r"(?<=\d[.,]\d{2}\s)[\ufffd\u00a4]$")
+@@ -239,8 +239,20 @@ def extraire_page_pymupdf(page_pymupdf, page_number, start_word_id):
+ 
+     for lien in page_pymupdf.get_links():
+         r = lien.get("from")
+-        if r is not None:
+-            page_obj.link_rects.append((float(r.x0), float(r.y0), float(r.x1), float(r.y1)))
++        if r is None:
++            continue
++        genre = lien.get("kind")
++        if genre == pymupdf.LINK_URI and lien.get("uri"):
++            kind, uri, cible = "uri", lien["uri"], None
++        elif genre == pymupdf.LINK_GOTO and lien.get("page", -1) >= 0:
++            kind, uri, cible = "goto", None, int(lien["page"]) + 1
++        else:
++            kind, uri, cible = "autre", lien.get("uri"), None
++        page_obj.links.append(LinkElement(
++            id=len(page_obj.links) + 1,
++            bbox=BBox(float(r.x0), float(r.y0), float(r.x1), float(r.y1)),
++            kind=kind, uri=uri, target_page=cible,
++        ))
+ 
+     page_dict = page_pymupdf.get_text("dict")
+     words_pymupdf = page_pymupdf.get_text("words")
+diff --git a/src/datacompiler/frontend/ocr/vector_zones.py b/src/datacompiler/frontend/ocr/vector_zones.py
+index cba7f56..207d26b 100644
+--- a/src/datacompiler/frontend/ocr/vector_zones.py
++++ b/src/datacompiler/frontend/ocr/vector_zones.py
+@@ -492,7 +492,22 @@ def _fusionner_zones_chevauchantes(zones):
+     """Fusionne par composantes connexes les zones (déjà marginées) dont
+     les bbox se chevauchent -- même principe que
+     vector_text._grouper_par_proximite, appliqué aux zones plutôt qu'aux
+-    éléments vectoriels bruts."""
++    éléments vectoriels bruts.
++
++    Répété jusqu'à stabilité : le rectangle ENGLOBANT d'une composante peut
++    recouvrir une zone qui n'en est pas membre (elle ne touche aucun membre,
++    mais tombe dans le rectangle). Sans cette répétition cette zone était lue
++    DEUX fois par l'OCR -- dans le grand rectangle puis seule -- et sortait en
++    double (page 1, encadré-lien : « en » entre « avis » et « sur »)."""
++    courantes = list(zones)
++    while True:
++        fusionnees = _fusionner_une_passe(courantes)
++        if len(fusionnees) == len(courantes):
++            return fusionnees
++        courantes = fusionnees
++
++
++def _fusionner_une_passe(zones):
+     n = len(zones)
+     parent = list(range(n))
+ 
+diff --git a/src/datacompiler/model/document.py b/src/datacompiler/model/document.py
+index 778c9f2..105ccb0 100644
+--- a/src/datacompiler/model/document.py
++++ b/src/datacompiler/model/document.py
+@@ -127,6 +127,22 @@ class GraphicsContainer:
+     curves: List[GraphicVector] = field(default_factory=list)
+ 
+ 
++@dataclass
++class LinkElement:
++    """Lien cliquable d'une page (annotation /Link du PDF source).
++
++    Le texte situé sous un lien est souvent vectorisé (tracés, pas de mots natifs) : il est lu
++    comme les autres zones vectorielles, puis rattaché au lien par `word_ids` (ids de
++    page.resolved.words, remplis par compile.links.associer_liens). `bbox` reste la zone
++    cliquable d'origine."""
++    id: int
++    bbox: Optional[BBox] = None
++    kind: str = "uri"                 # "uri" | "goto" | "autre"
++    uri: Optional[str] = None         # kind == "uri"
++    target_page: Optional[int] = None  # kind == "goto" : numéro de page cible, 1-based
++    word_ids: List[int] = field(default_factory=list)
++
++
+ @dataclass
+ class OcrBlock:
+     bbox: Optional[BBox] = None
+@@ -161,10 +177,12 @@ class Page:
+     ocr: OcrContainer = field(default_factory=OcrContainer)
+     resolved: ResolvedContainer = field(default_factory=ResolvedContainer)
+     layout_root: Optional[LayoutBox] = None
+-    # Rectangles des liens (annotations /Link) de la page, (x0, y0, x1, y1). Provisoire : sert
+-    # à exclure de la détection de texte vectorisé les zones cliquables, qui seront traitées
+-    # à part dans l'extraction.
+-    link_rects: List[Tuple[float, float, float, float]] = field(default_factory=list)
++    links: List[LinkElement] = field(default_factory=list)
++
++    @property
++    def link_rects(self) -> List[Tuple[float, float, float, float]]:
++        """Rectangles (x0, y0, x1, y1) des liens -- vue en lecture seule, non sérialisée."""
++        return [(l.bbox.x0, l.bbox.y0, l.bbox.x1, l.bbox.y1) for l in self.links if l.bbox]
+ 
+ 
+ @dataclass
+@@ -227,6 +245,12 @@ class Document:
+             ]
+             return TableElement(**{k: v for k, v in d.items() if k in TableElement.__dataclass_fields__})
+ 
++        def link(d):
++            d = dict(d)
++            d["bbox"] = BBox.from_dict(d.get("bbox"))
++            d["word_ids"] = list(d.get("word_ids", []))
++            return LinkElement(**{k: v for k, v in d.items() if k in LinkElement.__dataclass_fields__})
++
+         def layout_box(d):
+             if not d:
+                 return None
+@@ -269,6 +293,7 @@ class Document:
+                 fonts=[font_obj(x) for x in resolved.get("fonts", []) if x]
+             )
+             page.layout_root = layout_box(raw.get("layout_root"))
++            page.links = [link(x) for x in raw.get("links", [])]
+             pages.append(page)
+ 
+         metadata = Metadata(**{k: v for k, v in data.get("metadata", {}).items() if k in Metadata.__dataclass_fields__})
+diff --git a/tests/test_liens.py b/tests/test_liens.py
+new file mode 100644
+index 0000000..1574813
+--- /dev/null
++++ b/tests/test_liens.py
+@@ -0,0 +1,138 @@
++"""Liens cliquables : extraction, association aux mots OCR, annotation dans le PDF reconstruit.
++
++Page 1 de l'avis d'impôt : l'encadré « La notice de cet avis est disponible en cliquant ici ou
++sur impots.gouv.fr » est un lien (annotation /Link) dont le texte est vectorisé.
++"""
++from pathlib import Path
++
++import pymupdf
++import pytest
++
++from datacompiler.backend.rebuilt_pdf import render_rebuilt_pdf
++from datacompiler.compile import resoudre
++from datacompiler.compile.links import associer_liens
++from datacompiler.frontend.diagnostic.vector_text import zones_texte_vectorise_probable
++from datacompiler.frontend.extract import extraire
++from datacompiler.frontend.ocr.vector_zones import recuperer_texte_vectorise
++from datacompiler.model.document import Document, LinkElement, Word
++from datacompiler.model.geometry import BBox
++
++PDF1 = Path(__file__).parent / "fixtures" / "impots-revenu" / "impots-revenu-page-1.pdf"
++MOTS_DU_LIEN = ["La", "notice", "de", "cet", "avis", "est", "disponible", "en", "cliquant ici",
++                "ou", "sur", "impots.gouv.fr"]
++POSITIONS = [(462, 58), (480, 58), (512, 58), (530, 58), (462, 68), (483, 68), (499, 68),
++             (462, 80), (478, 78), (532, 80), (461, 90), (478, 88)]
++
++
++class _OcrSubstitution:
++    """Un mot par zone : le vrai texte pour les 12 mots du lien, « Mot » ailleurs."""
++    name = "substitution"
++
++    def __init__(self, zones):
++        self.zones = zones
++
++    def ocraliser_zone(self, image, offset=(0.0, 0.0), dpi=300, lang=None, **kw):
++        w, h = image.size[0] * 72 / dpi, image.size[1] * 72 / dpi
++        x0, y0, x1, y1 = offset[0], offset[1], offset[0] + w, offset[1] + h
++        mots = []
++        for a, b, c, d in self.zones:
++            if x0 - 0.1 <= (a + c) / 2 <= x1 + 0.1 and y0 - 0.1 <= (b + d) / 2 <= y1 + 0.1:
++                texte = "Mot"
++                for (px, py), t in zip(POSITIONS, MOTS_DU_LIEN):
++                    if abs(px - a) < 2 and abs(py - b) < 2:
++                        texte = t
++                mots.append(Word(id=-1, text=texte, resolved_text=texte,
++                                 bbox=BBox(a - 1, b - 1.3, c + 1, d + 1.3),
++                                 source="ocr_vectoriel_paddle", is_vectorized=True,
++                                 reconstructed=True, confidence=0.99))
++        return mots
++
++
++@pytest.fixture(scope="module")
++def doc_page1():
++    doc = extraire(Document(), str(PDF1))
++    zones = zones_texte_vectorise_probable(doc.pages[0])
++    recuperer_texte_vectorise(doc, str(PDF1), {"o": _OcrSubstitution(zones)})
++    resoudre(doc)
++    doc.metadata.source_pdf = str(PDF1)
++    return doc
++
++
++def test_extraction_du_lien():
++    page = extraire(Document(), str(PDF1)).pages[0]
++    assert len(page.links) == 1
++    lien = page.links[0]
++    assert lien.kind == "uri"
++    assert lien.uri.startswith("https://www.impots.gouv.fr/portail/files/formulaires/")
++    assert (lien.bbox.x0, lien.bbox.y0) == pytest.approx((457.5, 56.0), abs=0.2)
++
++
++def test_json_conserve_les_liens(doc_page1, tmp_path):
++    chemin = tmp_path / "doc.json"
++    doc_page1.save(str(chemin))
++    relu = Document.load(str(chemin))
++    a, b = doc_page1.pages[0].links[0], relu.pages[0].links[0]
++    assert (b.uri, b.kind, b.word_ids) == (a.uri, a.kind, a.word_ids)
++    assert b.bbox.x0 == pytest.approx(a.bbox.x0)
++
++
++def test_les_12_mots_sont_associes_au_lien_dans_l_ordre_de_lecture(doc_page1):
++    page = doc_page1.pages[0]
++    par_id = {w.id: w for w in page.resolved.words}
++    texte = [par_id[i].text for i in page.links[0].word_ids]
++    assert sorted(texte) == sorted(MOTS_DU_LIEN)
++    rang = {w.id: i for i, w in enumerate(page.resolved.words)}
++    assert page.links[0].word_ids == sorted(page.links[0].word_ids, key=rang.get)
++
++
++def test_aucun_mot_hors_du_lien_n_est_associe(doc_page1):
++    page = doc_page1.pages[0]
++    lien = page.links[0]
++    par_id = {w.id: w for w in page.resolved.words}
++    for i in lien.word_ids:
++        b = par_id[i].bbox
++        assert lien.bbox.x0 <= (b.x0 + b.x1) / 2 <= lien.bbox.x1
++        assert lien.bbox.y0 <= (b.y0 + b.y1) / 2 <= lien.bbox.y1
++
++
++def test_associer_liens_sans_lien_ne_fait_rien():
++    from datacompiler.model.document import Page
++    page = Page(number=1, width=100, height=100)
++    associer_liens(page)
++    assert page.links == []
++
++
++def test_le_pdf_reconstruit_garde_le_lien_cliquable(doc_page1, tmp_path):
++    sortie = tmp_path / "rebuilt.pdf"
++    render_rebuilt_pdf(doc_page1, str(sortie), source_pdf=str(PDF1))
++    liens = pymupdf.open(str(sortie))[0].get_links()
++    assert len(liens) == 1
++    assert liens[0]["uri"] == doc_page1.pages[0].links[0].uri
++    attendu = doc_page1.pages[0].links[0].bbox
++    assert liens[0]["from"].x0 == pytest.approx(attendu.x0, abs=0.5)
++    assert liens[0]["from"].y1 == pytest.approx(attendu.y1, abs=0.5)
++
++
++def test_texte_du_lien_lu_ligne_par_ligne(doc_page1):
++    """Texte justifié sur 4 lignes serrées : l'ordre de lecture est celui de la phrase, pas
++    un balayage par colonnes (« La notice avis est en sur de cet… » avant correctif)."""
++    page = doc_page1.pages[0]
++    par_id = {w.id: w for w in page.resolved.words}
++    phrase = " ".join(par_id[i].text for i in page.links[0].word_ids)
++    assert phrase == "La notice de cet avis est disponible en cliquant ici ou sur impots.gouv.fr"
++
++
++def test_chaque_mot_du_lien_est_lu_une_seule_fois(doc_page1):
++    """Le rectangle englobant d'un groupe de zones peut recouvrir une zone non membre : sans
++    fusion jusqu'à stabilité, elle était lue deux fois (« en » en double)."""
++    page = doc_page1.pages[0]
++    par_id = {w.id: w for w in page.resolved.words}
++    texte = [par_id[i].text for i in page.links[0].word_ids]
++    assert len(texte) == len(set(texte)) == 12
++
++
++def test_le_bloc_du_lien_reste_contigu_dans_la_page(doc_page1):
++    page = doc_page1.pages[0]
++    ids = page.links[0].word_ids
++    positions = [i for i, w in enumerate(page.resolved.words) if w.id in set(ids)]
++    assert positions == list(range(positions[0], positions[0] + len(ids)))
+diff --git a/tests/test_vector_text_structure.py b/tests/test_vector_text_structure.py
+index 019feb5..c49de98 100644
+--- a/tests/test_vector_text_structure.py
++++ b/tests/test_vector_text_structure.py
+@@ -56,13 +56,15 @@ def page1():
+     return page
+ 
+ 
+-def test_zones_du_lien_notice_exclues(page1):
+-    """L'encadré « La notice de cet avis… » est un lien : il sera traité à part dans l'extraction,
+-    donc aucune zone de texte vectorisé ne doit y être produite pour l'instant."""
+-    assert page1.link_rects, "le lien de la page 1 doit être relevé à l'extraction"
++def test_texte_du_lien_notice_detecte_mot_par_mot(page1):
++    """L'encadré « La notice de cet avis… » est un lien dont le texte est vectorisé : ses 12 mots
++    ont chacun leur zone (4 lignes serrées ; « disponible » et « cliquant ici » ne fusionnent pas)."""
++    assert page1.links, "le lien de la page 1 doit être relevé à l'extraction"
+     x0, y0, x1, y1 = page1.link_rects[0]
+-    zones = zones_texte_vectorise_probable(page1)
+-    assert [z for z in zones if x0 <= (z[0] + z[2]) / 2 <= x1 and y0 <= (z[1] + z[3]) / 2 <= y1] == []
++    zones = [z for z in zones_texte_vectorise_probable(page1)
++             if x0 <= (z[0] + z[2]) / 2 <= x1 and y0 <= (z[1] + z[3]) / 2 <= y1]
++    assert len(zones) == 12
++    assert max(z[3] - z[1] for z in zones) < 12      # aucune zone ne soude deux lignes (≈ 19 pt)
+ 
+ 
+ def test_avis_ir_rg_reste_une_seule_zone(page1):
+diff --git a/tests/test_vector_zones_barre.py b/tests/test_vector_zones_barre.py
+index 29a6b10..4828bf9 100644
+--- a/tests/test_vector_zones_barre.py
++++ b/tests/test_vector_zones_barre.py
+@@ -91,3 +91,17 @@ def test_calibrage_ne_remonte_pas_la_seconde_ligne_des_cellules(tmp_path):
+     assert min(h.bbox.y0 for h in handicapes) - max(p.bbox.y0 for p in premieres) >= 4.0
+     # et garde son x : pas décalé vers la gauche comme avant (x0 = 33,3 au lieu de ~47)
+     assert min(h.bbox.x0 for h in handicapes) > 45.0
++
++
++def test_fusion_de_zones_jusqu_a_stabilite():
++    """Une zone recouverte par le rectangle ENGLOBANT d'une composante (sans toucher aucun de
++    ses membres) doit être absorbée, sinon l'OCR la lit deux fois."""
++    from datacompiler.frontend.ocr.vector_zones import _fusionner_zones_chevauchantes
++    haut_gauche = BBox(0, 0, 10, 10)
++    haut_droit = BBox(9, 0, 30, 10)      # touche haut_gauche
++    bas_droit = BBox(25, 9, 40, 40)      # touche haut_droit : l'englobant va jusqu'à y=40
++    isole = BBox(1, 20, 8, 30)           # ne touche personne mais tombe dans l'englobant
++    resultat = _fusionner_zones_chevauchantes([haut_gauche, haut_droit, bas_droit, isole])
++    assert len(resultat) == 1
++    b = resultat[0]
++    assert (b.x0, b.y0, b.x1, b.y1) == (0, 0, 40, 40)
