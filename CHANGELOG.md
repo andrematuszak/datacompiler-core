@@ -11,7 +11,7 @@ Le format est basé sur [Keep a Changelog](https://keepachangelog.com/fr/1.0.0/)
   1. **Extraction** hybride parallèle (PyMuPDF + pdfplumber).
   2. **Diagnostic** automatique de la qualité du texte et de l'intégrité visuelle.
   3. **OCR Page entière** (intégration de l'API Mistral).
-  4. **OCR Ciblé** pour zones vectorisées avec Tesseract / PaddleOCR.
+  4. **OCR Ciblé** pour zones vectorisées avec PaddleOCR.
   5. **Arbitrage & Compilation** (reconstruction de la mise en page et résolution des conflits).
   6. **Moteurs de rendu** multi-formats (PDF Fidèle, Flow, Reconstruit, Markdown, HTML, DOCX).
 - **Interface CLI** : Commande `datacompiler` disponible en ligne de commande.
