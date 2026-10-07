@@ -351,7 +351,7 @@ def _calibrer_lignes(ordre, tolerance=3.0):
 
 def _recalage_necessaire(mot) -> bool:
     """Un mot natif intact porte déjà sa taille de police exacte -- le
-    recalage horizontal le déforme inutilement (cf. cas , police
+    recalage horizontal le déforme inutilement (cf. cas police
     monospace mesurée avec une police de substitution : le recalage
     inconditionnel la déformait sans raison). Nécessaire seulement pour
     les mots dont le texte ou la provenance impose une reconstruction."""
