@@ -23,7 +23,7 @@ dependencies = [
     "paddlepaddle>=2.5.0",
     "paddleocr>=2.7.0",
     "mistralai>=1.0.0",
-    "transformers==4.49.0",
+    "transformers==5.18.0",
     "torch",
     "timm",
     "einops",
