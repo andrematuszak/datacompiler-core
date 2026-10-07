@@ -118,14 +118,13 @@ cassée, gardée en mémoire ici : y faire participer l'encadré comme UNE
 Boite unique (bbox = toute sa hauteur, ex. 190pt pour "Vos références")
 recréait exactement le RISQUE CONNU documenté plus haut ("boîte nettement
 plus haute que ses voisines absorbe tout ce qui la chevauche à 30%") --
-confirmé empiriquement : "DUPONT ..." (hors de tout encadré, mais
+confirmé empiriquement : "DUPONT..." (hors de tout encadré, mais
 verticalement contenu dans sa plage y) se retrouvait réinjecté AU MILIEU de
 ses lignes plutôt qu'après.
 
 LIMITE CONNUE, NON RÉSOLUE par cette intégration : un mot logiquement
 rattaché à un encadré mais physiquement situé en dehors de sa bbox (ex.
-confirmé sur le document fiscal : le libellé destinataire "DUPONT
-..." lui-même, qui précède "Vos références" dans l'ordre idéal sans
+confirmé sur le document fiscal : le libellé destinataire "DUPONT..." lui-même, qui précède "Vos références" dans l'ordre idéal sans
 être dans AUCUN encadré) n'est pas résolu par cette intégration -- il reste
 positionné par le moteur boîtes/rangées général, à sa position géométrique
 naturelle. Reste un problème ouvert pour une itération suivante si le
@@ -608,7 +607,7 @@ def ordonner(page, simple_sort=False) -> list:
     #    de chevaucher que 30% de la hauteur d'une petite boîte pour
     #    l'absorber dans SA rangée. Confirmé empiriquement sur le document
     #    fiscal réel avec la version précédente de cette intégration :
-    #    "DUPONT ..." (hors de tout encadré, mais verticalement
+    #    "DUPONT..." (hors de tout encadré, mais verticalement
     #    contenu dans la plage y de l'encadré "Vos références") se
     #    retrouvait réinjecté AU MILIEU de ses lignes plutôt qu'après.
     #
