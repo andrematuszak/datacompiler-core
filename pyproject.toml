@@ -7,7 +7,7 @@ name = "datacompiler"
 version = "0.1.0"
 description = "Pipeline d'extraction, diagnostic, OCR multi-moteurs et compilation/rendu de documents PDF."
 readme = "README.md"
-# Corrigé pour autoriser Python 3.12 (évite le blocage sur la version 3.12.14)
+license = {text = "Proprietary - All rights reserved"}
 requires-python = ">=3.11"
 
 # Dépendances de base obligatoires (incluant Paddle, Docx, Fonttools, etc.)
@@ -27,9 +27,13 @@ dependencies = [
     "torch",
     "timm",
     "einops",
-    "fonttools",
-    "pytest>=7.0.0"
+    "fonttools"
 ]
+
+[project.urls]
+Homepage = "https://datacompiler.org"
+Repository = "https://github.com/andrematuszak/datacompiler"
+Changelog = "https://github.com/andrematuszak/datacompiler/blob/main/CHANGELOG.md"
 
 [project.optional-dependencies]
 # Outils de développement et tests uniquement

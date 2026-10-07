@@ -6,20 +6,21 @@
 
 ---
 
-## ⚠️ PRÉREQUIS IMPORTANT : Version de Python
- 
-> **Important :** Le moteur OCR **PaddleOCR** / **PaddlePaddle** n'est pas encore compatible de manière stable avec Python 3.12+.
-> Veuillez utiliser **Python 3.10** ou **Python 3.11** pour installer et exécuter DataCompiler.
+## ⚠️ Prérequis : version de Python
+
+DataCompiler requiert **Python 3.11 ou supérieur** (testé en **Python 3.12**, macOS).
+PaddleOCR / PaddlePaddle sont installés automatiquement comme dépendances ; le premier
+lancement de l'OCR ciblé peut télécharger les modèles Paddle (connexion Internet requise).
 
 ---
 
 ### Installation du package Python
 
-#### 1. Création de l'environnement virtuel (Python 3.10 ou 3.11)
+#### 1. Création de l'environnement virtuel (Python 3.11+)
 
 **Sur macOS :**
 ```bash
-python3.11 -m venv .venv
+python3.12 -m venv .venv   # ou python3.11
 source .venv/bin/activate
 ```
 
@@ -36,37 +37,54 @@ pip install --upgrade pip
 pip install -e .
 ```
 
+#### 3. Vérifier l'installation
+
+```bash
+python --version        # Python 3.11+ attendu
+datacompiler --help
+pip install -e ".[dev]" # outils de développement (pytest, ruff, black, mypy)
+pytest
+```
+
 ---
 
 ## 🚀 Quickstart (Démarrage Rapide)
 
-Voici l'utilisation la plus courante pour traiter un PDF, exécuter le diagnostic / OCR et générer un PDF nettoyé ainsi qu'un fichier Markdown :
+### En ligne de commande
+
+```bash
+datacompiler tests/fixtures/impots-revenu/impots-revenu.pdf --strategy overlay
+```
+
+Les fichiers de sortie sont écrits **à côté du PDF source** (voir « Formats de sortie »).
+
+> **Note v0.1.0 :** le format de sortie est choisi par `--strategy` (`overlay`, `clean_overlay`,
+> `rasterized`, `flow`, `rebuilt`, `markdown`, `html`, `docx`). L'option `--format` est
+> actuellement acceptée mais **n'est pas prise en compte**.
+
+### En Python
 
 ```python
-import os
-from datacompiler.pipeline import run_pipeline
+from datacompiler.pipeline import executer_pipeline
 
-# (Optionnel) Définir la clé API Mistral pour l'OCR de haut niveau sur documents scannés
-os.environ["MISTRAL_API_KEY"] = "votre_cle_api_mistral"
-
-# Chemin vers votre fichier PDF source
-pdf_path = "examples/test-impots-revenu.pdf"
-
-# Exécution du pipeline complet
-document = run_pipeline(
-    pdf_path=pdf_path,
-    output_dir="output/",
-    export_formats=["pdf_faithful", "pdf_flow", "markdown", "docx"]
+# Un appel = un format de sortie, choisi par `strategy`
+doc = executer_pipeline(
+    "tests/fixtures/impots-revenu/impots-revenu.pdf",
+    strategy="overlay",      # overlay | clean_overlay | rasterized | flow | rebuilt | markdown | html | docx
+    ocr_mode="auto",         # auto | force | skip | vector
 )
 
-print(f"Document traité avec succès ! Nombre de pages : {len(document.pages)}")
+print(f"Document traité avec succès ! Nombre de pages : {len(doc.pages)}")
 ```
+
+Pour produire plusieurs formats, appelez `executer_pipeline` une fois par `strategy`.
+Un exemple exécutable est fourni dans [`examples/basic_usage.py`](examples/basic_usage.py).
 
 ---
 
 ## ⚙️ Architecture & Pipeline de Fonctionnement
 
-Le pipeline se déroule en **6 étapes séquentielles** :
+Le pipeline se déroule en **6 étapes** (les logs affichent `[1/6]` … `[6/6]`) :
 
 ```
 📄 PDF Source ➔ [1. Extraction] ➔ [2. Diagnostic] ➔ [3. OCR Global] ➔ [4. OCR Ciblé] ➔ [5. Arbitrage] ➔ [6. Rendu] ➔ 📁 Fichiers Sortie
@@ -79,7 +97,9 @@ Ouverture parallèle du PDF via **PyMuPDF** et **pdfplumber**. Extraction native
 Analyse de l'intégrité du texte nativement extrait (score de qualité, symboles corrompus, couverture visuelle, détection de texte vectorisé/dessiné). Décide automatiquement si un OCR est nécessaire (`recommend_ocr = True`).
 
 ### 🤖 3. OCR Page Entière (`frontend/ocr`)
-Si recommandé par le diagnostic et qu'une clé API Mistral est renseignée, appel au backend **Mistral OCR** pour numériser l'intégralité de la page.
+Backend **Mistral OCR** (clé `MISTRAL_API_KEY`). ⚠️ **Désactivé dans le flux actif en v0.1.0** :
+l'alignement global OCR ↔ texte natif n'est pas encore validé sans régression (duplication de mots).
+Seul l'OCR ciblé (étape 4) est actif.
 
 ### 🎯 4. OCR Ciblé — Zones Vectorisées (`frontend/ocr/vector_zones`)
 Cible spécifiquement les zones de texte vectorisées ou masquées et comble les trous géométriques à l'aide de **PaddleOCR**.
@@ -97,15 +117,18 @@ Génération des fichiers de sortie nettoyés dans les formats demandés.
 
 ## 📁 Formats de Sortie Générés
 
-Après passage dans le pipeline, les fichiers suivants peuvent être produits dans le dossier de destination :
+Un fichier par exécution, selon `--strategy`, écrit à côté du PDF source :
 
-* `*_propre.pdf` *(Overlay fidèle avec couche texte propre)*
-* `*_flow.pdf` *(PDF reflowable / réordonné)*
-* `*_rebuilt.pdf` *(PDF entièrement reconstruit)*
-* `*_propre.md` *(Document Markdown enrichi)*
-* `*_propre.html` *(Export HTML structuré)*
-* `*_propre.docx` *(Document Word modifiable)*
-* `.document.json` *(Arbre de données et métadonnées complètes)*
+| `--strategy` | Fichier produit |
+|---|---|
+| `overlay`, `clean_overlay`, `rasterized` | `<nom>_propre.pdf` |
+| `flow` | `<nom>_flow.pdf` |
+| `rebuilt` | `<nom>_rebuilt.pdf` |
+| `markdown` | `<nom>_propre.md` |
+| `html` | `<nom>_propre.html` |
+| `docx` | `<nom>_propre.docx` |
+
+Sauf avec `--no-json`, un `<nom>.document.json` (arbre de données et métadonnées) est aussi écrit.
 
 ---
 
@@ -114,11 +137,14 @@ Après passage dans le pipeline, les fichiers suivants peuvent être produits da
 Pour exécuter la suite de tests :
 
 ```bash
+pip install -e ".[dev]"
 pytest
 ```
+
+`tests/test_regression_word_count.py` est ignoré (skip) tant que les sorties de `impots-revenu.pdf` n'ont pas été générées : lancez d'abord la commande du Quickstart.
 
 ---
 
 ## 📜 Licence
 
-Projet sous licence propriétaire / tous droits réservés.
+Projet sous licence propriétaire — tous droits réservés. Voir le fichier [LICENSE](LICENSE).
