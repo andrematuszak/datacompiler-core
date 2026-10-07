@@ -94,7 +94,7 @@ Le pipeline se déroule en **6 étapes** (les logs affichent `[1/6]` … `[6/6]`
 Ouverture parallèle du PDF via **PyMuPDF** et **pdfplumber**. Extraction native du texte, des polices, des images, des éléments vectoriels et reconstruction des tableaux dans le modèle standardisé `Document`.
 
 ### 🩺 2. Diagnostic (`frontend/diagnostic`)
-Analyse de l'intégrité du texte nativement extrait (score de qualité, symboles corrompus, couverture visuelle, détection de texte vectorisé/dessiné, détection de lien). Décide automatiquement si un OCR est nécessaire (`recommend_ocr = True`).
+Analyse de l'intégrité du texte nativement extrait (score de qualité, symboles corrompus, couverture visuelle, détection de texte vectorisé/dessiné, relevé des zones cliquables `link_rects` avec exclusion du texte vectorisé). Décide automatiquement si un OCR est nécessaire (`recommend_ocr = True`).
 
 ### 🤖 3. OCR Page Entière (`frontend/ocr`)
 Backend **Mistral OCR** (clé `MISTRAL_API_KEY`). ⚠️ **Désactivé dans le flux actif en v0.1.0** :

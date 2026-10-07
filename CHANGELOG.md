@@ -14,6 +14,7 @@ Le format est basé sur [Keep a Changelog](https://keepachangelog.com/fr/1.0.0/)
   4. **OCR Ciblé** pour zones vectorisées avec PaddleOCR.
   5. **Arbitrage & Compilation** (reconstruction de la mise en page et résolution des conflits).
   6. **Moteurs de rendu** multi-formats (PDF Fidèle, Flow, Reconstruit, Markdown, HTML, DOCX).
+- **Relevé des zones cliquables (`link_rects`)** : Exclusion du texte vectorisé dans ces zones ; traitement dédié prévu pour la v0.2.0.
 - **Interface CLI** : Commande `datacompiler` disponible en ligne de commande.
 - **Documentation et Exemples** : Guide d'installation (macOS / Windows), Quickstart (CLI et Python) dans le `README.md` et script `examples/basic_usage.py`.
 
