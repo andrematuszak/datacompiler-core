@@ -1,25 +1,28 @@
 [build-system]
-requires = ["setuptools>=61.0.0"]
+requires = ["setuptools>=61.0.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "datacompiler"
 version = "0.1.0"
-description = "Nettoyage et reconstruction géométrique fidèle de fichiers PDF"
+description = "Pipeline d'extraction, diagnostic, OCR multi-moteurs et compilation/rendu de documents PDF."
 readme = "README.md"
+license = {text = "Proprietary - All rights reserved"}
 requires-python = ">=3.11"
 
-# Dépendances de base obligatoires
+# Dépendances de base obligatoires (incluant Paddle, Docx, Fonttools, etc.)
 dependencies = [
     "pymupdf>=1.24",
     "pdfplumber>=0.11",
     "numpy>=1.24.0",
-    "reportlab",
+    "reportlab>=4.0.0",
     "pytesseract>=0.3.10",
-    "Pillow>=10.0",
+    "Pillow>=10.0.0",
     "pdf2image",
     "python-docx>=1.1.0",
-    "pytest>=7.0.0",
+    "paddlepaddle>=2.5.0",
+    "paddleocr>=2.7.0",
+    "mistralai>=1.0.0",
     "transformers==4.49.0",
     "torch",
     "timm",
@@ -27,36 +30,19 @@ dependencies = [
     "fonttools"
 ]
 
+[project.urls]
+Homepage = "https://datacompiler.org"
+Repository = "https://github.com/andrematuszak/datacompiler"
+Changelog = "https://github.com/andrematuszak/datacompiler/blob/main/CHANGELOG.md"
+
 [project.optional-dependencies]
-# Moteurs OCR (Mistral, PaddleOCR)
-ocr = [
-    "accelerate>=0.26.0",
-    "mistralai>=1.0.0",
-    "pytesseract>=0.3.10",
-    "paddlepaddle",
-    "paddleocr"
-]
-# Export au format Word
-docx = [
-    "python-docx>=1.1.0"
-]
-# Outils de dev et tests
+# Outils de développement et tests uniquement
 dev = [
     "pytest>=7.0.0",
-    "pytest-cov",
-    "black",
-    "ruff",
+    "pytest-cov>=4.0.0",
+    "black>=23.0.0",
+    "ruff>=0.1.0",
     "mypy"
-]
-# Groupe pour tout installer en une commande
-all = [
-    "mistralai>=1.0.0",
-    "pytesseract>=0.3.10",
-    "Pillow>=10.0",
-    "paddlepaddle",
-    "paddleocr",
-    "python-docx>=1.1.0",
-    "pytest>=7.0.0"
 ]
 
 [project.scripts]
