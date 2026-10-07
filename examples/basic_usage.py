@@ -1,7 +1,7 @@
 # examples/basic_usage.py
-from datacleaner.core.document import Document
-from datacleaner.core.extract import extraire
-from datacleaner.renderers.faithful_pdf import reconstruire_pdf_direct
+from datacompiler.core.document import Document
+from datacompiler.core.extract import extraire
+from datacompiler.renderers.faithful_pdf import reconstruire_pdf_direct
 
 def main():
     pdf_entree = "tests/fixtures/test1.pdf"

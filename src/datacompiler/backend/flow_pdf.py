@@ -68,7 +68,7 @@ def render_flow_pdf(doc: Document, output_path: str) -> str:
         etat["y"] += INTERLIGNE
 
     Path(output_path).parent.mkdir(parents=True, exist_ok=True)
-    output.set_metadata({"producer": "DataCleaner rebuilt_pdf", "title": doc.metadata.filename})
+    output.set_metadata({"producer": "DataCompiler rebuilt_pdf", "title": doc.metadata.filename})
     output.save(output_path, garbage=4, deflate=True)
     output.close()
     return output_path
