@@ -53,7 +53,7 @@ pytest
 ### En ligne de commande
 
 ```bash
-datacompiler tests/fixtures/impots-revenu/impots-revenu.pdf --strategy overlay
+datacompiler mon_document.pdf --strategy overlay
 ```
 
 Les fichiers de sortie sont écrits **à côté du PDF source** (voir « Formats de sortie »).
@@ -69,7 +69,7 @@ from datacompiler.pipeline import executer_pipeline
 
 # Un appel = un format de sortie, choisi par `strategy`
 doc = executer_pipeline(
-    "tests/fixtures/impots-revenu/impots-revenu.pdf",
+    "mon_document.pdf",
     strategy="overlay",      # overlay | clean_overlay | rasterized | flow | rebuilt | markdown | html | docx
     ocr_mode="auto",         # auto | force | skip | vector
 )
@@ -78,7 +78,7 @@ print(f"Document traité avec succès ! Nombre de pages : {len(doc.pages)}")
 ```
 
 Pour produire plusieurs formats, appelez `executer_pipeline` une fois par `strategy`.
-Un exemple exécutable est fourni dans [`examples/basic_usage.py`](examples/basic_usage.py).
+Un exemple exécutable est fourni dans [`examples/basic_usage.py`](examples/basic_usage.py) : sans argument, il génère un petit PDF d'exemple puis le traite ; avec un chemin en argument, il traite votre PDF.
 
 ---
 
@@ -141,7 +141,7 @@ pip install -e ".[dev]"
 pytest
 ```
 
-`tests/test_regression_word_count.py` est ignoré (skip) tant que les sorties de `impots-revenu.pdf` n'ont pas été générées : lancez d'abord la commande du Quickstart.
+Les tests qui s'appuient sur le PDF de référence `tests/fixtures/impots-revenu/impots-revenu.pdf` sont ignorés (skip) si ce fichier est absent. `tests/test_regression_word_count.py` est aussi ignoré tant que les sorties de ce PDF n'ont pas été générées.
 
 ---
 
