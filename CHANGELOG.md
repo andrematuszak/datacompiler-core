@@ -23,7 +23,7 @@ Le format est basé sur [Keep a Changelog](https://keepachangelog.com/fr/1.0.0/)
 - L'option CLI `--format` est acceptée mais ignorée ; utiliser `--strategy`.
 - Un seul format de sortie par exécution ; les fichiers sont écrits à côté du PDF source.
 
-### 🔧 Changed
+### 🔧 Added
 - `examples/basic_usage.py` : génère un PDF d'exemple (ou accepte un chemin en argument) au lieu de dépendre d'un document de test.
 - Tests dépendant du PDF de référence : ignorés (skip) si le fichier est absent.
 - Polices embarquées : suppression des variantes `.woff`/`.woff2` et des polices Marianne, non utilisées par le code ; ajout de `backend/fonts/README.md` (licences).
