@@ -1,22 +1,19 @@
-# examples/basic_usage.py
-from datacleaner.core.document import Document
-from datacleaner.core.extract import extraire
-from datacleaner.renderers.faithful_pdf import reconstruire_pdf_direct
+from pathlib import Path
+from datacompiler.pipeline import traiter_document
 
-def main():
-    pdf_entree = "tests/fixtures/test1.pdf"
-    pdf_sortie = "output_demo.pdf"
-    
-    print(f"1. Extraction de {pdf_entree}...")
-    donnees_brutes = extraire(pdf_entree)
-    
-    print("2. Création de l'objet Document...")
-    doc = Document(donnees_brutes)
-    
-    print("3. Reconstruction du PDF...")
-    reconstruire_pdf_direct(doc, pdf_sortie)
-    
-    print(f"✅ Terminé ! PDF généré dans : {pdf_sortie}")
+# Exemple d'utilisation du pipeline DataCompiler
+pdf_source = Path("tests/fixtures/impots-revenu/impots-revenu.pdf")
 
-if __name__ == "__main__":
-    main()
+if pdf_source.exists():
+    print(f"🚀 Traitement de {pdf_source}...")
+    
+    # Exécution du pipeline complet
+    doc = traiter_document(
+        pdf_path=str(pdf_source),
+        output_format="faithful_pdf",
+        output_path="sortie_propre.pdf"
+    )
+    
+    print("✅ Traitement terminé ! Fichier généré : sortie_propre.pdf")
+else:
+    print(f"❌ Fichier introuvable : {pdf_source}")

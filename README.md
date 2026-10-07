@@ -1,78 +1,142 @@
-# 🧹 DataCompiler
+# 📊 DataCompiler
 
-**DataCompiler** est un package Python modulaire conçu pour l'extraction, le diagnostic, la résolution et la reconstruction fidèle géométrique de documents PDF.
+**DataCompiler** est un pipeline complet de compilation, de traitement et de reconstruction de documents PDF. Il combine une extraction multi-moteurs, un diagnostic de la qualité native du texte, des étapes d'OCR intelligentes (globales ou ciblées) ainsi qu'un moteur d'arbitrage et de rendu dynamique multi-format.
 
----
-
-## 🚀 Structure du projet
-
-L'architecture repose sur un *src-layout* moderne et modulaire :
-
-```text
-datacompiler/
-├── src/
-│   └── datacompiler/
-│       ├── frontend/       # Extraction, OCR (Mistral/Tesseract), Diagnostic
-│       ├── compile/        # Arbitrage native/OCR, résolution
-│       ├── backend/        # Moteurs de rendu (PDF fidèle, DOCX, HTML, etc.)
-│       ├── model/          # Modèles de données (Document, Word, BBox...)
-│       └── pipeline.py     # Orchestrateur principal
-├── tests/                  # Tests unitaires et fixtures (pytest)
-├── pyproject.toml          # Configuration du package
-└── requirements.txt        # Dépendances du projet
+🌐 **Site web officiel :** [https://datacompiler.org](https://datacompiler.org) *(en cours de construction)*
 
 ---
 
-## ⚙️ Installation
+## ⚠️ PRÉREQUIS IMPORTANT : Version de Python
 
-1. Active ton environnement virtuel Python (Python >= 3.11 recommandé) :
-   ```bash
-   source venv/bin/activate
-   ```
-
-2. Installe le package en mode éditable :
-   ```bash
-   pip install -e .
-   ```
+> **Important :** Le moteur OCR **PaddleOCR** / **PaddlePaddle** n'est pas encore compatible de manière stable avec Python 3.12+.
+> Veuillez utiliser **Python 3.10** ou **Python 3.11** pour installer et exécuter DataCompiler.
 
 ---
 
-## 🛠️ Utilisation
+## 🛠️ Installation
 
-### 1. Via la commande CLI
-Une fois le package installé en mode éditable, tu peux exécuter directement la commande `datacleaner` dans ton terminal :
+### Dépendances système requises (Tesseract OCR)
 
+DataCompiler utilise Tesseract comme moteur OCR local complémentaire. Vous devez l'installer sur votre système.
+
+#### 🍏 macOS (via Homebrew)
 ```bash
-datacleaner tests/fixtures/test1.pdf
+brew install tesseract tesseract-lang
 ```
 
-### 2. Directement via l'orchestrateur Python
+#### 🪟 Windows
+1. Téléchargez l'installateur Windows depuis [UB-Mannheim Tesseract OCR](https://github.com/UB-Mannheim/tesseract/wiki).
+2. Installez le logiciel et cochez la langue française (`fra`).
+3. Ajoutez le chemin d'installation (ex: `C:\Program Files\Tesseract-OCR`) à votre variable d'environnement `PATH`.
+
+---
+
+### Installation du package Python
+
+#### 1. Création de l'environnement virtuel (Python 3.10 ou 3.11)
+
+**Sur macOS :**
 ```bash
-python src/datacleaner/pipeline.py tests/fixtures/test1.pdf
+python3.11 -m venv .venv
+source .venv/bin/activate
 ```
 
-### 3. Utilisation en tant que bibliothèque
+**Sur Windows (PowerShell) :**
+```powershell
+py -3.11 -m venv .venv
+.\.venv\Scripts\Activate.ps1
+```
+
+#### 2. Installation de DataCompiler
+
+```bash
+pip install --upgrade pip
+pip install -e .
+```
+
+---
+
+## 🚀 Quickstart (Démarrage Rapide)
+
+Voici l'utilisation la plus courante pour traiter un PDF, exécuter le diagnostic / OCR et générer un PDF nettoyé ainsi qu'un fichier Markdown :
+
 ```python
-from datacleaner.core.extract import extraire
-from datacleaner.core.document import Document
-from datacleaner.renderers.faithful_pdf import render_faithful_pdf
+import os
+from datacompiler.pipeline import run_pipeline
 
-# 1. Extraction
-donnees = extraire("chemin/vers/document.pdf")
+# (Optionnel) Définir la clé API Mistral pour l'OCR de haut niveau sur documents scannés
+os.environ["MISTRAL_API_KEY"] = "votre_cle_api_mistral"
 
-# 2. Modélisation
-doc = Document(donnees)
+# Chemin vers votre fichier PDF source
+pdf_path = "examples/test-impots-revenu.pdf"
 
-# 3. Reconstruction du PDF
-render_faithful_pdf(doc, "sortie_propre.pdf")
+# Exécution du pipeline complet
+document = run_pipeline(
+    pdf_path=pdf_path,
+    output_dir="output/",
+    export_formats=["pdf_faithful", "pdf_flow", "markdown", "docx"]
+)
+
+print(f"Document traité avec succès ! Nombre de pages : {len(document.pages)}")
 ```
 
 ---
 
-## 🧪 Lancer les tests
+## ⚙️ Architecture & Pipeline de Fonctionnement
 
-Pour exécuter l'ensemble des tests automatisés avec `pytest` :
+Le pipeline se déroule en **6 étapes séquentielles** :
+
+```
+📄 PDF Source ➔ [1. Extraction] ➔ [2. Diagnostic] ➔ [3. OCR Global] ➔ [4. OCR Ciblé] ➔ [5. Arbitrage] ➔ [6. Rendu] ➔ 📁 Fichiers Sortie
+```
+
+### 🔍 1. Extraction (`frontend/extract`)
+Ouverture parallèle du PDF via **PyMuPDF** et **pdfplumber**. Extraction native du texte, des polices, des images, des éléments vectoriels et reconstruction des tableaux dans le modèle standardisé `Document`.
+
+### 🩺 2. Diagnostic (`frontend/diagnostic`)
+Analyse de l'intégrité du texte nativement extrait (score de qualité, symboles corrompus, couverture visuelle, détection de texte vectorisé/dessiné). Décide automatiquement si un OCR est nécessaire (`recommend_ocr = True`).
+
+### 🤖 3. OCR Page Entière (`frontend/ocr`)
+Si recommandé par le diagnostic et qu'une clé API Mistral est renseignée, appel au backend **Mistral OCR** pour numériser l'intégralité de la page.
+
+### 🎯 4. OCR Ciblé — Zones Vectorisées (`frontend/ocr/vector_zones`)
+Cible spécifiquement les zones de texte vectorisées ou masquées et comble les trous géométriques à l'aide de **Tesseract** local et **PaddleOCR**.
+
+### ⚙️ 5. Compilation & Arbitrage (`compile/`)
+* Reconstitution de l'ordre de lecture et de l'arbre de mise en page (`LayoutBox`).
+* Normalisation typographique (ligatures, césures).
+* Alignement géométrique natif ↔ OCR.
+* Résolution des conflits et évaluation de confiance QA.
+
+### 📦 6. Backend de Rendu (`backend/`)
+Génération des fichiers de sortie nettoyés dans les formats demandés.
+
+---
+
+## 📁 Formats de Sortie Générés
+
+Après passage dans le pipeline, les fichiers suivants peuvent être produits dans le dossier de destination :
+
+* `*_propre.pdf` *(Overlay fidèle avec couche texte propre)*
+* `*_flow.pdf` *(PDF reflowable / réordonné)*
+* `*_rebuilt.pdf` *(PDF entièrement reconstruit)*
+* `*_propre.md` *(Document Markdown enrichi)*
+* `*_propre.html` *(Export HTML structuré)*
+* `*_propre.docx` *(Document Word modifiable)*
+* `.document.json` *(Arbre de données et métadonnées complètes)*
+
+---
+
+## 🧪 Tests
+
+Pour exécuter la suite de tests :
 
 ```bash
 pytest
 ```
+
+---
+
+## 📜 Licence
+
+Projet sous licence propriétaire / tous droits réservés.
