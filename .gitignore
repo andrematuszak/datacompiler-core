@@ -6,7 +6,6 @@ ENV/
 venv-deepseek/
 .env/
 .env
-.envexperiments/
 
 # --- Python & Caches ---
 *.pyc
@@ -47,7 +46,6 @@ eggs/
 *_propre.json
 *document.json
 *repomap.json
-*.json
 
 # --- Sensible & Secrets ---
 anciens/
@@ -59,3 +57,25 @@ sources/
 .editorconfig
 .continue.ctx
 CONTINUE_SETUP.md
+
+# --- Sorties générées (exemples, CLI, tests) ---
+output/
+*.document.json
+*_flow.pdf
+*_flow-*.pdf
+*_propre-*.pdf
+*_rebuilt-*.pdf
+*_rebuilt_propre-*.pdf
+tests/fixtures/**/*_propre*
+tests/fixtures/**/*_flow*
+tests/fixtures/**/*_rebuilt*
+
+# --- Outils de dev / couverture ---
+.coverage
+htmlcov/
+.ruff_cache/
+.mypy_cache/
+
+# --- Documents personnels : ne jamais committer de vrais documents ---
+# Placez vos PDF privés dans un dossier ignoré, ex. private/
+private/
