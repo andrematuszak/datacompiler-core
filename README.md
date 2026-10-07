@@ -7,27 +7,9 @@
 ---
 
 ## ⚠️ PRÉREQUIS IMPORTANT : Version de Python
-
+ 
 > **Important :** Le moteur OCR **PaddleOCR** / **PaddlePaddle** n'est pas encore compatible de manière stable avec Python 3.12+.
 > Veuillez utiliser **Python 3.10** ou **Python 3.11** pour installer et exécuter DataCompiler.
-
----
-
-## 🛠️ Installation
-
-### Dépendances système requises (Tesseract OCR)
-
-DataCompiler utilise Tesseract comme moteur OCR local complémentaire. Vous devez l'installer sur votre système.
-
-#### 🍏 macOS (via Homebrew)
-```bash
-brew install tesseract tesseract-lang
-```
-
-#### 🪟 Windows
-1. Téléchargez l'installateur Windows depuis [UB-Mannheim Tesseract OCR](https://github.com/UB-Mannheim/tesseract/wiki).
-2. Installez le logiciel et cochez la langue française (`fra`).
-3. Ajoutez le chemin d'installation (ex: `C:\Program Files\Tesseract-OCR`) à votre variable d'environnement `PATH`.
 
 ---
 
@@ -100,7 +82,7 @@ Analyse de l'intégrité du texte nativement extrait (score de qualité, symbole
 Si recommandé par le diagnostic et qu'une clé API Mistral est renseignée, appel au backend **Mistral OCR** pour numériser l'intégralité de la page.
 
 ### 🎯 4. OCR Ciblé — Zones Vectorisées (`frontend/ocr/vector_zones`)
-Cible spécifiquement les zones de texte vectorisées ou masquées et comble les trous géométriques à l'aide de **Tesseract** local et **PaddleOCR**.
+Cible spécifiquement les zones de texte vectorisées ou masquées et comble les trous géométriques à l'aide de **PaddleOCR**.
 
 ### ⚙️ 5. Compilation & Arbitrage (`compile/`)
 * Reconstitution de l'ordre de lecture et de l'arbre de mise en page (`LayoutBox`).
