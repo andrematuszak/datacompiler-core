@@ -1,72 +1,56 @@
 [build-system]
-requires = ["setuptools>=61.0.0"]
-build-backend = "setuptools.build_meta"
+requires = ["flit_core >=3.2,<4.0"]
+build-backend = "flit.core.buildapi"
 
 [project]
 name = "datacompiler"
 version = "0.1.0"
-description = "Nettoyage et reconstruction géométrique fidèle de fichiers PDF"
-readme = "README.md"
-requires-python = ">=3.11"
-
-# Dépendances de base obligatoires
-dependencies = [
-    "pymupdf>=1.24",
-    "pdfplumber>=0.11",
-    "numpy>=1.24.0",
-    "reportlab",
-    "pytesseract>=0.3.10",
-    "Pillow>=10.0",
-    "pdf2image",
-    "python-docx>=1.1.0",
-    "pytest>=7.0.0",
-    "transformers==4.49.0",
-    "torch",
-    "timm",
-    "einops",
-    "fonttools"
+description = "Pipeline d'extraction, diagnostic, OCR multi-moteurs et compilation/rendu de documents PDF."
+authors = [
+    { name = "DataCompiler Team", email = "contact@datacompiler.org" }
 ]
+readme = "README.md"
+requires-python = ">=3.10, <3.12"
+keywords = ["pdf", "ocr", "paddleocr", "tesseract", "mistral", "document-processing", "pdf-reconstruction"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Topic :: Scientific/Engineering :: Image Recognition",
+    "Topic :: Text Processing :: Indexing",
+]
+
+dependencies = [
+    "pymupdf>=1.23.0",
+    "pdfplumber>=0.10.0",
+    "paddlepaddle>=2.5.0",
+    "paddleocr>=2.7.0",
+    "pytesseract>=0.3.10",
+    "mistralai>=0.1.0",
+    "reportlab>=4.0.0",
+    "python-docx>=1.0.0",
+    "pillow>=10.0.0",
+    "pydantic>=2.0.0",
+]
+
+[project.urls]
+Homepage = "https://datacompiler.org"
+Documentation = "https://datacompiler.org/docs"
+Repository = "https://github.com/your-org/datacompiler"
 
 [project.optional-dependencies]
-# Moteurs OCR (Mistral, PaddleOCR)
-ocr = [
-    "accelerate>=0.26.0",
-    "mistralai>=1.0.0",
-    "pytesseract>=0.3.10",
-    "paddlepaddle",
-    "paddleocr"
-]
-# Export au format Word
-docx = [
-    "python-docx>=1.1.0"
-]
-# Outils de dev et tests
 dev = [
     "pytest>=7.0.0",
-    "pytest-cov",
-    "black",
-    "ruff",
-    "mypy"
-]
-# Groupe pour tout installer en une commande
-all = [
-    "mistralai>=1.0.0",
-    "pytesseract>=0.3.10",
-    "Pillow>=10.0",
-    "paddlepaddle",
-    "paddleocr",
-    "python-docx>=1.1.0",
-    "pytest>=7.0.0"
+    "pytest-cov>=4.0.0",
+    "black>=23.0.0",
+    "ruff>=0.1.0",
 ]
 
-[project.scripts]
-datacompiler = "datacompiler.pipeline:main"
+[tool.ruff]
+line-length = 100
+target-version = "py310"
 
-[tool.setuptools]
-include-package-data = true
-
-[tool.setuptools.packages.find]
-where = ["src"]
-
-[tool.setuptools.package-data]
-datacompiler = ["backend/fonts/*.ttf"]
+[tool.pytest.ini_options]
+testpaths = ["tests"]
