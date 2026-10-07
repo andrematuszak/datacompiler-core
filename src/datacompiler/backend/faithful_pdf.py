@@ -313,7 +313,7 @@ def render_faithful_pdf(doc: Document, output_path: str,
                 reinserer_liens(target, model_page)
                 report["mots_inseres"] += len([w for w in model_page.resolved.words if w.resolved_text.strip()])
 
-            output.set_metadata({"producer": "DataCleaner faithful_pdf (rasterized)",
+            output.set_metadata({"producer": "DataCompiler faithful_pdf (rasterized)",
                                  "title": doc.metadata.filename})
             output.save(output_path, garbage=4, deflate=True)
 
@@ -337,7 +337,7 @@ def render_faithful_pdf(doc: Document, output_path: str,
                 reinserer_liens(new_page, model_page)
                 report["mots_inseres"] += len([w for w in model_page.resolved.words if w.resolved_text.strip()])
 
-            output.set_metadata({"producer": "DataCleaner faithful_pdf (clean_overlay)",
+            output.set_metadata({"producer": "DataCompiler faithful_pdf (clean_overlay)",
                                  "title": doc.metadata.filename})
             output.save(output_path, garbage=4, deflate=True)
 
@@ -370,7 +370,7 @@ def render_faithful_pdf(doc: Document, output_path: str,
                 # render_mode, ce qui expliquerait que même du texte VISIBLE
                 # ajouté en overlay reste invisible à Matecat.
                 page.clean_contents()
-            output.set_metadata({"producer": "DataCleaner faithful_pdf (overlay)",
+            output.set_metadata({"producer": "DataCompiler faithful_pdf (overlay)",
                                  "title": doc.metadata.filename})
             output.save(output_path, garbage=4, deflate=True)
 
