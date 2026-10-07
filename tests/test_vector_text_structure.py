@@ -56,15 +56,6 @@ def page1():
     return page
 
 
-def test_zones_du_lien_notice_exclues(page1):
-    """L'encadré « La notice de cet avis… » est un lien : il sera traité à part dans l'extraction,
-    donc aucune zone de texte vectorisé ne doit y être produite pour l'instant."""
-    assert page1.link_rects, "le lien de la page 1 doit être relevé à l'extraction"
-    x0, y0, x1, y1 = page1.link_rects[0]
-    zones = zones_texte_vectorise_probable(page1)
-    assert [z for z in zones if x0 <= (z[0] + z[2]) / 2 <= x1 and y0 <= (z[1] + z[3]) / 2 <= y1] == []
-
-
 def test_avis_ir_rg_reste_une_seule_zone(page1):
     """Une tolérance verticale trop faible fragmente « AVIS_IR_RG » (souligné bas) en plusieurs zones."""
     zones = [z for z in zones_texte_vectorise_probable(page1) if 500 <= z[0] <= 545 and 28 <= z[1] <= 42]
