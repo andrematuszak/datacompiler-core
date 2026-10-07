@@ -40,22 +40,22 @@ datacompiler/
 ## 🛠️ Utilisation
 
 ### 1. Via la commande CLI
-Une fois le package installé en mode éditable, tu peux exécuter directement la commande `datacleaner` dans ton terminal :
+Une fois le package installé en mode éditable, tu peux exécuter directement la commande `datacompiler` dans ton terminal :
 
 ```bash
-datacleaner tests/fixtures/test1.pdf
+datacompiler tests/fixtures/test1.pdf
 ```
 
 ### 2. Directement via l'orchestrateur Python
 ```bash
-python src/datacleaner/pipeline.py tests/fixtures/test1.pdf
+python src/datacompiler/pipeline.py tests/fixtures/test1.pdf
 ```
 
 ### 3. Utilisation en tant que bibliothèque
 ```python
-from datacleaner.core.extract import extraire
-from datacleaner.core.document import Document
-from datacleaner.renderers.faithful_pdf import render_faithful_pdf
+from datacompiler.core.extract import extraire
+from datacompiler.core.document import Document
+from datacompiler.renderers.faithful_pdf import render_faithful_pdf
 
 # 1. Extraction
 donnees = extraire("chemin/vers/document.pdf")
