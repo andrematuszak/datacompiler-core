@@ -30,11 +30,13 @@ resultats/
 # --- Build, Packaging & Distribution ---
 build/
 develop-eggs/
+dist/
 downloads/
 eggs/
 .eggs/
 *.egg-info/
 *.egg
+*.build/
 
 # --- Fichiers de sorties temporaires & Logs ---
 *.log
@@ -49,7 +51,6 @@ eggs/
 # --- Sensible & Secrets ---
 anciens/
 apps/
-dist/
 experiments/
 sources/
 .aider*
