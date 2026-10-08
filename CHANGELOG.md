@@ -16,18 +16,16 @@ Le format est basé sur [Keep a Changelog](https://keepachangelog.com/fr/1.0.0/)
   6. **Moteurs de rendu** multi-formats (PDF Fidèle, Flow, Reconstruit, Markdown, HTML, DOCX).
 - **Interface CLI** : Commande `datacompiler` disponible en ligne de commande.
 - **Documentation et Exemples** : Guide d'installation (macOS / Windows), Quickstart (CLI et Python) dans le `README.md` et script `examples/basic_usage.py`.
-
-### ⚠️ Limitations connues
-- L'OCR pleine page (Mistral) est désactivé : l'alignement global OCR ↔ natif n'est pas encore validé.
-- L'option CLI `--format` est acceptée mais ignorée ; utiliser `--strategy`.
-- Un seul format de sortie par exécution ; les fichiers sont écrits à côté du PDF source.
-
-### 🔧 Added
 - `examples/basic_usage.py` : génère un PDF d'exemple (ou accepte un chemin en argument) au lieu de dépendre d'un document de test.
 - Tests dépendant du PDF de référence : ignorés (skip) si le fichier est absent.
 - Polices embarquées : suppression des variantes `.woff`/`.woff2` et des polices Marianne, non utilisées par le code ; ajout de `backend/fonts/README.md` (licences).
 - `.gitignore` : sorties générées, caches d'outils et dossier `private/`.
 - Python requis : 3.11+ (testé en 3.12).
 - `pytest` déplacé des dépendances obligatoires vers l'extra `[dev]`.
+
+### ⚠️ Limitations connues
+- L'OCR pleine page (Mistral) est désactivé : l'alignement global OCR ↔ natif n'est pas encore validé.
+- L'option CLI `--format` est acceptée mais ignorée ; utiliser `--strategy`.
+- Un seul format de sortie par exécution ; les fichiers sont écrits à côté du PDF source.
 
 [0.1.0]: https://github.com/andrematuszak/datacompiler/releases/tag/v0.1.0
