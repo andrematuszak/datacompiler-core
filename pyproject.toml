@@ -1,6 +1,22 @@
 [build-system]
-requires = ["setuptools>=61.0.0", "wheel"]
-build-backend = "setuptools.build_meta"
+requires = ["setuptools>=42", "wheel", "nuitka", "toml"]
+build-backend = "nuitka.distutils.Build"
+
+[tool.nuitka]
+include-package = "datacompiler"
+nofollow-import-to = [
+    "pymupdf",
+    "pdfplumber",
+    "paddleocr",
+    "paddle",
+    "torch",
+    "cv2",
+    "numpy",
+    "PIL",
+    "pytest",
+    "*.tests",
+    "*.distutils",
+]   
 
 [project]
 name = "datacompiler"
