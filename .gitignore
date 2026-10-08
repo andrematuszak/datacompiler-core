@@ -51,7 +51,6 @@ anciens/
 apps/
 dist/
 experiments/
-resultats/
 sources/
 .aider*
 .editorconfig
