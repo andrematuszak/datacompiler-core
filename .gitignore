@@ -30,7 +30,6 @@ resultats/
 # --- Build, Packaging & Distribution ---
 build/
 develop-eggs/
-dist/
 downloads/
 eggs/
 .eggs/
