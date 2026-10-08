@@ -31,9 +31,9 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://datacompiler.org"
+Homepage = "https://data-compiler.com"
 Repository = "https://github.com/andrematuszak/datacompiler"
-Changelog = "https://github.com/andrematuszak/datacompiler/blob/main/CHANGELOG.md"
+Documentation = "https://github.com/andrematuszak/datacompiler#readme"
 
 [project.optional-dependencies]
 # Outils de développement et tests uniquement
