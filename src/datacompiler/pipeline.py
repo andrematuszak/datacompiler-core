@@ -26,12 +26,13 @@ def executer_pipeline(pdf_path, strategy="overlay", sauver_json=True,
                       ocr_mode="auto"):
 
     """
-    Exécute le pipeline de compilation de PDF en 5 étapes claires :
-      [1/5] Extraction du texte natif
-      [2/5] Diagnostic de la page
-      [3/5] Enrichissement OCR
-      [4/5] Compilation et résolution
-      [5/5] Rendu final
+    Exécute le pipeline de compilation de PDF en 6 étapes claires :
+      [1/6] Extraction du texte natif
+      [2/6] Diagnostic de page
+      [3/6] Enrichissement OCR
+      [4/6] Segmentation
+      [5/6] Compilation et résolution
+      [6/6] Rendu final
 
     ---
     Note d'architecture (OCR pleine page) :
