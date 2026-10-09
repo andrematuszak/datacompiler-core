@@ -1,14 +1,65 @@
-Copyright (c) 2026 One-Man Lab. Tous droits réservés.
+Contrat de Licence d'Utilisateur Final (CLUF)
+DataCompiler — Copyright (c) 2026 One-Man Lab
 
-Ce logiciel est confidentiel et constitue une œuvre protégée
-par le droit d'auteur (Code de la propriété intellectuelle,
-L.111-1 et suivants).
+En installant, copiant ou utilisant le logiciel « DataCompiler »
+(le « Logiciel »), vous acceptez les termes du présent contrat.
+Si vous n'acceptez pas ces termes, n'installez pas et ne
+utilisez pas le Logiciel.
 
-L'accès à ce dépôt est strictement limité aux personnes
-autorisées par l'auteur. Toute reproduction, modification,
-diffusion ou communication, totale ou partielle, du code
-source, de la documentation ou des assets de ce dépôt est
-interdite sans autorisation écrite préalable.
+1. OBJET
+   One-Man Lab (le « Concédant ») concède à l'utilisateur
+   (le « Licencié ») une licence limitée, non exclusive,
+   non transférable et révocable d'utilisation du Logiciel
+   dans le cadre de son activité personnelle ou professionnelle.
 
-L'utilisation de ce code à des fins autres que le développement
-interne de DataCompiler est formellement interdite.   
+2. PROPRIÉTÉ INTELLECTUELLE
+   Le Logiciel, son code source, sa documentation, ses polices
+   embarquées et tous les éléments associés sont la propriété
+   exclusive du Concédant. Le Licencié n'acquiert aucun droit
+   de propriété sur le Logiciel.
+
+3. RESTRICTIONS
+   Le Licencié ne peut :
+   a) reproduire, copier ou dupliquer le Logiciel ;
+   b) modifier, adapter, traduire ou créer des œuvres dérivées ;
+   c) décompiler, désassembler ou procéder à l'ingénierie
+      inverse du Logiciel (sauf exception légale non dérogable) ;
+   d) redistribuer, louer, prêter, sous-licencier ou transférer
+      le Logiciel à un tiers ;
+   e) supprimer ou altérer les mentions de droit d'auteur ;
+   f) utiliser le Logiciel à des fins illicites.
+
+4. DONNÉES
+   Le Licencié reste propriétaire des données qu'il soumet au
+   Logiciel. Le Concédant ne collecte aucune donnée personnelle
+   via le Logiciel.
+
+5. AUCUNE GARANTIE
+   Le Logiciel est fourni « EN L'ÉTAT », sans garantie
+   d'aucune sorte, qu'elle soit expresse ou implicite,
+   y compris mais sans s'y limiter :
+   - aucune garantie de qualité marchande ;
+   - aucune garantie d'aptitude à un usage particulier ;
+   - aucune garantie d'absence de défaut ou d'erreur.
+
+6. LIMITATION DE RESPONSABILITÉ
+   En aucun cas le Concédant ne pourra être tenu responsable
+   de tout dommage direct, indirect, incidentel, spécial ou
+   consécutif résultant de l'utilisation ou de
+   l'impossibilité d'utiliser le Logiciel, y compris la perte
+   de données ou de bénéfices.
+
+7. RÉSILIATION
+   Le présent contrat prend fin automatiquement en cas de
+   non-respect de ses termes. Le Concédant peut également
+   résilier la licence à tout moment, sans préavis.
+
+8. DROIT APPLICABLE
+   Le présent contrat est régi par le droit français.
+   Tout litige relèvera de la compétence exclusive des
+   tribunaux de Paris.
+
+9. MODIFICATIONS
+   Le Concédant se réserve le droit de modifier les termes
+   du présent contrat à tout moment. Les modifications
+   prennent effet à compter de leur publication.   

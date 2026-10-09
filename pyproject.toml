@@ -23,7 +23,8 @@ name = "datacompiler"
 version = "0.1.0"
 description = "Pipeline d'extraction, diagnostic, OCR multi-moteurs et compilation/rendu de documents PDF."
 readme = "README.md"
-license = {file = "LICENSE"}
+license = "LicenseRef-DataCompiler-CLUF"
+license-files = ["LICENSE", "LICENSE-EMBEDDED"]
 requires-python = ">=3.11"
 
 # Dépendances de base obligatoires (incluant Paddle, Docx, Fonttools, etc.)
