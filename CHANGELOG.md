@@ -15,7 +15,7 @@ Le format est basé sur [Keep a Changelog](https://keepachangelog.com/fr/1.0.0/)
   5. **Arbitrage & Compilation** (reconstruction de la mise en page et résolution des conflits).
   6. **Moteurs de rendu** multi-formats (PDF Fidèle, Flow, Reconstruit, Markdown, HTML, DOCX).
 - **Interface CLI** : Commande `datacompiler` disponible en ligne de commande.
-- **Documentation et Exemples** : Guide d'installation (macOS / Windows), Quickstart (CLI et Python) dans le `README.md` et script `examples/basic_usage.py`.
+- **Documentation et Exemples** : Guide d'installation (macOS), Quickstart (CLI et Python) dans le `README.md` et script `examples/basic_usage.py`.
 - `examples/basic_usage.py` : génère un PDF d'exemple (ou accepte un chemin en argument) au lieu de dépendre d'un document de test.
 - Tests dépendant du PDF de référence : ignorés (skip) si le fichier est absent.
 - Polices embarquées : suppression des variantes `.woff`/`.woff2` et des polices Marianne, non utilisées par le code ; ajout de `backend/fonts/README.md` (licences).
