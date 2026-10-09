@@ -3,7 +3,6 @@ requires = ["nuitka[build-wheel]", "toml"]
 build-backend = "nuitka.distutils.Build"
 
 [tool.nuitka]
-include-package = "datacompiler"
 python-flag = "no_docstrings,no_asserts"
 enable-plugin = "numpy"
 remove-output = true
