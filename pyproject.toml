@@ -1,9 +1,13 @@
 [build-system]
-requires = ["setuptools>=42", "wheel", "nuitka", "toml"]
+requires = ["nuitka[build-wheel]", "toml"]
 build-backend = "nuitka.distutils.Build"
 
 [tool.nuitka]
+macos-min-version = "12.0"
 include-package = "datacompiler"
+python-flag = "no_docstrings,no_asserts"
+enable-plugin = "numpy"
+remove-output = true
 nofollow-import-to = [
     "pymupdf",
     "pdfplumber",
@@ -72,5 +76,4 @@ include-package-data = true
 where = ["src"]
 
 [tool.setuptools.package-data]
-datacompiler = ["backend/fonts/*.ttf"]
-datacompiler = ["*.pyi"]
+datacompiler = ["backend/fonts/*.ttf", "*.pyi"]
