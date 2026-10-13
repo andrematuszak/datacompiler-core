@@ -1,11 +1,13 @@
 """Lazy registry of renderers from ``page.resolved`` to output formats."""
 
+import logging
 from importlib import import_module
 from pathlib import Path
 
 __all__ = [
     "FORMATS",
     "EXTENSIONS",
+    "resolve_deprecated_strategy",
     "render_docx",
     "render_html",
     "render_markdown",
@@ -13,6 +15,22 @@ __all__ = [
     "render_flow_pdf",
     "render_faithful_pdf",
 ]
+
+logger = logging.getLogger(__name__)
+
+# Stratégie obsolète -> stratégie qui la remplace. Voir docs/decisions/clean-overlay.md.
+DEPRECATED_STRATEGIES = {"clean_overlay": "rebuilt"}
+
+
+def resolve_deprecated_strategy(strategy):
+    """Return the strategy to run, redirecting a deprecated one with a warning."""
+    replacement = DEPRECATED_STRATEGIES.get(strategy)
+    if replacement is None:
+        return strategy
+    logger.warning("Strategy '%s' is deprecated and now runs '%s'. It will be removed in a future release.",
+                   strategy, replacement)
+    return replacement
+
 
 _RENDERERS = {
     "render_docx": "datacompiler.backend.rebuilt_docx",

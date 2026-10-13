@@ -24,7 +24,7 @@ class PaddleDebugDumpTests(unittest.TestCase):
             try:
                 with self.assertLogs(paddle_module.logger, level="DEBUG") as captured:
                     paddle_module._sauver_debug(FailingCrop(), 0.5, "mot")
-                self.assertTrue(any("Impossible d'enregistrer" in line for line in captured.output))
+                self.assertTrue(any("Could not save OCR diagnostic crop" in line for line in captured.output))
             finally:
                 paddle_module._DEBUG_DIR = original_debug_dir
 

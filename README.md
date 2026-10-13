@@ -52,16 +52,10 @@ datacompiler chemin/vers/document.pdf
 ```python
 from datacompiler import executer_pipeline
 
-# Extrait et compile le PDF, écrit le PDF reconstruit et son JSON.
-document = executer_pipeline("chemin/vers/document.pdf", strategy="clean_overlay")
+# Extrait et compile le PDF, écrit le PDF reconstruit.
+document = executer_pipeline("chemin/vers/document.pdf", strategy="rebuilt")
 print(f"Pages traitées : {len(document.pages)}")
 ```
-
-Le JSON produit par `Document.to_json()` et `Document.save()` est UTF-8 (les accents
-restent lisibles) et contient `schema_version: "1.0"`. Le schéma JSON minimal,
-notamment pour `pages[].resolved.words`, est disponible dans
-`docs/schemas/document.schema.json`. Les anciens documents sans `schema_version`
-restent chargeables.
 
 ---
 

@@ -244,6 +244,8 @@ def render_faithful_pdf(doc: Document, output_path: str,
         raise ValueError("The source PDF path is required.")
     if strategy not in {"overlay", "clean_overlay", "rasterized"}:
         raise ValueError("strategy must be 'overlay', 'clean_overlay', or 'rasterized'.")
+    if strategy == "clean_overlay":
+        logger.warning("Strategy 'clean_overlay' is deprecated; use render_rebuilt_pdf instead.")
 
     source = pymupdf.open(source_path)
     report = {

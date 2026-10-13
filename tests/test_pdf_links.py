@@ -22,8 +22,11 @@ class PdfLinkTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             output = Path(directory) / "links.pdf"
             document = pymupdf.open()
-            first_page = document.new_page(width=200, height=200)
             document.new_page(width=200, height=200)
+            document.new_page(width=200, height=200)
+            # PyMuPDF invalide les objets Page déjà chargés quand on ajoute une page :
+            # on récupère donc la page 1 après avoir créé les deux.
+            first_page = document[0]
             model_page = Page(number=1, width=200, height=200)
             model_page.links = [
                 LinkElement(id=1, bbox=BBox(10, 10, 80, 30), uri="https://example.test"),
@@ -37,7 +40,7 @@ class PdfLinkTests(unittest.TestCase):
             reopened = pymupdf.open(output)
             links = reopened[0].get_links()
             self.assertEqual(len(links), 2)
-            self.assertEqual({link["uri"] for link in links if link["uri"]},
+            self.assertEqual({link["uri"] for link in links if link.get("uri")},
                              {"https://example.test"})
             self.assertEqual([link["page"] for link in links if link["kind"] == pymupdf.LINK_GOTO], [1])
             reopened.close()

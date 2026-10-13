@@ -40,7 +40,7 @@ class DocumentJsonSchemaTests(unittest.TestCase):
         self.assertEqual(document.pages, [])
 
     def test_unknown_schema_version_is_rejected(self):
-        with self.assertRaisesRegex(ValueError, "Version de schéma"):
+        with self.assertRaisesRegex(ValueError, "Unsupported JSON schema version"):
             Document.from_dict({"schema_version": "99.0", "pages": []})
 
 

@@ -46,7 +46,7 @@ def _snapshot(etape, page, mots, max_exemples=6):
     n_mots_touches_identite = sum(doublons_identite.values())
 
     if doublons_valeur or doublons_identite:
-        logger.warning(
+        logger.debug(
             "[DUPLICATE] page %s, stage '%s': total=%d, "
             "value_duplicates=%d affected word(s) across %d group(s), "
             "identity_duplicates=%d affected word(s) across %d object(s)",
@@ -56,10 +56,10 @@ def _snapshot(etape, page, mots, max_exemples=6):
         )
         for i, ((texte, bbox_cle), cnt) in enumerate(doublons_valeur.items()):
             if i >= max_exemples:
-                logger.warning("  ... (%d additional group(s) omitted)",
+                logger.debug("  ... (%d additional group(s) omitted)",
                                 len(doublons_valeur) - max_exemples)
                 break
-            logger.warning("  value x%d: text=%r bbox=%s", cnt, texte, bbox_cle)
+            logger.debug("  value x%d: text=%r bbox=%s", cnt, texte, bbox_cle)
 
     return mots
 

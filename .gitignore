@@ -6,7 +6,6 @@ ENV/
 venv-deepseek/
 .env/
 .env
-.envexperiments/
 
 # --- Python & Caches ---
 *.pyc
@@ -48,6 +47,7 @@ eggs/
 *document.json
 *repomap.json
 *.json
+!docs/schemas/*.json
 
 # --- Sensible & Secrets ---
 anciens/
