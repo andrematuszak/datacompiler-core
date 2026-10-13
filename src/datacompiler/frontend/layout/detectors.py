@@ -1,6 +1,4 @@
-"""
-detectors.py — Détection géométrique des conteneurs (images, tableaux, zones vectorielles).
-"""
+"""Detect geometric page containers such as images, tables, and vector-text regions."""
 
 from types import SimpleNamespace
 from typing import Any, Dict, List
@@ -40,20 +38,7 @@ def detecter_boites_images(page) -> List[Dict[str, Any]]:
 
 
 def detecter_boites_vectorielles(page, zones_deja_prises: List[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
-    """Détecte dynamiquement les zones de texte vectorisé via
-    vector_text.py -- EXCLUT les zones dont le centre tombe déjà dans une
-    table ou une image détectée (`zones_deja_prises`), pour ne pas
-    représenter deux fois le même contenu physique dans l'arbre (table +
-    zone vectorielle qui se chevauchent, ex. une ligne d'en-tête de table
-    partiellement composée de texte vectorisé -- exactement le cas de la
-    table d'en-têtes page 2 du document de test).
-
-    Réutilise dans_un_tableau (geometry.py, même test centre-dans-bbox
-    déjà utilisé ailleurs dans le projet) via un petit adaptateur --
-    dans_un_tableau attend des objets avec un attribut .bbox, pas des
-    dicts bruts comme ceux manipulés ici. Éviter de réimplémenter ce test
-    une deuxième fois : c'est exactement le genre de duplication qui a
-    fini par diverger ailleurs dans ce projet."""
+    """Detect vector-text regions that are not already contained in detected tables or images."""
     zones_deja_prises = zones_deja_prises or []
     bboxes_existantes = [
         SimpleNamespace(bbox=z["bbox"]) for z in zones_deja_prises if z.get("bbox")
@@ -74,10 +59,7 @@ def detecter_boites_vectorielles(page, zones_deja_prises: List[Dict[str, Any]] =
 
 
 def _couleur_proche(couleur_hex: str, reference_hex: str, tolerance: int = 12) -> bool:
-    """Compare deux couleurs hex canal par canal, avec tolérance -- pas
-    d'égalité stricte, la couleur PyMuPDF (float RGB -> hex) et une
-    référence choisie à la main peuvent différer de quelques niveaux
-    d'arrondi."""
+    """Compare two hexadecimal colors channel by channel within a tolerance."""
     if not couleur_hex or not reference_hex:
         return False
     c = couleur_hex.lstrip("#")
@@ -102,17 +84,7 @@ COULEUR_ENCADRE_REFERENCE = "#5d90c7"
 
 def detecter_boites_encadres(page, couleur_reference: str = COULEUR_ENCADRE_REFERENCE,
                               taille_min: float = 5.0) -> List[Dict[str, Any]]:
-    """Détecte les rectangles/quads de `page.graphics.rects` dont la couleur
-    est proche de `couleur_reference` -- les encadrés de section (ex. "Vos
-    références", "Vos contacts" du document fiscal de test), invisibles à
-    `detecter_boites_tables`/`detecter_boites_images` puisque ce sont des
-    tracés vectoriels PyMuPDF (type `qu`, cf. extract_pymupdf.py), pas des
-    tableaux pdfplumber ni des images.
-
-    ÉTAPE ISOLÉE : PAS encore appelée par `detecter_toutes_les_zones` --
-    volontairement, en attendant de vérifier son comportement sur le
-    document réel avant de la brancher sur l'arbre de layout / l'ordre de
-    lecture (cf. discussion projet : "on commence petit à petit")."""
+    """Detect framed section boxes whose vector color is close to the configured reference color."""
     zones = []
     rects = getattr(getattr(page, "graphics", None), "rects", []) or []
     idx = 0

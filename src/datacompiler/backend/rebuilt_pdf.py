@@ -1,16 +1,4 @@
-"""
-rebuilt_pdf.py — Reconstruction fidèle d'un PDF neuf, texte visuellement
-fidèle et sélectionnable, à la même position que le source.
-
-Architecture optimisée :
-  1. Regroupement des mots consécutifs en Spans/Lignes continus (métrique de ligne stable).
-  2. Calcul précis de la Baseline typographique basé sur l'ascender réel de la police.
-  3. Compression horizontale ciblée via matrice (morphing PyMuPDF) sans altérer la hauteur.
-  4. Préservation de la sélection du texte sans injection de hacks d'espaces fictifs.
-  5. Conservation des tracés des mots vectorisés inchangés ; les corrections
-     restent visibles dans la couche reconstruite.
-  6. Copie fidèle des images et éléments graphiques du document source.
-"""
+"""Rebuild a selectable PDF from ``page.resolved`` while retaining source-page geometry. The renderer preserves vectorized word outlines, copies images and graphics, and uses embedded substitute fonts where needed."""
 
 import logging
 from functools import lru_cache
@@ -35,7 +23,7 @@ _polices = {}  # cache global (chemin -> (pymupdf.Font, nom))
 
 
 def _font_objet(gras, italic=False):
-    """Retourne (pymupdf.Font, nom) pour le style demandé, avec cache."""
+    """Return a cached PyMuPDF font and its PostScript name for the requested style."""
     if gras and italic:
         fichier, nom = _FONT_BOLD_ITALIC, "LiberationSans-BoldItalic"
     elif gras:
@@ -69,11 +57,7 @@ def _hex_to_rgb(hex_color):
 
 
 def _copier_images_et_dessins(src_page, dst_page, report, exclure=None):
-    """
-    Copie les images et dessins vectoriels du source vers la page de destination.
-    Les tracés de glyphes ne sont exclus que lorsque leur texte est reconstruit
-    visiblement ; les mots vectorisés inchangés gardent leur forme source.
-    """
+    """Copy source images and vector drawings to the destination page. Exclude glyph paths only when their text is visibly reconstructed."""
     exclure = exclure or []
 
     def _match_exclusion(rect):
@@ -105,7 +89,7 @@ def _copier_images_et_dessins(src_page, dst_page, report, exclure=None):
             else:
                 report["images_ignorees"] = report.get("images_ignorees", 0) + 1
         except Exception as e:
-            logger.warning("Échec copie image xref %s : %s", xref, e)
+            logger.warning("Could not copy image xref %s: %s", xref, e)
             report["images_ignorees"] = report.get("images_ignorees", 0) + 1
 
     # --- Dessins vectoriels ---
@@ -147,6 +131,10 @@ def _copier_images_et_dessins(src_page, dst_page, report, exclure=None):
                     dessins_ignores += 1
                     continue
             except Exception:
+                logger.debug(
+                    "Dessin vectoriel ignoré page %s (commande %r)",
+                    getattr(src_page, "number", "?"), typ, exc_info=True,
+                )
                 dessins_ignores += 1
                 continue
 
@@ -161,10 +149,7 @@ def _copier_images_et_dessins(src_page, dst_page, report, exclure=None):
 
 
 def _grouper_en_spans(mots, couleurs_echantillonnees=None, tolerance_y=3.0, ecart_max_mot=8.0):
-    """
-    Regroupe les mots consécutifs partageant ligne, style, couleur et mode
-    de conservation des tracés source en spans continus.
-    """
+    """Group adjacent words into continuous spans when line, style, color, and source-path handling match."""
     if not mots:
         return []
 
@@ -267,15 +252,7 @@ def _ascender_police_source(fontname, gras, italic):
 
 
 def _calibrer_lignes(ordre, tolerance=3.0):
-    """
-    Calcule une ligne de base COMMUNE par ligne visuelle.
-
-    L'ancienne méthode utilisait `bbox.y1`, ce qui provoquait un
-    flottement vertical car `y1` inclut les descendantes (p, q, j).
-    Les mots natifs réutilisent l'ascendante de la police source ; les
-    mots vectorisés utilisent leur hauteur d'encre propre. La médiane des
-    baselines obtenues aligne les spans d'une même ligne.
-    """
+    """Compute one shared typographic baseline for each visual line."""
     candidats = [w for w in ordre if w.bbox]
 
     lignes = []
@@ -351,11 +328,7 @@ def _calibrer_lignes(ordre, tolerance=3.0):
 
 
 def _recalage_necessaire(mot) -> bool:
-    """Un mot natif intact porte déjà sa taille de police exacte -- le
-    recalage horizontal le déforme inutilement (cf. cas , police
-    monospace mesurée avec une police de substitution : le recalage
-    inconditionnel la déformait sans raison). Nécessaire seulement pour
-    les mots dont le texte ou la provenance impose une reconstruction."""
+    """Decide whether horizontal repositioning is needed; intact native words already carry their exact font size."""
     texte_modifie = mot.resolved_text is not None and mot.resolved_text != mot.text
     return bool(
         mot.reconstructed
@@ -367,11 +340,7 @@ def _recalage_necessaire(mot) -> bool:
 
 
 def _inserer_span(writers, page_rect, span, report, baseline_par_id=None):
-    """
-    Insère un Span complet de texte dans le TextWriter correspondant à sa couleur.
-    Repositionne verticalement par baseline et comprime horizontalement
-    les spans reconstruits sans réduire leur corps vertical.
-    """
+    """Insert a complete text span with its color and baseline, compressing reconstructed spans horizontally when needed."""
     texte_complet = " ".join(span["textes"])
     espace_apres = bool(span.get("espace_apres"))
     rect = span["bbox"]
@@ -458,21 +427,18 @@ def _inserer_span(writers, page_rect, span, report, baseline_par_id=None):
 
 def render_rebuilt_pdf(doc: Document, output_path: str, source_pdf: str = None,
                        dpi: int = 300, simple_sort=False) -> str:
-    """
-    Reconstruit un PDF neuf, texte VISIBLE et sélectionnable, à la même position
-    que le source en utilisant l'approche par Spans / Lignes.
-    """
+    """Rebuild a selectable PDF at the source positions using grouped text spans and visual lines."""
     source_path = source_pdf or doc.metadata.source_pdf
     if not source_path:
-        raise ValueError("Le chemin du PDF source est requis (doc.metadata.source_pdf).")
+        raise ValueError("The source PDF path is required (doc.metadata.source_pdf).")
 
     source = pymupdf.open(source_path)
-    if len(source) != len(doc.pages):
-        source.close()
-        raise ValueError("Le PDF source et Document n'ont pas le même nombre de pages.")
-
-    output = pymupdf.open()
+    output = None
     try:
+        if len(source) != len(doc.pages):
+            raise ValueError("The source PDF and document must have the same number of pages.")
+        output = pymupdf.open()
+
         for src_page, model_page in zip(source, doc.pages):
             dst_page = output.new_page(width=src_page.rect.width, height=src_page.rect.height)
 
@@ -533,7 +499,7 @@ def render_rebuilt_pdf(doc: Document, output_path: str, source_pdf: str = None,
 
             report["liens_inseres"] = reinserer_liens(dst_page, model_page)
 
-            logger.info("page %s : %s", model_page.number, report)
+            logger.info("page %s: %s", model_page.number, report)
 
         Path(output_path).parent.mkdir(parents=True, exist_ok=True)
         output.set_metadata({
@@ -544,7 +510,8 @@ def render_rebuilt_pdf(doc: Document, output_path: str, source_pdf: str = None,
         output.save(output_path, garbage=4, deflate=True)
 
     finally:
-        output.close()
+        if output is not None:
+            output.close()
         source.close()
 
     return output_path

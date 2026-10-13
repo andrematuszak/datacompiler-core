@@ -1,18 +1,4 @@
-"""blind_spots.py — Détections additives non couvertes par text_integrity.py
-(mojibake, tokens anormaux) : substitution de caractère produisant un token
-à forme normale (ex. € -> e, l -> t).
- — Détecte deux classes de corruption invisibles
-à l'heuristique actuelle de diagnostic.py (SUSPECT_PATTERN/casse_irreguliere/
-chiffre_dans_mot), qui ne voient que des caractères de contrôle ou une
-structure de token anormale -- pas une substitution de caractère qui
-produit un token à la forme parfaitement normale (bonne casse, pas de
-chiffre, pas de caractère de contrôle).
-
-Découvert sur test3 (€ -> e systématique) et test7 (l -> t systématique,
-OCR tiers avec confusion de caractères visuellement proches).
-
-Additif : ne modifie pas diagnostic.py, expose deux fonctions à appeler en
-plus quand tu es prêt à les intégrer."""
+"""Add text-integrity signals not covered by basic control-character and token-shape checks, such as consistent character substitutions that still form plausible words."""
 
 import re
 from collections import Counter
@@ -38,8 +24,7 @@ def _trigrammes(mot: str):
 
 
 def mots_suspects_ngrammes(texte: str, longueur_min: int = 7, top_n: int = 20) -> list:
-    """Candidats à corruption caractère-par-caractère via trigrammes internes
-    au document. Signal faible — review humaine, pas verdict automatique."""
+    """Rank candidate words that may contain character-level corruption using document-internal trigrams. This is a weak signal for human review, not an automatic verdict."""
     mots = _MOT_PATTERN.findall(texte)
     if not mots:
         return []
@@ -62,8 +47,7 @@ def mots_suspects_ngrammes(texte: str, longueur_min: int = 7, top_n: int = 20) -
 
 
 def qualite_avec_confiance(texte: str, qualite_brute) -> dict:
-    """Enrichit une qualité déjà calculée avec un indicateur de confiance lié
-    à la taille de l'échantillon."""
+    """Augment an existing text-quality score with a confidence estimate based on the analyzed sample size."""
     nb_mots = len(TOKEN_PATTERN.findall(texte)) if texte else 0
     confiance_suffisante = nb_mots >= SEUIL_MOTS_FIABLE
     return {

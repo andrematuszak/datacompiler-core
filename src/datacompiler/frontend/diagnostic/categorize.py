@@ -1,25 +1,4 @@
-"""categorize.py — Catégorie unique dérivée d'un Diagnostic déjà rempli.
-Calcule un champ catégoriel UNIQUE à partir d'un Diagnostic déjà rempli par ton diagnostic.py existant (peu importe
-qu'il soit au niveau Document ou Page).
-
-Pourquoi un fichier séparé plutôt que recalculer dans resolve.py et dans
-faithful_pdf.py chacun de leur côté : c'est justement ce qui arriverait
-sinon -- deux dérivations indépendantes de "est-ce que cette page est
-propre/corrompue/scannée" à partir des mêmes champs bruts
-(recommend_ocr, embedded_ocr_detected, has_native_text...), qui peuvent
-diverger silencieusement le jour où un seuil change dans un seul des deux
-fichiers. Ici, une seule fonction, un seul endroit à modifier.
-
-Usage (ne modifie rien tant que tu ne l'appelles pas explicitement) :
-    from .categorize import categoriser
-
-    doc.diagnostic.categorie = categoriser(
-        has_native_text=doc.diagnostic.has_native_text,
-        embedded_ocr_detected=doc.diagnostic.embedded_ocr_detected,
-        native_text_quality=doc.diagnostic.native_text_quality,
-        native_text_coverage=doc.diagnostic.native_text_coverage,
-    )
-"""
+"""Derive a single page category and segmentation recommendation from already-computed diagnostic signals. This module does not reopen or reprocess the PDF."""
 
 from typing import Optional
 
@@ -39,11 +18,7 @@ def categoriser(
     native_text_quality: Optional[float],
     native_text_coverage: Optional[float] = None,
 ) -> str:
-    """Dérive une catégorie unique depuis les signaux déjà calculés.
-
-    ``natif_propre`` veut dire texte lisible *et* couverture native suffisante,
-    pas seulement « du texte natif existe ».
-    """
+    """Derive one page category from already-computed diagnostic signals."""
     if not has_native_text:
         return CATEGORIE_SCAN
     if embedded_ocr_detected:
@@ -56,25 +31,25 @@ def categoriser(
 
 
 def evaluer_segmentation_page(page, diag_page):
-    """Évalue si une page individuelle nécessite la macro-segmentation."""
+    """Decide whether an individual page needs macro-segmentation."""
     reasons = []
 
     graphics = getattr(page, "graphics", None)
     tables = getattr(graphics, "tables", []) if graphics else []
     if len(tables) > 0:
-        reasons.append("tableaux détectés")
+        reasons.append("tables detected")
 
     vector_zones = getattr(page, "vector_zones", [])
     if getattr(diag_page, "vectorized_text_detected", False) or len(vector_zones) > 0:
-        reasons.append("texte vectorisé présent")
+        reasons.append("vectorized text present")
 
     images = getattr(graphics, "images", []) if graphics else []
     if images:
-        reasons.append("images détectées")
+        reasons.append("images detected")
 
     reading_score = getattr(diag_page, "reading_order_score", None)
     if reading_score is not None and reading_score < 0.8:
-        reasons.append("désordre spatial natif")
+        reasons.append("native text has spatial disorder")
 
     if reasons:
         diag_page.recommend_segmentation = True

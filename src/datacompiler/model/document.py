@@ -1,5 +1,4 @@
-"""document.py — Assemblage du modèle : Word (le nœud central, référencé
-depuis native/ocr/resolved), conteneurs de page, Page, Document."""
+"""Assemble the document model: words, page-layer containers, pages, and the complete document."""
 
 import json
 from dataclasses import asdict, dataclass, field
@@ -8,6 +7,8 @@ from typing import Any, Dict, List, Optional, Tuple
 from datacompiler.model.geometry import BBox, Polygon
 from datacompiler.model.font import Font
 from datacompiler.model.metadata import Diagnostic, Metadata
+
+JSON_SCHEMA_VERSION = "1.0"
 
 
 @dataclass
@@ -129,12 +130,7 @@ class GraphicsContainer:
 
 @dataclass
 class LinkElement:
-    """Lien cliquable d'une page (annotation /Link du PDF source).
-
-    Le texte situé sous un lien est souvent vectorisé (tracés, pas de mots natifs) : il est lu
-    comme les autres zones vectorielles, puis rattaché au lien par `word_ids` (ids de
-    page.resolved.words, remplis par compile.links.associer_liens). `bbox` reste la zone
-    cliquable d'origine."""
+    """Represent a clickable link annotation from a source PDF page."""
     id: int
     bbox: Optional[BBox] = None
     kind: str = "uri"                 # "uri" | "goto" | "autre"
@@ -181,7 +177,7 @@ class Page:
 
     @property
     def link_rects(self) -> List[Tuple[float, float, float, float]]:
-        """Rectangles (x0, y0, x1, y1) des liens -- vue en lecture seule, non sérialisée."""
+        """Expose link rectangles as a read-only, non-serialized view."""
         return [(l.bbox.x0, l.bbox.y0, l.bbox.x1, l.bbox.y1) for l in self.links if l.bbox]
 
 
@@ -194,6 +190,7 @@ class Document:
     def to_dict(self) -> Dict[str, Any]:
         data = asdict(self)
         data.pop("diagnostic", None)
+        data["schema_version"] = JSON_SCHEMA_VERSION
         return data
 
     def to_json(self) -> str:
@@ -210,6 +207,13 @@ class Document:
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "Document":
+        version = data.get("schema_version")
+        if version is not None and version != JSON_SCHEMA_VERSION:
+            raise ValueError(
+                f"Unsupported JSON schema version: {version!r} "
+                f"(supported version: {JSON_SCHEMA_VERSION!r})"
+            )
+
         def decision(d):
             if not d:
                 return None

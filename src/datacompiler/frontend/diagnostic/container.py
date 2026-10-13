@@ -1,10 +1,4 @@
-﻿"""container.py — Signaux tirés des métadonnées du conteneur PDF, pas du
-contenu extrait.
-
-PRODUCTEURS_SUSPECTS est VOLONTAIREMENT VIDE au départ : je n'ai aucune
-preuve empirique que tel ou tel producteur produit systématiquement du
-texte corrompu. À peupler UNIQUEMENT quand un de vos tests le confirme,
-pas par supposition."""
+"""Inspect PDF container metadata rather than extracted page content. Suspicious producer rules remain empty until supported by evidence from real documents."""
 
 from typing import Optional
 

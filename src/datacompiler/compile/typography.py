@@ -1,23 +1,4 @@
-"""typography.py — Normalisation typographique sur une liste de Word DÉJÀ
-DANS L'ORDRE DE LECTURE (c'est reading_order.py qui garantit cet ordre --
-la césure de fin de ligne ne peut se détecter que si on sait quel mot suit
-réellement quel mot à l'écran).
-
-Deux opérations, volontairement séparées :
-  - ligatures : substitution de caractères, indépendante de l'ordre.
-  - césures   : fusion de deux mots consécutifs quand le premier se termine
-                par un trait d'union en fin de ligne et que le second
-                commence la ligne suivante.
-
-LIMITE CONNUE (documentée plutôt que masquée) : rien ne distingue de façon
-fiable un trait d'union de CÉSURE (mot coupé, à refusionner) d'un trait
-d'union LEXICAL (mot composé qui se termine légitimement par un tiret en
-fin de ligne, ex. "avant-" / "avant-garde" coupé pile à l'endroit du tiret
-existant). L'heuristique fusionne systématiquement -- c'est le choix qui
-minimise l'erreur la plus fréquente (mots coupés) au prix, plus rare, de
-mots composés mal refusionnés. À affiner plus tard si besoin (dictionnaire,
-liste d'exceptions) plutôt que bloquant pour cette première version.
-"""
+"""Normalize ligatures and line-break hyphenation in words that are already in reading order. Heuristics favor common line-break repairs and can be refined with a larger corpus."""
 
 from datacompiler.model.document import Word, Decision
 
@@ -44,10 +25,7 @@ def _a_des_ligatures(texte: str) -> bool:
 
 
 def _rupture_de_ligne(mot_a: Word, mot_b: Word, tolerance_y: float = 3.0) -> bool:
-    """True si mot_b commence une nouvelle ligne visuelle par rapport à
-    mot_a (saut vertical + retour vers la gauche), sans reconstruire tout
-    le regroupement en lignes -- comparaison locale entre deux mots
-    consécutifs de la séquence déjà ordonnée."""
+    """Return whether the second word starts a new visual line based on vertical movement and leftward return."""
     if not mot_a.bbox or not mot_b.bbox:
         return False
     saut_y = mot_b.bbox.y0 - mot_a.bbox.y0
@@ -68,10 +46,7 @@ def _ressemble_a_une_cesure(mot_a: Word, mot_b: Word) -> bool:
 
 
 def normaliser(mots: list) -> list:
-    """Applique ligatures + fusion de césures sur une liste de Word déjà en
-    ordre de lecture. Retourne une NOUVELLE liste (les mots absorbés par une
-    fusion de césure sont retirés plutôt que laissés vides, pour ne pas
-    dépendre d'une convention "texte vide = ignorer mot" côté renderers)."""
+    """Return a new reading-order word list with ligatures expanded and line-break hyphenation merged."""
     resultat = []
     i = 0
     n = len(mots)

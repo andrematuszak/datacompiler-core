@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "datacompiler"
-version = "0.1.0"
+dynamic = ["version"]
 description = "Nettoyage et reconstruction géométrique fidèle de fichiers PDF"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -15,7 +15,6 @@ dependencies = [
     "pdfplumber>=0.11",
     "numpy>=1.24.0",
     "reportlab",
-    "pytesseract>=0.3.10",
     "Pillow>=10.0",
     "pdf2image",
     "python-docx>=1.1.0",
@@ -32,7 +31,6 @@ dependencies = [
 ocr = [
     "accelerate>=0.26.0",
     "mistralai>=1.0.0",
-    "pytesseract>=0.3.10",
     "paddlepaddle",
     "paddleocr"
 ]
@@ -46,12 +44,12 @@ dev = [
     "pytest-cov",
     "black",
     "ruff",
-    "mypy"
+    "mypy",
+    "jsonschema>=4.20"
 ]
 # Groupe pour tout installer en une commande
 all = [
     "mistralai>=1.0.0",
-    "pytesseract>=0.3.10",
     "Pillow>=10.0",
     "paddlepaddle",
     "paddleocr",
@@ -65,8 +63,15 @@ datacompiler = "datacompiler.pipeline:main"
 [tool.setuptools]
 include-package-data = true
 
+[tool.setuptools.dynamic]
+version = {attr = "datacompiler._version.__version__"}
+
 [tool.setuptools.packages.find]
 where = ["src"]
 
 [tool.setuptools.package-data]
-datacompiler = ["backend/fonts/*.ttf"]
+datacompiler = ["backend/fonts/*.ttf", "backend/fonts/*.txt"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"

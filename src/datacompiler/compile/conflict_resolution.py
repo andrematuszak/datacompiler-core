@@ -1,13 +1,4 @@
-"""conflict_resolution.py — Décide, pour chaque UniteAlignement produite par
-alignment.py, quel texte final retenir dans page.resolved.words.
-
-Règle de base : la bbox vient TOUJOURS du mot natif quand il existe (seul
-des deux à en avoir une, cf. alignment.py) -- un conflit ne fait jamais
-perdre le positionnement, seulement potentiellement le texte.
-
-En second passage, `_interpoler_bboxes` attribue une bbox estimée aux mots
-présents uniquement en OCR (`ocr_seul`) afin d'assurer leur rendu.
-"""
+"""Choose the final text for each aligned native/OCR unit. Preserve the native bounding box whenever available and estimate positions only for OCR-only words that can be placed safely."""
 
 from datacompiler.model.document import Word, Decision, BBox
 
@@ -48,10 +39,7 @@ def _resoudre_conflit(unite) -> Word:
 
 
 def _interpoler_bboxes(mots: list) -> None:
-    """Comble les bbox manquantes des mots ocr_seul par interpolation
-    linéaire entre le mot positionné précédent et le mot positionné
-    suivant dans resolved.words. Modifie `mots` en place.
-    """
+    """Estimate missing bounding boxes for OCR-only words between positioned neighbors. Modify the supplied word list in place."""
     i, n = 0, len(mots)
     while i < n:
         if mots[i].bbox is not None:
@@ -122,8 +110,7 @@ def _interpoler_bboxes(mots: list) -> None:
 
 
 def resoudre_page(unites: list) -> list:
-    """Transforme une liste de UniteAlignement en liste de Word prête pour
-    page.resolved.words."""
+    """Convert aligned native/OCR units into the resolved word list for one page."""
     resultat = []
 
     for unite in unites:

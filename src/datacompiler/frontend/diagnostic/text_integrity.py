@@ -1,5 +1,4 @@
-﻿"""text_integrity.py — Qualité du texte natif reconstruit (mojibake,
-tokens anormaux) et densité textuelle par page."""
+"""Measure native-text quality and text density per page using corruption and token-shape signals."""
 
 from typing import Optional
 
@@ -29,8 +28,6 @@ def densite_texte(page) -> float:
 
 
 def page_a_faible_densite(page) -> bool:
-    """Signal FAIBLE isolément : une page de titre légitime a peu de mots
-    aussi. À combiner côté orchestrateur avec l'absence d'image (sinon
-    c'est juste `has_full_page_images` qui explique déjà le vide)."""
+    """Return whether native-text density is low; use this only as a combined diagnostic signal."""
     return densite_texte(page) < SEUIL_DENSITE_BASSE
 

@@ -1,136 +1,4 @@
-"""reading_order.py — Détermine l'ordre de lecture réel des mots natifs
-d'une page, en construisant des BOÎTES (régions rectangulaires physiques),
-en les regroupant en RANGÉES par chevauchement vertical, puis en triant
-chaque rangée gauche -> droite.
-
-Ne modifie ni texte ni bbox -- uniquement l'ORDRE. typography.py (césures)
-et alignment.py (natif<->OCR) supposent tous les deux que cet ordre est déjà
-correct quand ils s'exécutent.
-
-Remplace l'ancien moteur par détection de colonnes globales
-(SEUIL_GAP / _colonnes_depuis_fragments / pleine largeur), qui s'est révélé
-structurellement incapable de gérer un layout "libellé aligné à gauche /
-valeur alignée à droite sur la même ligne" (ex. "Détail des revenus" du
-document fiscal : bloc PyMuPDF multi-lignes de libellés vs colonne de
-montants une-ligne chacun -- les deux tombaient dans deux "colonnes"
-distinctes, triées indépendamment, perdant l'appariement). Confirmé aussi
-fragile sur un layout de lettre/formulaire (page 1 du même document,
-plusieurs encarts à x0 différents mais pas de vraies colonnes de lecture
-parallèle) : l'ancien moteur dépendait d'un seuil "pleine largeur" (90% de
-la ligne la plus large observée) pour décider quand vider les tampons de
-colonne -- un seuil qui basculait entre correct et cassé pour des écarts de
-largeur de bbox de quelques points, preuve empirique à l'appui.
-
-PRINCIPE (aucune notion de "colonne globale") :
-
-1. Construire des BOÎTES :
-   - natif : le champ `.block` de PyMuPDF donne un découpage gratuit, mais
-     un bloc peut couvrir un paragraphe multi-lignes entier (ex. 90pt,
-     7 lignes empilées) -- laissé en une seule boîte, il absorbe dans sa
-     rangée plusieurs petites boîtes concurrentes en face (ex. une colonne
-     de montants, une ligne par valeur), perdant l'info verticale pour les
-     remettre dans le bon ordre. Confirmé empiriquement (bug N5/N21-N26 :
-     "Salaires" vs "30050" etc.). (block, line) de PyMuPDF a été testé
-     comme fix et écarté : line=0 uniforme même sur un bloc normal dès
-     qu'il y a des pointillés de tabulation sur ce document. Fix retenu :
-     redécoupage par tolérance géométrique sur y0
-     (`_grouper_lignes_par_tolerance`), une boîte par LIGNE physique.
-   - vectorisé (`.is_vectorized`) : pas de `.block` exploitable -> les mots
-     sont clusterisés par proximité géométrique (union-find sur
-     chevauchement de bbox dilatée), puis chaque cluster est lui aussi
-     redécoupé en lignes par la même tolérance géométrique (même bug que
-     N5, côté vectorisé : cas V12, "Numéro FIP / Numéro rôle / Date
-     d'établissement / Date mise en recouvrement" fusionnés à tort en une
-     seule boîte de 40pt par le clustering).
-   - Repli défensif : un mot natif sans `.block` (cas non rencontré sur le
-     document de test, mais pas garanti sur un autre) devient sa propre
-     boîte à un seul mot plutôt que d'être silencieusement perdu.
-
-2. Regrouper les boîtes en RANGÉES par chevauchement vertical significatif
-   (tri par y0, extension de plage tant que le chevauchement dépasse
-   SEUIL_CHEVAUCHEMENT_RANGEE). Une rangée à 1 boîte = comportement page
-   normale ; une rangée à N boîtes = les N boîtes sont lues côte à côte,
-   peu importe qu'elles fassent partie d'un "vrai" système de colonnes de
-   texte ou soient juste deux encarts positionnés l'un à côté de l'autre.
-
-3. Trier chaque rangée par x0 croissant (gauche -> droite), concaténer les
-   rangées dans l'ordre (haut -> bas).
-
-RISQUE CONNU, NON ÉLIMINÉ : une boîte nettement plus haute que ses voisines
-de rangée n'a besoin de chevaucher que SEUIL_CHEVAUCHEMENT_RANGEE (30%) de
-la hauteur d'une petite boîte pour l'absorber dans sa rangée -- et
-transitivement, tout ce qui touche cette petite boîte aussi, même sans
-jamais toucher la grosse boîte directement. `diagnostiquer_absorption` sert
-à repérer ce risque a posteriori (rangées où le ratio hauteur max/min
-dépasse 3x) ; ce n'est PAS branché automatiquement dans `ordonner()` (qui
-reste une fonction pure, sans log) -- à appeler explicitement depuis les
-tests ou le pipeline si besoin d'une alerte QA.
-
-LIMITE CONNUE, NON RETESTÉE dans cette version : le papier IEEE deux
-colonnes qui avait motivé l'ancien moteur colonnes n'a pas été revérifié
-avec cette nouvelle approche -- risque de régression non écarté (choix
-explicite : "on reste sur mon premier test, on bosse test par test").
-
-L'exclusion des mots de table (`_dans_un_tableau`/`graphics.tables`) est
-CONSERVÉE en amont, inchangée par rapport à l'ancienne version -- décision
-d'architecture volontaire, un changement à la fois. Les mots de table ne
-passent PAS par le moteur boîtes/rangées général.
-
-INTÉGRATION CHIRURGICALE (ajoutée après la mise en place de
-compile/layout_tree.py) : les mots de table ne sont plus réintégrés par un
-tri plat (y0, x0) unique -- ce tri mélangeait en-têtes et lignes de valeurs
-dès qu'ils se chevauchaient verticalement (confirmé : "situation du foyer"
-et "C T" du document fiscal, deux lignes visuellement distinctes mais
-suffisamment proches en y pour un tri plat les entrelacer). Chaque table
-est maintenant ordonnée via SA PROPRE grille (`TableElement.cell_bboxes`,
-déjà calculée à l'extraction par extract/pdfplumber.py) : ligne par ligne,
-cellule par cellule gauche->droite au sein de chaque ligne -- même principe
-que `construire_boite_tableau` (layout_tree.py), mais appliqué directement
-à des objets Word plutôt qu'à des ids, PARCE QUE cette fonction tourne
-AVANT la renumérotation finale de compiler.py (mots encore à id=-1 pour
-les vectorisés à ce stade, cf. docstring de construire_boite_tableau pour
-le détail) -- utiliser des ids ici serait prématuré, pas une erreur en soi,
-mais une dépendance sur une garantie qui n'existe pas encore à ce point du
-pipeline. Un mot dans une table mais dans AUCUNE cellule (bord, cellule
-fusionnée sans bbox) reste capté par le même filet de sécurité qu'avant :
-tri plat (y0, x0), en fin de liste -- jamais perdu.
-
-LIMITE CONNUE, NON RÉSOLUE par cette intégration : un mot peut être proche
-d'une table sans que `_dans_un_tableau` le capte -- si la bbox de la table
-détectée par pdfplumber ne s'étend pas jusqu'à cette "ligne invisible" (ex.
-confirmé : "C"/"T" du document fiscal, juste sous la bbox du tableau
-d'en-têtes, jamais inclus dans mots_dans_table). Ce cas-là reste traité par
-le moteur boîtes/rangées général, pas par cette intégration -- un problème
-de géométrie de détection en amont (extract/pdfplumber.py), pas d'ordre.
-
-INTÉGRATION CHIRURGICALE #2 (encadrés colorés, cf.
-frontend/layout/detectors.py::detecter_boites_encadres) : même principe que
-l'intégration table ci-dessus, appliquée aux rectangles/quads détectés par
-couleur (ex. les encadrés bleus "Vos références"/"Vos contacts" du document
-fiscal). Un mot dont le centre tombe dans un encadré est retiré du bassin
-général et ordonné À PART, récursivement, par le même algorithme
-boîtes/rangées (`_ordonner_sous_ensemble`).
-
-Chaque encadré est ensuite réinséré dans la séquence finale comme un ITEM
-ATOMIQUE, positionné par un simple TRI STABLE sur son propre y0 -- PAS par
-le mécanisme de chevauchement de `_ordonner_par_boites`. Version précédente
-cassée, gardée en mémoire ici : y faire participer l'encadré comme UNE
-Boite unique (bbox = toute sa hauteur, ex. 190pt pour "Vos références")
-recréait exactement le RISQUE CONNU documenté plus haut ("boîte nettement
-plus haute que ses voisines absorbe tout ce qui la chevauche à 30%") --
-confirmé empiriquement : "DUPONT ..." (hors de tout encadré, mais
-verticalement contenu dans sa plage y) se retrouvait réinjecté AU MILIEU de
-ses lignes plutôt qu'après.
-
-LIMITE CONNUE, NON RÉSOLUE par cette intégration : un mot logiquement
-rattaché à un encadré mais physiquement situé en dehors de sa bbox (ex.
-confirmé sur le document fiscal : le libellé destinataire "DUPONT
-..." lui-même, qui précède "Vos références" dans l'ordre idéal sans
-être dans AUCUN encadré) n'est pas résolu par cette intégration -- il reste
-positionné par le moteur boîtes/rangées général, à sa position géométrique
-naturelle. Reste un problème ouvert pour une itération suivante si le
-résultat empirique le confirme.
-"""
+"""Determine native-word reading order by grouping words into physical regions and rows. The algorithm supports multi-column layouts and preserves deterministic output."""
 
 import itertools
 from copy import deepcopy
@@ -162,14 +30,7 @@ _dans_un_tableau = dans_un_tableau
 
 
 def _grouper_lignes_par_tolerance(mots, tolerance=TOLERANCE_LIGNE):
-    """Regroupe des mots en lignes (liste de LISTES, pas encore aplatie)
-    par tolérance sur y0 -- coeur commun réutilisé à deux endroits :
-    1. `_grouper_par_ligne_tolerant` : tri final à l'intérieur d'une boîte.
-    2. `_construire_boites_natives`/`_construire_boites_vectorisees` :
-       découpage d'un bloc/cluster en boîtes une-ligne AVANT le
-       regroupement en rangées, pas seulement au moment du tri final --
-       voir docstring de module pour le bug concret (N5/V12) que ça
-       corrige."""
+    """Group words into visual lines by y-coordinate tolerance without flattening the lines."""
     mots_tries = sorted(mots, key=lambda w: w.bbox.y0)
     lignes = []
     ligne_courante = []
@@ -189,10 +50,7 @@ def _grouper_lignes_par_tolerance(mots, tolerance=TOLERANCE_LIGNE):
 
 
 def _grouper_par_ligne_tolerant(mots, tolerance=TOLERANCE_LIGNE):
-    """Regroupe des mots en lignes par tolérance sur y0 (pas un tri brut),
-    puis trie chaque ligne par x0. Évite qu'un micro-écart de y0 (ex. 19.7
-    vs 21.4, deux mots de la MÊME ligne visuelle) ne fasse passer un mot de
-    droite avant un mot de gauche."""
+    """Group words into lines using y tolerance, then sort each line from left to right."""
     lignes = _grouper_lignes_par_tolerance(mots, tolerance)
     resultat = []
     for ligne in lignes:
@@ -201,9 +59,7 @@ def _grouper_par_ligne_tolerant(mots, tolerance=TOLERANCE_LIGNE):
 
 
 def _ordonner_items_par_ligne(items, tolerance=TOLERANCE_LIGNE):
-    """Fusionne dans une même ligne les blocs dont le y0 diffère légèrement,
-    puis les lit de gauche à droite. Le tri final par y0 seul séparait parfois
-    les fragments natifs et vectorisés d'une même ligne."""
+    """Merge blocks whose vertical positions differ slightly, then read each line from left to right."""
     items_tries = sorted(items, key=lambda item: item[0])
     lignes = []
     ligne_courante = []
@@ -226,10 +82,7 @@ def _ordonner_items_par_ligne(items, tolerance=TOLERANCE_LIGNE):
 
 
 class Boite:
-    """Région rectangulaire regroupant un ou plusieurs mots déjà reconnus
-    comme faisant partie de la même ligne physique (native ou vectorisée).
-    Volontairement publique : `diagnostiquer_absorption` et les tests
-    manipulent directement des `Boite`."""
+    """Represent a physical text region containing words from one native or vectorized line."""
     __slots__ = ("id", "x0", "y0", "x1", "y1", "mots", "origine")
 
     def __init__(self, id_, mots, origine):
@@ -248,11 +101,7 @@ class Boite:
 
 
 def _construire_boites_natives(mots_natifs, tolerance_ligne=TOLERANCE_LIGNE):
-    """Une boîte par LIGNE physique à l'intérieur de chaque bloc PyMuPDF,
-    pas une boîte par bloc entier (cf. docstring de module, bug N5). Un mot
-    sans `.block` (repli défensif, jamais rencontré sur le document de
-    test mais pas garanti ailleurs) devient sa propre boîte isolée plutôt
-    que d'être perdu."""
+    """Create one region per physical line within each PyMuPDF text block."""
     compteur_repli = itertools.count()
     par_block = defaultdict(list)
     for w in mots_natifs:
@@ -267,7 +116,7 @@ def _construire_boites_natives(mots_natifs, tolerance_ligne=TOLERANCE_LIGNE):
 
 
 class _UnionFind:
-    """Structure union-find pour le clustering des mots vectorisés."""
+    """Implement disjoint-set operations for clustering nearby vectorized words."""
     def __init__(self, n):
         self.parent = list(range(n))
 
@@ -284,7 +133,7 @@ class _UnionFind:
 
 
 def _chevauche_dilate(a, b, marge):
-    """Vérifie si deux bbox se chevauchent après dilatation de `marge` points."""
+    """Return whether two bounding boxes overlap after expanding them by a margin."""
     return not (a.bbox.x1 + marge < b.bbox.x0 or
                 a.bbox.x0 - marge > b.bbox.x1 or
                 a.bbox.y1 + marge < b.bbox.y0 or
@@ -293,12 +142,7 @@ def _chevauche_dilate(a, b, marge):
 
 def _construire_boites_vectorisees(mots_vecto, marge=DILATATION_CLUSTERING_VECTO,
                                     tolerance_ligne=TOLERANCE_LIGNE):
-    """Le clustering union-find regroupe des mots proches en une même ZONE
-    OCR -- légitime en soi, mais si on laisse la zone entière comme UNE
-    boîte, elle subit le même problème que N5 côté natif (cas V12, cf.
-    docstring de module). Donc : cluster par proximité pour DÉCIDER quels
-    mots appartiennent à la même zone, puis redécoupe cette zone en lignes
-    (même logique que côté natif) avant de créer les boîtes finales."""
+    """Cluster nearby vectorized words into OCR regions and split oversized regions into physical-line boxes."""
     n = len(mots_vecto)
     if n == 0:
         return []
@@ -321,12 +165,7 @@ def _construire_boites_vectorisees(mots_vecto, marge=DILATATION_CLUSTERING_VECTO
 
 
 def diagnostiquer_absorption(rangees, seuil_ratio=3.0):
-    """Alerte sur les rangées où une boîte est nettement plus haute que les
-    autres membres -- signature du risque qu'une grosse boîte absorbe à
-    tort une petite boîte sans rapport dans sa rangée (cf. RISQUE CONNU,
-    docstring de module). PAS appelée automatiquement par `ordonner()` --
-    fonction pure, sans log ; à appeler explicitement depuis les tests ou
-    le pipeline (QA) si une alerte est souhaitée."""
+    """Warn when one region is much taller than its peers, indicating a risk that it absorbed an unrelated region."""
     alertes = []
     for i, rangee in enumerate(rangees):
         if len(rangee) < 2:
@@ -342,22 +181,7 @@ def diagnostiquer_absorption(rangees, seuil_ratio=3.0):
 
 
 def _ordonner_par_boites(boites, seuil=SEUIL_CHEVAUCHEMENT_RANGEE):
-    """Regroupe les boîtes en rangées (chevauchement vertical >= seuil),
-    trie chaque rangée par x0, concatène. Retourne (boîtes dans l'ordre,
-    rangées avant aplatissement) -- le second élément sert uniquement au
-    diagnostic (`diagnostiquer_absorption`).
-
-    Une nouvelle boîte est comparée à la BANDE COMMUNE de la rangée
-    (intersection courante des bornes y de tous les membres déjà admis),
-    PAS à un membre individuel pris isolément. La bande ne peut que
-    RÉTRÉCIR à chaque ajout, jamais s'élargir -- ça borne la dérive à
-    l'ancre initiale de la rangée. Sans ça (comparaison à "n'importe quel
-    membre déjà présent"), une rangée peut dériver transitivement loin de
-    son ancre : A chevauche B, B chevauche C, mais A et C ne se chevauchent
-    jamais -- A, B et C finiraient quand même dans la même rangée, triés
-    par x0 sans rapport avec leur position verticale réelle. Confirmé
-    empiriquement (deux champs sans rapport, colonnes horizontalement
-    éloignées, finissaient dans la même rangée avec la version "any")."""
+    """Group regions into rows by vertical overlap, sort each row horizontally, and return both ordered regions and rows."""
     boites_triees = sorted(boites, key=lambda b: b.y0)
     rangees = []
     rangee_courante = []
@@ -395,43 +219,7 @@ def _ordonner_par_boites(boites, seuil=SEUIL_CHEVAUCHEMENT_RANGEE):
 
 
 def _deferer_satellites(rangees, ecart_x0=3.0, seuil_densite=0.5, min_pile=3):
-    """Lit les boîtes SATELLITES d'une pile APRÈS la pile, au lieu de les
-    intercaler dans la rangée où elles tombent par simple chevauchement
-    vertical.
-
-    Cas réel (test-impots-revenu.pdf, 27/09/2026) : "AVIS_IR_RG" (petit
-    repère à droite, y=33-39) chevauche verticalement la ligne "Impôt sur
-    les revenus de 2020" (y=27.9-47.2) -> même rangée -> lu juste après
-    elle, AVANT "Avis d'impôt établi en 2021", qui fait pourtant partie du
-    même titre (trois lignes alignées à gauche, x0 = 128.3 / 128.0 /
-    127.6).
-
-    Définitions :
-      - ancre d'une rangée = sa boîte la plus à gauche ;
-      - pile = ancres consécutives alignées à gauche (x0 à `ecart_x0` près)
-        et verticalement jointives (écart <= hauteur de la plus petite) ;
-      - satellites = boîtes non-ancres des rangées d'une pile.
-    Si peu de rangées de la pile ont un partenaire (proportion <
-    `seuil_densite`), les partenaires ne sont pas des "valeurs" appariées
-    ligne à ligne mais des annexes : elles passent après la pile.
-
-    Ne touche pas au cas "libellé / valeur" (chaque libellé de la pile a
-    sa valeur : proportion 1.0 -> intact). Vérifié sur la page 1 du
-    document de test : seule AVIS_IR_RG change de place (2 boîtes déplacées
-    sur 41 rangées). NON vérifié sur d'autres documents ; approximation
-    (bbox d'encre des tracés, pas les bbox Paddle) pour la validation.
-    EXCEPTION -- valeurs sur la même ligne que leur libellé (page 3 de l'avis
-    d'impôt : « Plafond total de 2019 ..... 15810 », « Revenu fiscal de
-    référence ..... 28548 »...). Ces partenaires sont alignés sur l'ancre
-    (|y0 - y0 de l'ancre| <= ECART_Y0_MEME_LIGNE) : ce sont des valeurs
-    lues avec leur libellé, pas des annexes. La décision de différer reste
-    celle de la densité (inchangée), mais seuls les satellites NON alignés
-    sont déplacés ; sans cette exception, toute une colonne de montants
-    partait à la fin de la pile, loin de ses libellés.
-
-    Retourne (rangées triées par x0, {id(satellite): y0 repère}) : le
-    repère sert au tri final par y0 de `ordonner()`, qui sinon remettrait
-    le satellite avant la fin de la pile."""
+    """Place small satellite regions after their main stack instead of interleaving them by vertical overlap alone."""
     if not rangees:
         return [], {}
 
@@ -476,12 +264,7 @@ def _deferer_satellites(rangees, ecart_x0=3.0, seuil_densite=0.5, min_pile=3):
 
 
 def _ordonner_sous_ensemble(mots):
-    """Applique l'algorithme boîtes/rangées (natif/vectorisé -> boîtes par
-    ligne -> rangées par chevauchement -> tri x0) à un sous-ensemble de mots
-    DÉJÀ ISOLÉ -- extraction pure du corps historique de `ordonner()`, sans
-    changement de comportement. Réutilisée deux fois : sur le "reste de
-    page" (hors encadrés) et, récursivement, sur le contenu de CHAQUE
-    encadré détecté (cf. `ordonner()`, section ENCADRÉS)."""
+    """Apply region-and-row ordering to an already isolated subset of words."""
     natifs = [w for w in mots if not getattr(w, "is_vectorized", False)]
     vectos = [w for w in mots if getattr(w, "is_vectorized", False)]
     boites_natives = _construire_boites_natives(natifs)
@@ -497,7 +280,7 @@ def _ordonner_sous_ensemble(mots):
 
 
 def _conteneurs_liens(page):
-    """Zones cliquables assez petites pour être lues comme UN bloc de texte (encadré-lien)."""
+    """Identify small clickable regions that should be read as one boxed text block."""
     surface = max(1.0, page.width * page.height)
     conteneurs = []
     for lien in getattr(page, "links", []):
@@ -508,8 +291,7 @@ def _conteneurs_liens(page):
 
 
 def _ordonner_lignes_simple(mots, tolerance=TOLERANCE_LIGNE):
-    """Ordre de lecture d'un petit bloc de texte : lignes de haut en bas, mots de gauche à droite.
-    Pour un texte justifié, les grands écarts entre mots ne doivent PAS le couper en colonnes."""
+    """Read a small text block from top to bottom and each line from left to right."""
     resultat = []
     for ligne in _grouper_lignes_par_tolerance(mots, tolerance):
         resultat.extend(sorted(ligne, key=lambda w: w.bbox.x0))
@@ -517,16 +299,7 @@ def _ordonner_lignes_simple(mots, tolerance=TOLERANCE_LIGNE):
 
 
 def _repartir_par_encadre(mots, encadres):
-    """Partitionne `mots` (déjà hors table) entre les encadrés détectés
-    (centre du mot dans la bbox de l'encadré -- même convention que
-    `mot_dans_cellule`/`dans_un_tableau`, réutilisée telle quelle) et le
-    reste de la page. Retourne (dict index_encadre -> [mots],
-    [mots hors de tout encadré]).
-
-    Un mot n'est jamais compté dans deux encadrés : le premier encadré qui
-    le capte (dans l'ordre de la liste `encadres`) l'emporte -- même
-    principe défensif que l'assignation table-par-table plus bas dans ce
-    fichier, au cas où deux zones détectées se chevaucheraient."""
+    """Assign non-table words to detected boxes according to their centers."""
     par_encadre = defaultdict(list)
     restants = list(mots)
     for idx, encadre in enumerate(encadres):
@@ -543,31 +316,7 @@ def _repartir_par_encadre(mots, encadres):
 
 
 def _ordonner_mots_table(mots_table, table):
-    """Ordonne les mots d'UNE table selon sa grille `cell_bboxes` (ligne
-    par ligne, cellule par cellule gauche->droite) -- remplace le tri plat
-    (y0, x0) qui mélangeait en-têtes et lignes de valeurs proches
-    verticalement (cf. docstring de module, section "INTÉGRATION
-    CHIRURGICALE").
-
-    Au sein d'une cellule : regroupement en lignes par TOLÉRANCE
-    (_grouper_lignes_par_tolerance, même fonction que pour les boîtes
-    natives/vectorisées du moteur général) avant de trier chaque ligne par
-    x0 -- PAS un tri plat (y0, x0) direct. Erreur commise puis corrigée
-    dans cette même fonction : sur les vraies coordonnées de la page 2,
-    "foyer" (y0=94.6) triait avant "situation"/"du" (y0=94.8) à cause d'un
-    écart de 0.2pt -- exactement le mécanisme du bug "Feuillet 1 2" déjà
-    corrigé ailleurs (cf. Cas 5, test_reading_order_regression.py) et
-    réintroduit ici par inattention avant d'être repéré sur données
-    réelles.
-
-    Mots hors de toute cellule connue (bord, cellule fusionnée) : ajoutés
-    à la fin, triés (y0, x0) -- même filet de sécurité que le reste du
-    fichier, jamais de perte silencieuse.
-
-    Si `table.cell_bboxes` est vide (géométrie non disponible, ex. ancien
-    document.json généré avant ce champ) : comportement identique à
-    avant, tri plat pur -- pas de régression sur des données plus
-    anciennes."""
+    """Order table words by row and cell using stored cell bounding boxes."""
     if not getattr(table, "cell_bboxes", None):
         return sorted(mots_table, key=lambda w: (w.bbox.y0, w.bbox.x0))
 
@@ -593,10 +342,7 @@ def _ordonner_mots_table(mots_table, table):
 
 
 def ordonner(page, simple_sort=False) -> list:
-    """Retourne des COPIES des mots natifs de `page`, dans l'ordre de
-    lecture réel : tableaux exclus du tri par boîtes/rangées, mais
-    réintégrés à la fin pour ne jamais perdre de contenu.
-    """
+    """Return copies of native page words in reading order, keeping table words out of geometric sorting and then restoring them."""
     tables = page.graphics.tables
 
     if simple_sort:

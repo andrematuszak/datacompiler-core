@@ -1,36 +1,10 @@
-"""fusion_ocr.py — Arbitrage entre PLUSIEURS backends OCR sur une même
-zone (ex. Tesseract vs PaddleOCR sur le même crop vectorisé).
-
-À placer dans compile/ (ou compile/resolve/ si c'est là que vit déjà
-alignment.py -- je n'ai pas ce fichier sous les yeux, à toi de voir où ça
-s'aligne le mieux avec l'existant).
-
-NE PAS CONFONDRE avec :
-- frontend/extract/merge.py::fusionner_page -- fusionne DEUX MOTEURS
-  D'EXTRACTION NATIVE (PyMuPDF + pdfplumber), pas de l'OCR.
-- resolve/alignment.py (mentionné dans tesseract.py) -- aligne natif <->
-  UN SEUL flux OCR par texte/séquence (pas de bbox fiable côté Mistral).
-
-Ce module couvre un troisième cas, pas encore implémenté avant
-aujourd'hui : arbitrer entre PLUSIEURS flux OCR concurrents sur la MÊME
-zone, où chaque backend fournit une bbox ET une confiance PAR MOT
-(Tesseract et PaddleOCR le font tous les deux, contrairement à Mistral) --
-ce qui permet un arbitrage géométrique mot-à-mot plutôt que par séquence.
-
-⚠️ HEURISTIQUE V0, PAS ENCORE VALIDÉE EMPIRIQUEMENT : "confiance la plus
-haute gagne" en cas de chevauchement est un point de départ raisonnable
-mais arbitraire tant qu'on n'a pas de données comparatives réelles
-Tesseract vs PaddleOCR sur ce document (cf. piste tesseract.py en cours).
-Chaque arbitrage est tracé dans `notes` pour pouvoir auditer/revenir en
-arrière si l'heuristique s'avère mauvaise sur des cas réels.
-"""
+"""Combine OCR detections for the same region. Geometric conflicts are resolved using confidence, then nearby detections can be merged."""
 
 from datacompiler.model.document import Word
 
 
 def _chevauche(a: Word, b: Word) -> bool:
-    """Même logique que _chevauche dans tesseract.py, généralisée à des
-    objets Word (bbox typée) plutôt qu'à des dicts bruts."""
+    """Return whether two word bounding boxes overlap."""
     return not (
         a.bbox.x1 <= b.bbox.x0 or b.bbox.x1 <= a.bbox.x0
         or a.bbox.y1 <= b.bbox.y0 or b.bbox.y1 <= a.bbox.y0
@@ -38,38 +12,12 @@ def _chevauche(a: Word, b: Word) -> bool:
 
 
 def _confiance(mot: Word) -> float:
-    """Confiance normalisée pour comparaison -- traite None (confiance
-    inconnue) comme la plus basse possible plutôt que de planter la
-    comparaison, mais c'est un choix conservateur à revoir si un backend
-    renvoie fréquemment None en pratique (actuellement aucun des deux ne
-    devrait, mais Tesseract le fait pour conf_brute < 0 -- cf. tesseract.py)."""
+    """Normalize a confidence score for comparison, treating unknown confidence as the lowest score."""
     return mot.confidence if mot.confidence is not None else -1.0
 
 
 def fusionner_candidats_ocr(candidats: dict) -> list:
-    """Arbitre entre plusieurs backends OCR ayant tourné sur LA MÊME zone
-    (même repère page, même crop source).
-
-    candidats : dict {nom_backend: list[Word]}, ex.
-        {"tesseract": [...], "paddleocr": [...]}
-
-    Stratégie (v0, cf. avertissement en tête de fichier) :
-    - deux mots de backends différents dont les bbox se CHEVAUCHENT
-      -> on garde celui de plus haute confiance, on note le nom du
-         backend écarté et son texte dans `notes` (traçabilité/audit)
-    - un mot détecté par un seul backend, sans chevauchement chez les
-      autres -> conservé tel quel (même logique que la fusion PSM3/PSM6
-      dans tesseract.py::_extraire_deux_passes, généralisée à N backends
-      au lieu de 2 passes d'un même moteur)
-
-    Ordre de traitement : les backends sont parcourus dans l'ordre du
-    dict (Python 3.7+ préserve l'ordre d'insertion) -- en cas d'égalité
-    stricte de confiance entre deux mots qui se chevauchent, c'est donc
-    le premier backend listé par l'appelant qui gagne. Pas de biais
-    implicite favorisant un moteur : c'est à l'appelant de trancher
-    l'ordre s'il a une préférence (aucune justifiée pour l'instant, faute
-    de données comparatives).
-    """
+    """Resolve overlapping candidates from OCR backends that processed the same page region."""
     fusion: list = []
 
     for nom_backend, mots in candidats.items():
@@ -109,19 +57,7 @@ def fusionner_candidats_ocr(candidats: dict) -> list:
 
 def fusionner_zone_multi_backend(image, offset: tuple, backends: dict, dpi: int = None, lang: str = None,
                                   **kwargs) -> list:
-    """Point d'entrée pratique : fait tourner plusieurs backends sur LA
-    MÊME image de zone déjà croppée, puis arbitre.
-
-    backends : dict {nom: instance_de_backend}, ex.
-        {"tesseract": TesseractBackend(...), "paddleocr": PaddleOCRBackend(...)}
-
-    **kwargs : transmis tel quel a chaque ocraliser_zone() -- ex.
-    couleur_encre (cf. vector_zones._couleur_encre_zone) pour la detection
-    du gras cote paddle.py. Chaque backend expose deja **kwargs dans sa
-    propre signature (cf. ocr/base.py) et ignore silencieusement ce qu'il
-    ne consomme pas -- aucun changement requis cote tesseract.py/qwen_vl.py
-    pour absorber un nouveau kwarg ajoute plus tard.
-    """
+    """Run configured OCR backends on the same cropped image, then resolve their candidate detections."""
     candidats = {
         nom: backend.ocraliser_zone(image, offset=offset, dpi=dpi, lang=lang, **kwargs)
         for nom, backend in backends.items()

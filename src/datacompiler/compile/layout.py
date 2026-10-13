@@ -1,33 +1,10 @@
-﻿"""layout.py — Regroupement en lignes visuelles, calculé UNE FOIS pendant
-la compilation plutôt que recalculé par chaque renderer de backend/.
-
-
-Différence avec l'ancienne version (dans backend/layout.py) : celle-ci
-NE RETOURNE PLUS une liste de listes -- elle ANNOTE en place chaque Word
-avec son numéro de ligne (`layout_line`), sur la séquence déjà ordonnée par
-reading_order.py. Les renderers n'ont alors qu'à grouper par cet attribut
-(groupby), sans recalculer une comparaison de bbox par format de sortie.
-
-
-Prérequis inchangé : les mots doivent déjà être EN ORDRE DE LECTURE (sortie
-de reading_order.py) -- ce module ne trie jamais, il détecte seulement les
-sauts de ligne au fil de la séquence déjà établie.
-"""
+"""Group resolved words into visual lines once during compilation so output renderers share the same layout decisions."""
 
 
 
 
 def assigner_lignes(mots, tolerance_y=3) -> list:
-    """Annote chaque mot avec `layout_line` (entier, 0-indexé) et retourne
-    la même liste (mutation en place, cohérent avec le reste de compile/ qui
-    mute les copies déjà faites par reading_order.ordonner).
-
-
-    Les mots sans bbox (insertions OCR sans position -- cf.
-    conflict_resolution.py, cas "ocr_seul") ne peuvent pas déclencher de
-    saut de ligne : ils héritent du numéro de ligne courant, à l'endroit où
-    ils apparaissent dans la séquence -- même pis-aller documenté que
-    l'ancienne version dans backend/layout.py."""
+    """Assign a zero-based ``layout_line`` to each word and return the same list."""
     ligne_courante = 0
     dernier_y = None
 
@@ -51,9 +28,7 @@ def assigner_lignes(mots, tolerance_y=3) -> list:
 
 
 def grouper_par_ligne(mots) -> list:
-    """Reconstitue des groupes de mots à partir de `layout_line` déjà
-    assigné -- utile côté backend/ pour retrouver l'ancienne interface
-    (liste de listes) sans redupliquer la logique de détection de saut."""
+    """Group words by their previously assigned ``layout_line`` value."""
     # 🛡️ Protection contre None ou liste vide
     if not mots:
         return []

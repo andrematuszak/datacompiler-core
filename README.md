@@ -12,7 +12,7 @@ L'architecture repose sur un *src-layout* moderne et modulaire :
 datacompiler/
 ├── src/
 │   └── datacompiler/
-│       ├── frontend/       # Extraction, OCR (Mistral/Tesseract), Diagnostic
+│       ├── frontend/       # Extraction, OCR (PaddleOCR/Mistral), Diagnostic
 │       ├── compile/        # Arbitrage native/OCR, résolution
 │       ├── backend/        # Moteurs de rendu (PDF fidèle, DOCX, HTML, etc.)
 │       ├── model/          # Modèles de données (Document, Word, BBox...)
@@ -25,14 +25,16 @@ datacompiler/
 
 ## ⚙️ Installation
 
-1. Active ton environnement virtuel Python (Python >= 3.11 recommandé) :
+1. Crée et active un environnement virtuel Python (Python >= 3.11 requis) :
    ```bash
-   source venv/bin/activate
+   py -3.11 -m venv .venv
+   # Windows PowerShell
+   .venv\Scripts\Activate.ps1
    ```
 
-2. Installe le package en mode éditable :
+2. Installe le package et les outils de développement en mode éditable :
    ```bash
-   pip install -e .
+   python -m pip install -e ".[dev]"
    ```
 
 ---
@@ -43,29 +45,23 @@ datacompiler/
 Une fois le package installé en mode éditable, tu peux exécuter directement la commande `datacompiler` dans ton terminal :
 
 ```bash
-datacompiler tests/fixtures/test1.pdf
+datacompiler chemin/vers/document.pdf
 ```
 
-### 2. Directement via l'orchestrateur Python
-```bash
-python src/datacompiler/pipeline.py tests/fixtures/test1.pdf
-```
-
-### 3. Utilisation en tant que bibliothèque
+### 2. Utilisation en tant que bibliothèque
 ```python
-from datacompiler.core.extract import extraire
-from datacompiler.core.document import Document
-from datacompiler.renderers.faithful_pdf import render_faithful_pdf
+from datacompiler import executer_pipeline
 
-# 1. Extraction
-donnees = extraire("chemin/vers/document.pdf")
-
-# 2. Modélisation
-doc = Document(donnees)
-
-# 3. Reconstruction du PDF
-render_faithful_pdf(doc, "sortie_propre.pdf")
+# Extrait et compile le PDF, écrit le PDF reconstruit et son JSON.
+document = executer_pipeline("chemin/vers/document.pdf", strategy="clean_overlay")
+print(f"Pages traitées : {len(document.pages)}")
 ```
+
+Le JSON produit par `Document.to_json()` et `Document.save()` est UTF-8 (les accents
+restent lisibles) et contient `schema_version: "1.0"`. Le schéma JSON minimal,
+notamment pour `pages[].resolved.words`, est disponible dans
+`docs/schemas/document.schema.json`. Les anciens documents sans `schema_version`
+restent chargeables.
 
 ---
 
@@ -74,5 +70,16 @@ render_faithful_pdf(doc, "sortie_propre.pdf")
 Pour exécuter l'ensemble des tests automatisés avec `pytest` :
 
 ```bash
-pytest
+python -m pytest
 ```
+
+Pour établir une première mesure de couverture :
+
+```bash
+python -m pytest --cov=datacompiler --cov-report=term-missing
+```
+
+Le champ `ImageElement.contains_text` reste à `null` (inconnu) pour les images
+bitmap : la sonde OCR d'images basée sur Tesseract a été retirée. Il n'est pas
+converti en `false`, afin de ne pas présenter une absence d'analyse comme un
+résultat négatif.

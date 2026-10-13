@@ -1,24 +1,4 @@
-"""qa.py — Détection d'anomalies post-résolution : ANNOTE resolved.words
-(champ .flags), ne modifie jamais texte ni bbox. Chaque sous-vérification
-est indépendante et n'est activée que si elle a une base fiable pour
-fonctionner.
-
-Points différés, PAS oubliés -- dépendent tous d'un ordre/regroupement
-stable que reading_order.py ne garantit pas encore (cf.
-_colonnes_depuis_fragments, correction en cours) :
-  - motifs de corruption connus (ex. €->e, CMap corrompu) : nécessite un
-    dictionnaire fr + catalogue de substitutions, risque de faux positifs
-    élevé sur identifiants/sigles/noms propres -- calibration séparée
-    avant activation, pas un simple ajout.
-  - incohérence de valeurs répétées (numéro fiscal/montant/date identiques
-    en théorie mais divergents entre deux occurrences) : nécessite de
-    regrouper fiablement les occurrences d'un même champ, donc un ordre de
-    lecture stable en amont.
-  - duplication signalée explicitement (flag duplique_de: <id>) : la
-    session du [date] a montré plusieurs faux positifs de ce type
-    (KENNEDY, ORLEANS, PUBLIQUES -- occurrences légitimes différentes prises
-    pour des doublons) tant que l'ordre/regroupement n'est pas fiable.
-"""
+"""Detect post-resolution anomalies and annotate ``resolved.words`` with flags. Checks do not modify word text or bounding boxes."""
 
 from datacompiler.model.document import Flag
 
@@ -30,9 +10,7 @@ SEUIL_CONFIANCE_A_VERIFIER = 0.6
 
 
 def _confiance_basse(mots: list) -> None:
-    """Ajoute un Flag 'confiance_basse' aux mots dont confidence est
-    renseignée et sous le seuil. Strictement additif sur mot.flags --
-    mot.text/mot.output_text ne sont jamais touchés."""
+    """Add a low-confidence flag to words with a confidence score below the configured threshold."""
     for mot in mots:
         if mot.confidence is not None and mot.confidence < SEUIL_CONFIANCE_A_VERIFIER:
             mot.flags.append(Flag(
@@ -42,30 +20,7 @@ def _confiance_basse(mots: list) -> None:
             ))
 
 def _ordre_suspect(mots: list, tables: list, seuil_regression: float = 50.0) -> None:
-    """Détecte les sauts arrière significatifs dans l'ordre de sortie final
-    (resolved.words) : un mot dont le y0 retombe nettement en dessous du
-    maximum déjà atteint plus tôt dans la séquence.
-
-    CANARI, pas un correctif : indépendant du travail en cours sur
-    reading_order.py (colonnes vs blocs). Reste utile même après cette
-    correction, comme filet de non-régression permanent sur tout le corpus
-    -- pas seulement pour le cas déjà identifié à la main sur
-    test-impots-revenu.
-
-    Mots de TABLE exclus du calcul (via `dans_un_tableau`, partagée avec
-    reading_order.py) : reading_order.ordonner() réintègre volontairement
-    les mots de table à la fin de la séquence, triés indépendamment par
-    (y0, x0) -- décision d'architecture assumée (structure interne du
-    tableau pas encore reconstruite), pas un bug. Sans cette exclusion,
-    PRESQUE CHAQUE mot de table déclenchait ce flag mécaniquement (mesuré :
-    49/317 et 32/332 mots sur les deux pages à tableau du document de
-    test, 0 sur la page sans tableau) -- un canari qui sonnait pour une
-    raison structurelle connue, pas pour un vrai problème d'ordre.
-
-    LIMITE CONNUE RESTANTE : va toujours se déclencher aussi sur un vrai
-    document multi-colonnes légitime hors table (le passage colonne
-    gauche -> colonne droite EST un saut arrière en y). Ce flag reste "à
-    vérifier", pas une preuve de bug, pour ce cas-là."""
+    """Flag significant backward jumps in the final vertical reading order."""
     max_y_vu = None
     for mot in mots:
         if not mot.bbox or dans_un_tableau(mot, tables):
@@ -81,11 +36,7 @@ def _ordre_suspect(mots: list, tables: list, seuil_regression: float = 50.0) -> 
 
 
 def annoter(mots: list, tables: list) -> list:
-    """Point d'entrée : annote `mots` (resolved.words) en place, retourne
-    la même liste -- convention identique à conflict_resolution.resoudre_page.
-
-    `tables` : page.graphics.tables, nécessaire à _ordre_suspect pour
-    exclure les mots de table (cf. son docstring)."""
+    """Annotate resolved words in place with quality flags and return the same list."""
     _confiance_basse(mots)
     _ordre_suspect(mots, tables)
     return mots

@@ -1,13 +1,4 @@
-﻿"""confidence.py — Estime une confiance par mot, natif ou OCR, sur une
-échelle [0, 1] commune, pour permettre à conflict_resolution.py de trancher
-entre deux versions d'un même mot sans connaître leur provenance.
-
-
-Réutilise les signaux de heuristics.py (caractères suspects, structure
-anormale) plutôt que de les réimplémenter -- ce sont les mêmes que ceux
-utilisés par frontend/diagnostic/text_integrity.py pour native_text_quality.
-Cohérence garantie entre le diagnostic global et l'arbitrage mot-à-mot.
-"""
+"""Estimate native-word confidence on a shared 0-to-1 scale so conflict resolution can compare native and OCR candidates using common text-integrity signals."""
 
 
 from datacompiler.utils.heuristics_text import taux_caracteres_suspects, chiffre_dans_mot, casse_irreguliere
@@ -20,7 +11,7 @@ ECART_SIGNIFICATIF = 0.15
 
 
 def confiance_native(word) -> float:
-    """Proxy heuristique de confiance pour un mot natif (PyMuPDF)."""
+    """Estimate heuristic confidence for one native PyMuPDF word."""
     texte = word.text
     if not texte:
         return 0.0

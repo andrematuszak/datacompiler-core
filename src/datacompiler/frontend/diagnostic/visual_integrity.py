@@ -1,4 +1,4 @@
-﻿"""visual_integrity.py — Couverture image pleine page + DPI effectif."""
+"""Measure image coverage and effective resolution, and report whether extracted images are known to contain text."""
 
 from typing import Optional
 
@@ -22,7 +22,7 @@ def couverture_image_max(page) -> float:
 
 
 def dpi_effectif(img) -> Optional[float]:
-    """DPI = pixels / pouces. La bbox PDF est en points (1/72 pouce)."""
+    """Compute effective image resolution from pixel dimensions and PDF-point bounds."""
     if not img.bbox or not img.width:
         return None
     largeur_pouces = (img.bbox.x1 - img.bbox.x0) / 72.0
@@ -30,9 +30,7 @@ def dpi_effectif(img) -> Optional[float]:
 
 
 def images_basse_resolution(page) -> list:
-    """Images significatives (>10% de la page, pour ignorer les icônes)
-    dont le DPI effectif est bas -- signal d'alerte pour la fiabilité
-    d'un futur OCR."""
+    """Return significant page images whose effective resolution is low."""
     surface_page = page.width * page.height
     resultat = []
     for img in page.graphics.images:
@@ -59,10 +57,7 @@ def images_basse_resolution(page) -> list:
 # plutôt qu'un faux "non" qui masquerait l'absence de données.
 
 def images_avec_texte(page) -> Optional[bool]:
-    """True si au moins une image de la page est signalée comme contenant
-    du texte, False si toutes sont signalées comme n'en contenant pas,
-    None si l'information n'est disponible pour aucune image (champ pas
-    encore peuplé côté extraction, ou aucune image sur la page)."""
+    """Return True, False, or None depending on whether image text presence is known."""
     statuts = [getattr(img, "contains_text", None) for img in page.graphics.images]
     statuts = [s for s in statuts if s is not None]
     if not statuts:

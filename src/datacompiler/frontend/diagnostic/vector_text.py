@@ -1,23 +1,4 @@
-"""vector_text.py — Détecte du texte "dessiné" en vecteurs (glyphes tracés
-comme des courbes/traits) plutôt qu'écrit comme du texte natif ou capturé
-comme une image bitmap. Cas typique : logo texte, titre "designé" dans un
-outil vectoriel, export depuis un logiciel qui dessine les caractères au
-lieu de les écrire.
-
-Les tracés PyMuPDF sont conservés durant l'extraction dans ``page.graphics``.
-Le diagnostic regroupe ensuite les zones denses et retient seulement celles
-qui ne contiennent pas déjà de mot natif : aucun PDF n'est rouvert ici.
-
-LIMITE ASSUMÉE, à vérifier sur vos vrais fichiers : le modèle de données
-(GraphicVector) ne stocke qu'une bbox par élément, pas le tracé détaillé
-(points, direction des courbes) -- cette heuristique ne "reconnaît" donc
-pas des lettres, elle repère seulement une zone dense et de forme
-suspecte. Un logo abstrait dense (pas du texte) peut déclencher un faux
-positif -- à traiter comme un signal à confirmer, pas un verdict certain.
-Je n'ai pas pu tester sur un vrai fichier contenant ce cas (aucun dans le
-corpus de test jusqu'ici) -- testé uniquement avec des données
-synthétiques ci-dessous.
-"""
+"""Detect dense vector graphics that may represent text drawn as paths rather than native text or bitmap images. Results are heuristic candidates, not proof that a region contains text."""
 
 from typing import List, Tuple
 
@@ -58,7 +39,7 @@ def _rect_structurel(b) -> bool:
 
 
 def _trait_structurel(b, boites) -> bool:
-    """Trait long, ou posé sur le bord d'une boîte structurelle (bordure de cellule)."""
+    """Classify a long vector line or rectangle as structural rather than a likely glyph."""
     w, h = b.x1 - b.x0, b.y1 - b.y0
     if max(w, h) >= LONGUEUR_MIN_STRUCTURE:
         return True
@@ -75,15 +56,7 @@ def _trait_structurel(b, boites) -> bool:
 
 
 def _elements_vectoriels(page) -> list:
-    """Rassemble lignes, courbes et rects fins (souvent utilisés pour des
-    traits de lettres) en une seule liste de bbox. Suppose page.graphics a
-    .lines/.curves/.rects, chacun avec un attribut .bbox -- comme dans le
-    modèle d'origine. À confirmer si ça a changé dans la réorganisation.
-
-    Les éléments STRUCTURELS (cadres de cellules, bordures de tableau, traits
-    longs) sont écartés : ils soudaient les cellules voisines entre elles
-    (cf. EPAISSEUR_MIN_BOITE) et faisaient rejeter des lignes entières de
-    texte vectorisé par le filtre de hauteur."""
+    """Select vector graphics that may form text and group related marks."""
     rects = [r.bbox for r in getattr(page.graphics, "rects", []) if r.bbox]
     boites = [b for b in rects if _rect_structurel(b)] if FILTRER_ELEMENTS_STRUCTURELS else []
     elements = []
@@ -100,19 +73,7 @@ def _elements_vectoriels(page) -> list:
 
 
 def _grouper_par_proximite(elements, tolerance=TOLERANCE_GROUPE_X, tolerance_y=None):
-    """Regroupe les éléments par recouvrement/proximité de bbox -- fusion
-    TRANSITIVE (union-find), pas une passe gloutonne à arrêt au premier
-    groupe trouvé.
-
-    CORRECTIF (remplace l'ancienne version) : l'ancienne implémentation
-    rattachait chaque élément au PREMIER groupe compatible trouvé, sans
-    vérifier s'il était également compatible avec un autre groupe déjà
-    créé -- cas "fan-in" (élément B proche de A ET de C, mais A et C pas
-    proches directement, traités dans l'ordre A, C, B) : A et C restaient
-    dans deux groupes séparés au lieu de fusionner via B. Confirmé en
-    pratique sur test-impots-revenu (phénomène 2 : mots fragmentés
-    chevauchants type "Date ate d'établ lissement").
-    """
+    """Group nearby vector elements into candidate text regions."""
     if tolerance_y is None:
         tolerance_y = TOLERANCE_GROUPE_Y
     n = len(elements)
@@ -178,12 +139,7 @@ def _mot_natif_present(page, bbox, seuil_recouvrement=0.5) -> bool:
 
 
 def _rattacher_petits_glyphes(zones, petits, mots_natifs=()):
-    """Étend chaque zone retenue avec les petits glyphes rejetés par le filtre de
-    ratio qui la jouxtent sur la même ligne (écart <= ECART_MAX_RATTACHEMENT).
-    Un glyphe est rattaché à la zone la plus proche (à égalité : celle de gauche,
-    ordre de lecture). Un glyphe isolé entre des mots natifs devient aussi une
-    zone OCR autonome : c'est notamment le cas d'une barre oblique vectorielle
-    entre deux chiffres natifs."""
+    """Attach small punctuation-like glyphs to a nearby candidate text region."""
     zones = [list(z) for z in zones]
     for gx0, gy0, gx1, gy1 in petits:
         h = gy1 - gy0
@@ -220,8 +176,7 @@ def _rattacher_petits_glyphes(zones, petits, mots_natifs=()):
 
 
 def zones_texte_vectorise_probable(page) -> List[Tuple[float, float, float, float]]:
-    """Retourne les bbox (x0,y0,x1,y1) des zones suspectées de contenir du
-    texte dessiné en vecteurs plutôt qu'écrit nativement."""
+    """Return candidate regions of text drawn as vector paths."""
     elements = _elements_vectoriels(page)
     if len(elements) < SEUIL_DENSITE_MIN:
         return []
@@ -256,12 +211,7 @@ def zones_texte_vectorise_probable(page) -> List[Tuple[float, float, float, floa
 
 
 def couverture_texte_natif(page) -> float | None:
-    """Estime la part de texte visible qui possède une couche native.
-
-    Les surfaces des mots natifs sont comparées aux zones de glyphes vectoriels
-    qui n'ont aucun mot natif associé. C'est une estimation géométrique, pas
-    une mesure des pixels d'une image.
-    """
+    """Estimate how much candidate vector text is already covered by native text."""
     surface_native = sum(
         (word.bbox.x1 - word.bbox.x0) * (word.bbox.y1 - word.bbox.y0)
         for word in page.native.words
@@ -280,5 +230,5 @@ def couverture_texte_natif(page) -> float | None:
 
 
 def texte_vectorise_detecte(page) -> bool:
-    """True si des glyphes dessinés sans texte natif associé sont détectés."""
+    """Return whether the page contains likely vectorized text."""
     return bool(zones_texte_vectorise_probable(page))

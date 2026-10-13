@@ -23,7 +23,7 @@ __all__ = [
     "construire_arbre_layout",
     "construire_boite_depuis_zone",
     "detecter_boites_images",
-    "detecter_boites_tableaux",
+    "detecter_boites_tables",
     "detecter_boites_vectorielles",
     "detecter_toutes_les_zones",
 ]

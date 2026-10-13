@@ -1,6 +1,4 @@
-"""html.py — Rendu HTML ("Document Flow" : empilement en ordre de lecture,
-hauteur libre), EXCLUSIVEMENT depuis page.resolved. Extrait de l'ancien
-render.py, logique inchangée à part l'import de grouper_par_ligne."""
+"""Render HTML from ``page.resolved`` in reading order. The output uses a simple flowing layout rather than reproducing the source page geometry."""
 
 from datacompiler.model.document import Document
 from datacompiler.compile.layout import grouper_par_ligne

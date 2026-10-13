@@ -1,41 +1,10 @@
-"""layout_tree.py — Construction de l'arbre LayoutBox à partir de la
-géométrie déjà extraite (page.graphics), plutôt que d'une nouvelle passe
-d'extraction. Cf. discussion d'architecture : liste plate triée par
-coordonnées -> arbre de mise en page, lu boîte par boîte.
-
-JALON 1 (celui-ci) : boîtes-images seulement.
-  - Géométrie : page.graphics.images (pdfplumber, déjà peuplé à
-    l'extraction, cf. extract/pdfplumber.py) -- aucune nouvelle extraction
-    nécessaire ici.
-  - PAS de texte : une boîte-image a `word_ids=[]` tant qu'aucun
-    mécanisme d'extraction de texte-dans-image n'est branché (limite déjà
-    documentée : image_text_probe.py détecte "y a-t-il du texte",
-    n'extrait rien). Une boîte géométriquement correcte mais vide reste
-    utile -- point d'ancrage dans l'arbre, peuplable plus tard sans le
-    redessiner.
-  - PAS encore l'arbre complet : seulement la liste des boîtes-images,
-    triée en ordre de lecture simple. L'entrelacement avec les autres
-    types (vector_text, native_text, table) est un jalon séparé (2-4).
-
-Jalons suivants, non traités ici :
-  2. zones de texte vectoriel (probablement via
-     diagnostic/vector_text.py, déjà existant -- à vérifier s'il expose
-     déjà une géométrie réutilisable, même logique que pour les images)
-  3. regroupement de mots en lignes au sein d'une boîte
-  4. assemblage hiérarchique complet + parcours profondeur d'abord vers
-     resolved.words
-"""
+"""Build the page layout tree from geometry already present in ``page.graphics`` instead of running another extraction pass."""
 
 from datacompiler.model.document import LayoutBox, BBox
 
 
 def construire_boites_images(page) -> list:
-    """Une LayoutBox(type="image") par image de page.graphics.images,
-    triée en ordre de lecture simple (y0 puis x0).
-
-    Volontairement PAS entrelacée avec le reste du contenu de la page à
-    ce stade -- juste la liste des boîtes-images, pour validation
-    indépendante avant d'attaquer l'assemblage complet."""
+    """Create one image LayoutBox per page image, ordered by page position."""
     boites = [
         LayoutBox(bbox=img.bbox, type="image", word_ids=[])
         for img in page.graphics.images
@@ -48,25 +17,19 @@ def construire_boites_images(page) -> list:
 
 
 def _bbox_contenu(bbox_petit, bbox_grand, marge=0.0) -> bool:
-    """True si bbox_petit est ENTIÈREMENT contenue dans bbox_grand
-    (horizontalement, avec une marge de tolérance) -- pas juste son
-    centre. Un mot dont la bbox déborde d'une cellule n'est PAS considéré
-    comme lui appartenant sans ambiguïté, même si son centre y tombe."""
+    """Return whether the smaller bounding box is fully contained in the larger box, within tolerance."""
     if bbox_petit is None or bbox_grand is None:
         return False
     return (bbox_grand.x0 - marge <= bbox_petit.x0) and (bbox_petit.x1 <= bbox_grand.x1 + marge)
 
 
 def _chevauchement_y(a, b) -> bool:
-    """True si deux bbox se chevauchent verticalement -- sert à ne
-    comparer un mot ambigu qu'à des voisins de la même ligne physique,
-    pas à un mot d'une autre ligne wrappée dans la même cellule."""
+    """Return whether two bounding boxes overlap vertically."""
     return a.y0 < b.y1 and b.y0 < a.y1
 
 
 def _distance_x(bbox_a, bbox_b) -> float:
-    """Distance horizontale entre deux bbox -- 0 si elles se chevauchent
-    en x, sinon l'écart entre les bords les plus proches."""
+    """Return the horizontal gap between two bounding boxes, or zero when they overlap."""
     if bbox_a.x1 < bbox_b.x0:
         return bbox_b.x0 - bbox_a.x1
     if bbox_b.x1 < bbox_a.x0:
@@ -82,15 +45,12 @@ def _distance_x(bbox_a, bbox_b) -> float:
 # différent). 15pt sépare proprement les deux sur CE document -- pas
 # revalidé sur un autre, à recalibrer si des faux positifs/négatifs
 # apparaissent sur un corpus plus large (même réserve que pour le seuil de
-# largeur de _glyphe_isole_suspect dans tesseract.py).
+# largeur de _glyphe_isole_suspect).
 SEUIL_PROXIMITE_MOT = 15.0
 
 
 def _mot_dans_cellule(mot, cell_bbox) -> bool:
-    """True si le CENTRE de la bbox du mot tombe dans la cellule --
-    plus robuste qu'un simple chevauchement pour un mot à cheval sur une
-    frontière (le chevauchement partiel avec la cellule voisine ne le
-    fait pas basculer dedans à tort)."""
+    """Return whether the word-box center falls inside the cell."""
     if not mot.bbox or cell_bbox is None:
         return False
     cx = (mot.bbox.x0 + mot.bbox.x1) / 2
@@ -99,8 +59,7 @@ def _mot_dans_cellule(mot, cell_bbox) -> bool:
 
 
 def _bbox_union(bboxes) -> "BBox | None":
-    """Bbox englobante d'une liste de bbox, None ignorées (cellule
-    fusionnée/absente dans la grille)."""
+    """Return the bounding box enclosing all non-null input boxes."""
     valides = [b for b in bboxes if b is not None]
     if not valides:
         return None
@@ -113,21 +72,7 @@ def _bbox_union(bboxes) -> "BBox | None":
 
 
 def construire_boite_tableau(table_element, mots_natifs) -> LayoutBox:
-    """Construit une LayoutBox(type="table") à partir de la géométrie
-    persistée (table_element.cell_bboxes) et de mots natifs -- à appeler
-    APRÈS que le pipeline complet a tourné (native.words doit déjà
-    inclure les mots vectorisés ajoutés par l'OCR ciblé, étape 4/6), pas
-    pendant l'extraction (étape 1/6, où cell_bboxes est calculé) : cf.
-    docstring de table_reconstruction.cellules_bbox_degenere pour le
-    détail de cette contrainte d'ordre.
-
-    Arbre produit : table -> une boîte "container" par ligne -> une boîte
-    "native_text" par cellule, portant les `word_ids` des mots dont le
-    centre tombe dans cette cellule (cf. _mot_dans_cellule).
-
-    `mots_natifs` : liste de Word (typiquement page.native.words) --
-    nom générique plutôt que "page" pour rester testable sans construire
-    un Document complet (cf. test synthétique)."""
+    """Build a table LayoutBox from stored cell geometry and native words."""
     lignes_boites = []
     for i, ligne_bboxes in enumerate(table_element.cell_bboxes):
         # Passe 1 : affectation SANS AMBIGUÏTÉ -- bbox du mot ENTIÈREMENT
@@ -190,15 +135,7 @@ def construire_boite_tableau(table_element, mots_natifs) -> LayoutBox:
 
 
 def aplatir_ids(boite: LayoutBox) -> list:
-    """Parcours profondeur d'abord d'une LayoutBox, triée par
-    `reading_order` à chaque niveau -- retourne les word_ids dans l'ordre
-    de lecture qu'exprime l'arbre. Jalon 4 (cf. discussion d'architecture).
-
-    Une feuille (word_ids non vide) contribue ses ids directement --
-    déjà triés en position par construire_boite_tableau, pas retriés ici.
-    Un nœud interne (children non vide) descend récursivement. Convention
-    actuelle : une boîte a soit des enfants, soit des word_ids, jamais les
-    deux -- respectée par construire_boite_tableau, pas revérifiée ici."""
+    """Traverse the layout tree in reading order and return its word IDs."""
     if boite.children:
         ids = []
         for enfant in sorted(boite.children, key=lambda b: b.reading_order):

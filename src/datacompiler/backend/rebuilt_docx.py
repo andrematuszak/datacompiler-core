@@ -1,9 +1,4 @@
-"""docx.py — Rendu Word (.docx), EXCLUSIVEMENT depuis page.resolved.
-Structure calquée sur markdown.py/html.py (un titre par page, un paragraphe
-par ligne regroupée), mais les tableaux deviennent de vrais tableaux Word
-plutôt que du texte tabulaire.
-
-Nouvelle dépendance : python-docx (à ajouter à requirements.txt)."""
+"""Render a Word document from ``page.resolved``. Pages become headings, grouped lines become paragraphs, and detected tables become native Word tables."""
 
 from pathlib import Path
 from docx import Document as DocxDocument

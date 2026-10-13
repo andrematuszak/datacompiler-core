@@ -1,25 +1,4 @@
-"""vector_zones.py — Orchestration de l'OCR ciblé sur les zones de texte
-vectorisé détectées par diagnostic/vector_text.py.
-
-Différence avec ocr/tesseract.py et ocr/mistral.py en mode page entière :
-ceux-là remplissent page.ocr, en attente d'un arbitrage dans compile/
-(alignment.py + conflict_resolution.py) contre page.native.words existant.
-Ici il n'y a RIEN à arbitrer -- pas de désaccord, un vide géométrique à
-combler. Les mots produits sont donc injectés directement dans
-page.native.words (is_vectorized=True, source="ocr_vectoriel"), EN AMONT
-du pipeline compile/ : ils traversent reading_order/typography comme
-n'importe quel mot natif, sans jamais passer par alignment.py.
-
-Accepte PLUSIEURS backends (dict nom -> instance) exposant ocraliser_zone()
-(cf. ocr/base.py) -- fusionnés zone par zone via fusion_ocr.py quand
-plusieurs sont fournis et disponibles (ex. Tesseract + PaddleOCR). Un seul
-backend dans le dict reste un cas valide (fusion_ocr.fusionner_candidats_ocr
-sur un seul candidat = pas d'arbitrage à faire, comportement inchangé).
-Fonctionne indépendamment de MISTRAL_API_KEY -- Mistral n'expose pas
-ocraliser_zone (bbox bloc, pas par mot) et serait simplement ignoré s'il
-apparaissait dans le dict (cf. fusion_ocr.fusionner_zone_multi_backend,
-qui journalise et saute tout backend en échec plutôt que de planter).
-"""
+"""Orchestrate targeted OCR over vector-text regions found by diagnostics. Unlike page-wide OCR, this path renders and processes selected regions only."""
 
 import math
 import re
@@ -39,39 +18,13 @@ MARGE_PONCTUATION_ISOLEE = 8.0  # pt -- contexte vertical/horizontal pour ponctu
 
 
 def _hex_vers_rgb(hex_color: str) -> tuple:
-    """Convertit '#rrggbb' -> (r, g, b) en entiers 0-255. Duplique volontairement
-    _hex_to_rgb de backend/rebuilt_pdf.py et faithful_pdf.py (frontend ne doit
-    pas importer backend, cf. metaphore compilateur en tete de pipeline.py)."""
+    """Convert a #rrggbb string to integer RGB values. Kept local to avoid a frontend dependency on backend modules."""
     h = hex_color.lstrip("#")
     return tuple(int(h[i:i + 2], 16) for i in (0, 2, 4))
 
 
 def _couleur_encre_zone(page, zone: BBox):
-    """Lit la couleur de remplissage REELLE des elements vectoriels
-    (lignes/courbes/rects) qui recouvrent `zone` -- deja capturee a
-    l'extraction (GraphicVector.color, cf. extract_pymupdf.py
-    _extraire_zones_vectorielles), jamais exploitee jusqu'ici pour le gras.
-
-    REMPLACE l'estimation du fond par bordure de crop (ocr/paddle.py
-    _ratio_encre_relatif v1) : cette estimation supposait toujours un peu
-    de marge blanche disponible en bordure du crop -- fausse sur "DIRECTION"
-    (session du 26/09/2026, test-impots-revenu.pdf) ou les lettres touchent
-    les bords du crop (zone rognee a zero marge par _clipper_marge_sur_natifs,
-    collee a "Impôt sur les revenus de 2020" juste en dessous) : la bordure
-    echantillonnee contenait alors une partie des lettres elles-memes,
-    assombrissant le fond estime et gonflant artificiellement ink_ratio pour
-    TOUTE la ligne du titre (5 mots concernes, pas seulement DIRECTION).
-
-    Lire la couleur d'encre directement dans le tracé evite le probleme par
-    construction : plus besoin de marge blanche nulle part, la couleur est
-    connue, pas estimee. Valide empiriquement (meme session) : ecart net
-    (~0,05) entre libelles gras (~0,19) et le titre non-gras (~0,13),
-    contre un chevauchement quasi total (0,001 d'ecart) avec l'ancienne
-    methode -- cf. session_recap pour le detail des mesures.
-
-    Retourne un tuple RGB (0-255) ou None si aucun element trouve (repli
-    attendu sur l'estimation par bordure, cf. paddle.py).
-    """
+    """Read the known fill color of vector elements overlapping a detected region."""
     x0, y0, x1, y1 = zone.x0, zone.y0, zone.x1, zone.y1
     couleurs = []
     for coll in (page.graphics.lines, page.graphics.curves, page.graphics.rects):
@@ -94,19 +47,7 @@ def _couleur_encre_zone(page, zone: BBox):
 
 
 def _clipper_marge_sur_natifs(bbox_orig: BBox, marge: float, mots_natifs) -> BBox:
-    """Etend `bbox_orig` de `marge` de chaque cote, SAUF si ca empieterait
-    sur un mot NATIF existant -- la marge est alors coupee juste avant ce
-    mot au lieu de l'empieter aveuglement.
-
-    Cause reelle identifiee (session du 25/09/2026, test-impots-
-    revenu.pdf) : la zone vectorisee "DIRECTION" (bas a y=28.7pt) + marge
-    aveugle (30.7pt) mangeait 2.8pt dans le mot natif "Impôt" juste en
-    dessous (haut a y=27.9pt, meme colonne x) -- le crop envoye a l'OCR
-    contenait donc un fragment du mot natif voisin, contaminant la
-    mesure d'ink_ratio (cf. paddle.py) et vraisemblablement la
-    segmentation elle-meme (Andre : "impossible de saisir DIRECTION sans
-    saisir Impôt" sur le PDF reconstruit -- signe d'une boite fusionnee).
-    """
+    """Expand a region by a margin, stopping before it overlaps an existing native word."""
     x0, y0, x1, y1 = bbox_orig.x0, bbox_orig.y0, bbox_orig.x1, bbox_orig.y1
     mx0, my0, mx1, my1 = x0 - marge, y0 - marge, x1 + marge, y1 + marge
     for w in mots_natifs:
@@ -137,17 +78,7 @@ def _clipper_marge_sur_natifs(bbox_orig: BBox, marge: float, mots_natifs) -> BBo
     return BBox(mx0, my0, mx1, my1)
 
 def _sous_traces_drawing(d: dict) -> list:
-    """Reconstitue les sous-tracés FERMÉS d'un drawing PyMuPDF (get_drawings())
-    à partir de sa liste `items` (segments 'l'/'c' mis bout à bout, 're' pour
-    un rectangle) -- un glyphe = un contour extérieur + un contour intérieur
-    par contre-forme (ex. le trou du 'D'), chacun tracé dans un sens opposé
-    par construction des polices (utile pour _epaisseur_trait_glyphe : la
-    somme des aires signées se soustrait naturellement). Une rupture de
-    continuité (le point de départ d'un item ne rejoint pas le point
-    d'arrivée du précédent) marque le passage à un nouveau sous-tracé.
-    Les courbes 'c' sont réduites à leur corde (point de départ -> point
-    d'arrivée, sans échantillonner la Bézier) -- approximation suffisante
-    pour une mesure d'épaisseur, pas pour un rendu fidèle."""
+    """Reconstruct closed subpaths from the drawing commands returned by PyMuPDF."""
     items = d.get("items", [])
     sous_traces, courant, dernier_point = [], [], None
     for it in items:
@@ -191,13 +122,7 @@ def _perimetre(points: list) -> float:
 
 
 def _epaisseur_trait_glyphe(d: dict):
-    """Estime l'épaisseur de trait d'UN glyphe via 2*Aire/Périmètre --
-    approximation classique (stroke width transform) : exacte pour un ruban
-    rectangulaire, bonne approximation pour un jambage de lettre. Ne dépend
-    QUE de l'épaisseur locale du trait, pas de la forme globale de la lettre
-    -- contrairement à Aire/AireBbox (rejeté, cf. session du 26/09/2026 :
-    confondait "lettre à faible/fort contre-poinçon", ex. 'I' vs 'O', avec le
-    gras lui-même). Retourne None si le glyphe n'a aucun tracé exploitable."""
+    """Estimate one glyph’s stroke width from its area and perimeter."""
     sous_traces = _sous_traces_drawing(d)
     if not sous_traces:
         return None
@@ -208,39 +133,7 @@ def _epaisseur_trait_glyphe(d: dict):
 
 def _epaisseur_mediane_zone(page_pymupdf, zone: BBox, seuil_recouvrement: float = 0.5,
                             dessins=None):
-    """Épaisseur de trait MÉDIANE des glyphes vectoriels recouvrant `zone`
-    (chaque glyphe est son propre `drawing` PyMuPDF dans ce document, un
-    fill par lettre -- confirmé empiriquement, session du 26/09/2026).
-    Médiane plutôt que moyenne : robuste à un glyphe atypique isolé (point,
-    apostrophe, accent) sans lisser la mesure sur tout le mot.
-
-    REMPLACE ink_ratio (ocr/paddle.py) comme critère de décision pour
-    `bold` -- calculée directement en espace VECTORIEL depuis
-    page.get_drawings(), donc indépendante du DPI, de la marge de crop OCR,
-    et du backend utilisé (fonctionne même sans PaddleOCR). Résout le défaut
-    identifié sur "DIRECTION" : ink_ratio (bordure ESTIMÉE ou couleur
-    connue, l'une comme l'autre) dépendait d'une marge blanche disponible
-    autour du mot dans le crop rasterisé, absente ici par construction
-    (zone rognée à zéro par _clipper_marge_sur_natifs). Ici, aucun crop,
-    aucune marge nécessaire.
-
-    Validé empiriquement (même session, test-impots-revenu.pdf, page 1) :
-    sur les 27 zones vectorisées mesurables de la page, séparation nette
-    entre non-gras (~0,46-0,91) et gras confirmés (~1,01-1,54), seuil Otsu
-    à 0,93 -- écart d'environ 0,1, contre un chevauchement quasi total avec
-    ink_ratio. "DIRECTION" et les 4 autres mots du titre : 0,84-0,88,
-    correctement non-gras. Toujours un proxy géométrique, pas une détection
-    de police -- pas de validation sur corpus au-delà de ce document.
-
-    `seuil_recouvrement` : un drawing doit avoir au moins cette fraction de
-    sa propre aire (bbox) à l'intérieur de `zone` pour être compté -- évite
-    qu'un glyphe voisin, juste effleuré au bord de la zone, ne fausse la
-    médiane (même logique que _chevauche_natif, seuil différent car portée
-    différente : ici on filtre des GLYPHES individuels, pas des MOTS).
-
-    Retourne None si aucun glyphe mesurable (mot natif sans tracé
-    vectoriel, ou zone vide).
-    """
+    """Estimate the median stroke width of vector glyphs overlapping a region."""
     valeurs = []
     dessins = dessins if dessins is not None else page_pymupdf.get_drawings()
     for d in dessins:
@@ -285,11 +178,7 @@ NB_BINS_OTSU = 16
 
 
 def _seuil_otsu(valeurs, nb_bins=NB_BINS_OTSU):
-    """Seuil qui maximise la variance INTER-classe d'un histogramme a
-    `nb_bins` de `valeurs` (methode d'Otsu, 1D) -- s'adapte au
-    desequilibre des classes, contrairement a un multiplicateur fixe de
-    la mediane (cf. note v1/v2 ci-dessus). Retourne None si `valeurs` est
-    degenere (toutes identiques)."""
+    """Choose a threshold that maximizes between-class variance in a one-dimensional histogram."""
     vmin, vmax = min(valeurs), max(valeurs)
     if vmax <= vmin:
         return None
@@ -325,14 +214,7 @@ def _seuil_otsu(valeurs, nb_bins=NB_BINS_OTSU):
 
 
 def _assigner_gras_relatif(mots):
-    """Decide `bold`, par mot, a partir de `stroke_width` (epaisseur de
-    trait mediane, cf. _epaisseur_mediane_zone) -- PROXY GEOMETRIQUE, PAS
-    UNE DETECTION DE POLICE. Modifie `mots` en place.
-
-    Utilisait `ink_ratio` jusqu'a la session du 26/09/2026 (cf. commentaire
-    Word.ink_ratio pour le defaut identifie sur "DIRECTION") -- meme
-    mecanisme de seuillage (Otsu par page, cf. notes v1/v2 ci-dessus),
-    seule la source du signal geometrique a change."""
+    """Estimate relative boldness from median stroke width; this is a geometric proxy, not font recognition."""
     valeurs = [m.stroke_width for m in mots if m.stroke_width is not None]
     if len(valeurs) < NB_MIN_MOTS_POUR_SEUIL:
         return
@@ -355,7 +237,7 @@ def _ratio_encre_mot(mot):
 
 
 def _ajuster_ligne_sur_traces(ligne, dessins, zones_par_mot):
-    """Calibre une ligne OCR sur l'encre vectorielle qui l'a produite."""
+    """Calibrate an OCR line against the vector ink that produced it."""
     if not dessins:
         return False
 
@@ -443,17 +325,7 @@ def _ajuster_ligne_sur_traces(ligne, dessins, zones_par_mot):
 
 
 def _assigner_taille_lissee(mots, dessins=None, zones_par_mot=None):
-    """Lisse `font_size` par LIGNE VISUELLE plutôt que mot par mot --
-    PROXY GEOMETRIQUE, comme stroke_width/bold (cf. _assigner_gras_relatif).
-    Les tracés source fournissent les limites d'encre et la baseline ; les
-    ratios des glyphes de la police de rendu convertissent cette hauteur en
-    corps, y compris pour les capitales accentuées. Repli sur les hauteurs
-    OCR calibrées par ratio si aucun tracé source n'est disponible.
-
-    Modifie `mots` en place. Ne touche PAS les mots natifs -- leur
-    font_size est déjà exact, extrait du flux PDF (cf.
-    extract_pymupdf.py) ; l'écraser serait une régression, pas un fix.
-    """
+    """Smooth estimated font size per visual line using source vector geometry."""
     candidats = [m for m in mots if m.is_vectorized and m.bbox is not None]
     if not candidats:
         return
@@ -483,22 +355,13 @@ def _assigner_taille_lissee(mots, dessins=None, zones_par_mot=None):
     _cloturer(ligne)
 
 def _chevauche_bbox(a, b):
-    """AABB overlap -- même logique que _chevauche dans tesseract.py,
+    """AABB overlap entre deux boîtes,
     appliquée ici aux ZONES (après expansion par MARGE_ZONE)."""
     return not (a.x1 <= b.x0 or b.x1 <= a.x0 or a.y1 <= b.y0 or b.y1 <= a.y0)
 
 
 def _fusionner_zones_chevauchantes(zones):
-    """Fusionne par composantes connexes les zones (déjà marginées) dont
-    les bbox se chevauchent -- même principe que
-    vector_text._grouper_par_proximite, appliqué aux zones plutôt qu'aux
-    éléments vectoriels bruts.
-
-    Répété jusqu'à stabilité : le rectangle ENGLOBANT d'une composante peut
-    recouvrir une zone qui n'en est pas membre (elle ne touche aucun membre,
-    mais tombe dans le rectangle). Sans cette répétition cette zone était lue
-    DEUX fois par l'OCR -- dans le grand rectangle puis seule -- et sortait en
-    double (page 1, encadré-lien : « en » entre « avis » et « sur »)."""
+    """Merge already-expanded regions whose bounding boxes overlap."""
     courantes = list(zones)
     while True:
         fusionnees = _fusionner_une_passe(courantes)
@@ -542,18 +405,7 @@ def _fusionner_une_passe(zones):
     ]
 
 def _chevauche_natif(mot, mots_natifs, seuil_recouvrement=0.5):
-    """True si `mot` (produit par OCR de zone) recouvre significativement un
-    mot déjà natif -- signe qu'il duplique du texte déjà bien extrait par
-    PyMuPDF plutôt que de combler un vrai vide.
-
-    Nécessaire depuis l'ajout de _fusionner_zones_chevauchantes : la fusion
-    produit un rectangle ENGLOBANT plusieurs zones individuellement validées
-    par vector_text._mot_natif_present, mais ce rectangle peut avaler une
-    portion de texte natif située ENTRE deux zones fusionnées -- jamais
-    couverte par aucune zone individuelle, donc jamais testée en amont. Le
-    crop+OCR du rectangle plus large relit alors ce texte natif et produit un
-    doublon -- pas un faux positif de détection de zone, un effet de bord de
-    la fusion géométrique elle-même."""
+    """Return whether an OCR word substantially overlaps native text that was already extracted."""
     if not mot.bbox:
         return False
     for nat in mots_natifs:
@@ -572,12 +424,7 @@ def _chevauche_natif(mot, mots_natifs, seuil_recouvrement=0.5):
 
 
 def _barre_oblique_entre_nombres(zone: BBox, mots_natifs) -> Word | None:
-    """Reconnaît une barre oblique vectorielle isolée entre deux nombres natifs.
-
-    Un OCR de la bbox du glyphe seul est peu fiable; si la forme étroite et
-    inclinée est encadrée par deux nombres sur la même ligne, le contexte
-    géométrique suffit à reconstruire le séparateur sans dupliquer ces nombres.
-    """
+    """Recognize an isolated vector slash between two native numbers."""
     largeur, hauteur = zone.x1 - zone.x0, zone.y1 - zone.y0
     if not (1.5 <= largeur <= 4.0 and 5.0 <= hauteur <= 10.0):
         return None
@@ -621,19 +468,7 @@ def _barre_oblique_entre_nombres(zone: BBox, mots_natifs) -> Word | None:
 
 
 def recuperer_texte_vectorise(doc: Document, pdf_path: str, backends, lang: str = "fra", dpi: int = 300) -> Document:
-    """
-    backends : dict {nom: instance_de_backend}, ex.
-        {"tesseract": TesseractBackend(...)}
-        {"tesseract": TesseractBackend(...), "paddleocr": PaddleOCRBackend(...)}
-    Un backend UNIQUE (pas dans un dict) est aussi accepté, par souplesse --
-    pratique pour un appelant qui n'a qu'un seul moteur à passer (ex.
-    pipeline.py avant que PaddleOCR ne soit branché) sans avoir à
-    construire un dict à un seul élément à chaque appel.
-
-    Chaque backend doit exposer ocraliser_zone() (cf. ocr/base.py) pour être
-    utilisable ici -- les autres (Mistral) sont ignorés silencieusement par
-    fusion_ocr.fusionner_zone_multi_backend, pas par ce module.
-    """
+    """Run targeted OCR on detected vector-text regions and add recovered words to the document."""
     if not isinstance(backends, dict):
         if hasattr(backends, "ocraliser_zone"):
             backends = {"default": backends}
@@ -676,7 +511,7 @@ def recuperer_texte_vectorise(doc: Document, pdf_path: str, backends, lang: str 
 
             page_pymupdf = source[i]
             dessins_page = page_pymupdf.get_drawings()
-            # Les backends (tesseract.py, paddle.py) laissent id=-1 sur les
+            # Les backends OCR laissent id=-1 sur les
             # mots OCR en promettant une "renumérotation finale par
             # compile/compiler.py" -- vrai UNIQUEMENT pour page.resolved.words
             # (une copie, cf. reading_order.ordonner), JAMAIS pour

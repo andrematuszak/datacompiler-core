@@ -1,7 +1,4 @@
-"""
-datacompiler/frontend/extract/pdfplumber.py
-Moteur 2 — Extraction des éléments visuels et vectoriels via pdfplumber.
-"""
+"""Use pdfplumber to extract visual and vector elements, including images, tables, and page drawings."""
 
 from . import table_reconstruction
 from typing import Tuple, List, Dict, Any, Optional
@@ -16,10 +13,7 @@ def extraire_page_pdfplumber(
     start_table_id: int,
     image_text_signals: Optional[list] = None,
 ) -> Tuple[Dict[str, List[Any]], int, int]:
-    """
-    Extrait les images, tableaux (avec reconstruction avancée) 
-    et lignes vectorielles d'une page.
-    """
+    """Extract images, tables, and vector lines from one pdfplumber page."""
     images: List[ImageElement] = []
     tables: List[TableElement] = []
     lines: List[GraphicVector] = []

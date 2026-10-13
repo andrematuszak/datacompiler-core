@@ -1,14 +1,4 @@
-"""links.py -- rattache les mots résolus d'une page à ses liens cliquables.
-
-Le texte sous un lien est souvent vectorisé (« La notice de cet avis est disponible en cliquant
-ici… » sur l'avis d'impôt) : il est lu par OCR comme les autres zones vectorielles, puis
-associé ici au LinkElement correspondant, par position. La zone cliquable d'origine (link.bbox)
-n'est PAS modifiée : le rendu PDF remet l'annotation exactement où elle était.
-
-Un mot appartient à un lien si son CENTRE tombe dans link.bbox. link.word_ids est dans l'ordre
-de lecture (ordre de page.resolved.words) et sert, côté traduction, à garder le lien attaché au
-segment qui contient ces mots.
-"""
+"""Associate resolved words with clickable links using source link geometry. Link text can be vectorized, so matching uses geometry and tolerates small extraction differences."""
 
 
 def associer_liens(page) -> None:
