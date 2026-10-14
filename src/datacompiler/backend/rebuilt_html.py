@@ -1,5 +1,7 @@
 """Render HTML from ``page.resolved`` in reading order. The output uses a simple flowing layout rather than reproducing the source page geometry."""
 
+from html import escape
+
 from datacompiler.model.document import Document
 from datacompiler.compile.layout import grouper_par_ligne
 
@@ -14,8 +16,8 @@ def render_html(doc: Document, largeur_affichage=700) -> str:
         if mots:
             lignes = grouper_par_ligne(mots)
             for ligne in lignes:
-                texte = " ".join(w.output_text for w in ligne).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-                morceaux.append(f'<div style="margin:2px 0; font-size:13px;">{texte}</div>')
+                texte = " ".join(w.output_text for w in ligne)
+                morceaux.append(f'<div style="margin:2px 0; font-size:13px;">{escape(texte)}</div>')
         else:
             morceaux.append("<p><em>(page vide)</em></p>")
 
@@ -32,7 +34,7 @@ def _table_en_html(rows):
     html = ['<table style="border-collapse:collapse;margin:8px 0;">']
     for row in rows:
         html.append("<tr>" + "".join(
-            f'<td style="border:1px solid #ccc;padding:4px;font-size:12px;">{c or ""}</td>' for c in row
+            f'<td style="border:1px solid #ccc;padding:4px;font-size:12px;">{escape(str(c)) if c is not None else ""}</td>' for c in row
         ) + "</tr>")
     html.append("</table>")
     return "".join(html)

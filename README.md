@@ -57,6 +57,131 @@ document = executer_pipeline("chemin/vers/document.pdf", strategy="rebuilt")
 print(f"Pages traitées : {len(document.pages)}")
 ```
 
+### Échange de traductions XLIFF
+
+DataCompiler exporte une unité par ligne résolue en XLIFF 1.2. Les identifiants
+de page et de mots sont conservés dans une note DataCompiler afin de rattacher
+les traductions au PDF. Le texte source du document n'est jamais remplacé à
+l'import.
+
+```python
+from datacompiler.translation import (
+    export_xliff, import_xliff, render_translated_pdf,
+)
+
+units = export_xliff(
+    document, "document-fr-en.xlf",
+    source_language="fr", target_language="en",
+)
+# Traduire document-fr-en.xlf dans un outil CAT compatible, puis :
+translation = import_xliff("document-fr-en-translated.xlf", expected_units=units)
+application = render_translated_pdf(
+    document, translation, "document-en-rebuilt.pdf",
+    expected_units=units,
+)
+print("Segments traduits :", len(application.translated_units))
+```
+
+### Relecture humaine dans Matecat
+
+DataCompiler peut créer un projet Matecat à partir du XLIFF qu'il vient de
+produire, puis récupérer le XLIFF après la relecture humaine. Le PDF original
+n'est pas envoyé : Matecat reçoit le texte des segments et les notes XLIFF
+nécessaires au rattachement des segments. Le texte est toutefois transmis au
+serveur Matecat configuré.
+
+```python
+from datacompiler.translation import (
+    MatecatClient, submit_document_to_matecat, import_matecat_xliff,
+    render_translated_pdf,
+)
+
+client = MatecatClient()  # lit MATECAT_API_KEY et MATECAT_BASE_URL
+project, units = submit_document_to_matecat(
+    document, client, "document-fr-en.xlf",
+    source_language="fr-FR", target_language="en-US",
+    project_name="Document à relire",
+)
+print("Projet créé :", project.project_id)
+if project.editor_url:
+    print("Éditeur :", project.editor_url)
+elif project.project_id and project.project_password:
+    print(client.get_project_urls(project.project_id, project.project_password))
+
+# Après la relecture dans Matecat :
+translation = import_matecat_xliff(
+    client, project, "document-fr-en-reviewed.xlf", expected_units=units,
+)
+render_translated_pdf(
+    document, translation, "document-en-rebuilt.pdf", expected_units=units,
+)
+```
+
+Configure `MATECAT_API_KEY` avec la clé API Matecat au format demandé par
+Matecat. `MATECAT_BASE_URL` vaut par défaut `https://www.matecat.com` ; il pourra
+pointer vers ton instance, par exemple `https://matecat.data-compiler.com`, une
+fois celle-ci déployée. Les identifiants restent dans l'environnement et ne
+doivent pas être inscrits dans le dépôt. La session d'édition humaine se fait
+dans l'interface Web Matecat ; DataCompiler prépare le projet et reprend le
+XLIFF exporté avant de reconstruire le PDF.
+
+L'intégration utilise les API publiques Matecat : création de projet par
+`/api/v1/new`, informations projet par `/api/v2/projects/...`, et export XLIFF
+par `/api/v2/xliff/...`. Les identifiants de segments sont validés à la reprise ;
+un XLIFF dont le texte source a été modifié ou dont les IDs ne correspondent
+plus est refusé pour éviter de placer une traduction au mauvais endroit.
+
+`render_translated_pdf` produit un PDF reconstruit et ne modifie pas le modèle
+source. Les lignes d'un même bloc de texte natif, d'une cellule de tableau ou
+d'une zone vectorielle reconnue sont recomposées en paragraphe, puis renvoyées
+à la ligne dans la boîte du bloc. La taille de police est réduite seulement si
+le paragraphe ne tient pas à la taille d'origine. Si du texte dépasse encore
+la boîte à la taille minimale, le résultat expose un avertissement dans
+`layout_warnings` à faire relire. Les traductions absentes conservent leur
+texte source dans le bloc. Le PDF contient également une annotation cliquable
+par bloc traduit : elle liste les identifiants de segments, le texte source et
+la traduction, le moteur utilisé, l'estimation de qualité et les indications
+de relecture. Une estimation COMETKiwi est explicitement marquée comme non
+calibrée : elle sert à prioriser la relecture et ne représente pas une
+probabilité que la traduction soit exacte.
+
+La détection automatique utilise le texte natif du PDF avant l'OCR ciblé et
+alimente PaddleOCR avec la langue détectée. Elle est aussi accessible via
+`detect_document_languages(document)` pour annoter les lignes résolues et
+`detect_language(text)` pour une détection ponctuelle. Pour les PDF sans texte
+natif exploitable (notamment les scans), passe `--paddle-lang en` ou l'argument
+`paddle_lang="en"` à la place ; aucune langue n'est supposée par défaut.
+
+### Prétraduction automatique et contrôle qualité
+
+Le SDK officiel DeepL est proposé comme moteur facultatif. Il faut installer
+`python -m pip install -e ".[translation]"` et fournir `DEEPL_AUTH_KEY` dans
+l'environnement. Le texte des segments sera alors envoyé au service DeepL.
+DeepL renvoie une traduction et sa langue source détectée, mais aucun score de
+confiance de la traduction.
+
+```python
+from datacompiler.translation import (
+    CometKiwiQualityEstimator, translate_xliff_file,
+)
+
+quality = CometKiwiQualityEstimator()  # nécessite le téléchargement du modèle
+translation = translate_xliff_file(
+    "document-fr-en.xlf", "document-fr-en-machine.xlf",
+    context="Formulaire fiscal français; conserver les références légales.",
+    # glossary="ID_DE_GLOSSAIRE",  # facultatif
+    quality_estimator=quality,
+)
+```
+
+Pour trier les segments à relire, l'extra `translation-quality` ajoute
+COMETKiwi : `python -m pip install -e ".[translation,translation-quality]"`.
+Il estime la qualité sans traduction de référence ; les scores ne sont pas des
+probabilités calibrées. Les segments sous le seuil (0,65 par défaut) reçoivent
+une note DataCompiler dans le XLIFF et restent `approved="no"` pour être
+vérifiés par une personne dans Matecat. Le modèle est volumineux et son accès
+peut demander l'acceptation de sa licence sur Hugging Face.
+
 ---
 
 ## 🧪 Lancer les tests

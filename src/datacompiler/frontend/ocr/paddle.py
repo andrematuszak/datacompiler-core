@@ -2,6 +2,7 @@ import os
 import re
 import io
 import logging
+import threading
 
 import pymupdf
 import numpy as np
@@ -73,7 +74,8 @@ def _ratio_encre_relatif(image: Image.Image, x0: float, y0: float, x1: float, y1
 
 class PaddleOcrBackend(OcrBackend):
     name = "paddleocr"
-    _engine_instance = None  # Singleton pour le moteur PaddleOCR
+    _engine_instances = {}
+    _engine_lock = threading.Lock()
 
     def __init__(self, lang: str = "fr", dpi: int = 300, **kwargs):
         self.lang = lang
@@ -89,12 +91,15 @@ class PaddleOcrBackend(OcrBackend):
 
     @classmethod
     def _get_engine(cls, lang: str = "fr", **kwargs):
-        """Initialize the shared PaddleOCR engine once."""
-        if cls._engine_instance is None:
+        """Reuse PaddleOCR engines only when language and options match."""
+        cache_key = (lang, tuple(sorted((key, repr(value)) for key, value in kwargs.items())))
+        with cls._engine_lock:
+            if cache_key in cls._engine_instances:
+                return cls._engine_instances[cache_key]
             try:
                 from paddleocr import PaddleOCR
                 logger.info("Initializing the PaddleOCR engine (language: %s)...", lang)
-                cls._engine_instance = PaddleOCR(
+                engine = PaddleOCR(
                     lang=lang,
                     use_textline_orientation=False,
                     use_doc_orientation_classify=False,
@@ -103,14 +108,14 @@ class PaddleOcrBackend(OcrBackend):
                 )
             except ImportError:
                 logger.error("PaddleOCR is not installed. Install paddlepaddle and paddleocr.")
-                cls._engine_instance = None
+                return None
             except Exception:
                 # Paddle initialization spans optional native/runtime dependencies;
                 # keep the backend unavailable and retain the complete traceback.
                 logger.exception("Could not initialize PaddleOCR")
-                cls._engine_instance = None
-
-        return cls._engine_instance
+                return None
+            cls._engine_instances[cache_key] = engine
+            return engine
 
     def _extraire(self, image: Image.Image) -> list:
         """Run OCR on an image and normalize Paddle text boxes and confidence scores."""
@@ -148,6 +153,7 @@ class PaddleOcrBackend(OcrBackend):
                 resolved_text=m["text"],
                 bbox=BBox(x, y, x + largeur, y + hauteur),
                 confidence=m["confidence"],
+                language=self.lang,
                 source="ocr_vectoriel_paddle",
                 is_vectorized=True,
                 reconstructed=True,
@@ -183,6 +189,7 @@ class PaddleOcrBackend(OcrBackend):
                         text=m["text"],
                         bbox=BBox(x, y, x + largeur, y + hauteur),
                         confidence=m["confidence"],
+                        language=self.lang,
                         source="paddleocr",
                     ))
 

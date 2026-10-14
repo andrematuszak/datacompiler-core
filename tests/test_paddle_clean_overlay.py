@@ -4,10 +4,12 @@ import pymupdf
 from PIL import Image
 
 from datacompiler.backend.faithful_pdf import render_faithful_pdf
+from datacompiler.frontend.extract.extract_pymupdf import rendre_zone_image
 from datacompiler.frontend.ocr.paddle import PaddleOCRBackend
 from datacompiler.model.document import Document as ModelDocument
 from datacompiler.model.document import Page as ModelPage, ResolvedContainer
 from datacompiler.model.metadata import Metadata
+from datacompiler.model.geometry import BBox
 
 
 class SimulatedPaddle:
@@ -30,7 +32,8 @@ def test_paddle_words_survive_clean_overlay_once_with_page_offset(tmp_path, monk
     source.save(source_path)
     source.close()
 
-    monkeypatch.setattr(PaddleOCRBackend, "_engine_instance", SimulatedPaddle())
+    monkeypatch.setattr(PaddleOCRBackend, "_engine_instances", {})
+    monkeypatch.setattr(PaddleOCRBackend, "_get_engine", classmethod(lambda cls, lang="fr", **kwargs: SimulatedPaddle()))
     backend = object.__new__(PaddleOCRBackend)
     backend.lang = "fr"
     backend.dpi = 72
@@ -69,3 +72,27 @@ def test_paddle_words_survive_clean_overlay_once_with_page_offset(tmp_path, monk
     assert extracted[0][2] < extracted[1][0]
     assert abs(extracted[0][0] - 30) < 1
     assert abs(extracted[1][0] - 80) < 1
+
+
+def test_fractional_crop_uses_actual_pixmap_origin_for_page_coordinates(monkeypatch):
+    page = pymupdf.open()
+    page_obj = page.new_page(width=200, height=100)
+    crop_bbox = BBox(10.13, 12.27, 40.31, 30.42)
+    image, scale, offset = rendre_zone_image(page_obj, crop_bbox, dpi=300)
+
+    backend = object.__new__(PaddleOCRBackend)
+    backend.lang = "fr"
+    backend.dpi = 300
+    backend.extra_kwargs = {}
+    monkeypatch.setattr(backend, "_extraire", lambda _image: [{
+        "text": "mot", "confidence": 0.9, "x0": 0, "y0": 0, "x1": 12, "y1": 12,
+    }])
+    word = backend.ocraliser_zone(image, offset=offset, dpi=300)[0]
+
+    assert abs(word.bbox.x0 - offset[0]) < 1e-9
+    assert abs(word.bbox.y0 - offset[1]) < 1e-9
+    # The actual pixmap origin is pixel-aligned and therefore differs from
+    # the requested fractional clip origin in at least one axis.
+    assert offset != (crop_bbox.x0, crop_bbox.y0)
+    assert abs(word.bbox.x1 - (offset[0] + 12 / scale)) < 1e-9
+    page.close()

@@ -14,25 +14,34 @@ dependencies = [
     "pymupdf>=1.24",
     "pdfplumber>=0.11",
     "numpy>=1.24.0",
-    "reportlab",
     "Pillow>=10.0",
-    "pdf2image",
     "python-docx>=1.1.0",
-    "pytest>=7.0.0",
-    "transformers==4.49.0",
-    "torch",
-    "timm",
-    "einops",
-    "fonttools"
+    "fonttools",
+    "langdetect>=1.0.9"
 ]
 
 [project.optional-dependencies]
 # Moteurs OCR (Mistral, PaddleOCR)
 ocr = [
-    "accelerate>=0.26.0",
     "mistralai>=1.0.0",
     "paddlepaddle",
     "paddleocr"
+]
+# Experimental Qwen2.5-VL backend
+qwen = [
+    "accelerate>=0.26.0",
+    "transformers==4.49.0",
+    "torch",
+    "timm",
+    "einops"
+]
+# Hosted DeepL text translation (requires a DeepL API key).
+translation = [
+    "deepl>=1.26.0"
+]
+# Local COMETKiwi reference-free quality estimation (large ML dependencies).
+translation-quality = [
+    "unbabel-comet"
 ]
 # Export au format Word
 docx = [
@@ -50,11 +59,14 @@ dev = [
 # Groupe pour tout installer en une commande
 all = [
     "mistralai>=1.0.0",
-    "Pillow>=10.0",
     "paddlepaddle",
     "paddleocr",
     "python-docx>=1.1.0",
-    "pytest>=7.0.0"
+    "accelerate>=0.26.0",
+    "transformers==4.49.0",
+    "torch",
+    "timm",
+    "einops"
 ]
 
 [project.scripts]

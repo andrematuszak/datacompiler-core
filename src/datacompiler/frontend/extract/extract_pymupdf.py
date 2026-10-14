@@ -377,7 +377,7 @@ def extraire_page_pymupdf(page_pymupdf, page_number, start_word_id):
 
 
 def rendre_zone_image(page_pymupdf: pymupdf.Page, bbox: BBox, dpi: int = 300):
-    """Render a page crop to pixels and return the PIL image and scale."""
+    """Render a page crop and return its image, scale, and actual page-space origin."""
     from PIL import Image
     import io
 
@@ -385,4 +385,5 @@ def rendre_zone_image(page_pymupdf: pymupdf.Page, bbox: BBox, dpi: int = 300):
     matrix = pymupdf.Matrix(scale, scale)
     clip = pymupdf.Rect(bbox.x0, bbox.y0, bbox.x1, bbox.y1)
     pix = page_pymupdf.get_pixmap(matrix=matrix, clip=clip, alpha=False)
-    return Image.open(io.BytesIO(pix.tobytes("png"))), scale
+    origin = (pix.x / scale, pix.y / scale)
+    return Image.open(io.BytesIO(pix.tobytes("png"))), scale, origin

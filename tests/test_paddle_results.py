@@ -2,7 +2,10 @@
 
 import importlib.util
 from pathlib import Path
+import sys
+import types
 import unittest
+from unittest.mock import Mock, patch
 
 
 MODULE_PATH = (
@@ -66,6 +69,30 @@ class PaddleResultTests(unittest.TestCase):
             [(word["text"], word["x0"], word["y0"], word["x1"], word["y1"]) for word in rectangles],
         )
         self.assertEqual([word["confidence"] for word in rectangles], [0.91, 0.87])
+
+    def test_engine_cache_is_keyed_by_language_and_options(self):
+        from datacompiler.frontend.ocr.paddle import PaddleOcrBackend
+
+        factory = Mock(side_effect=lambda **kwargs: kwargs)
+        paddleocr = types.ModuleType("paddleocr")
+        paddleocr.PaddleOCR = factory
+        with patch.dict(sys.modules, {"paddleocr": paddleocr}), patch.object(
+            PaddleOcrBackend, "_engine_instances", {}
+        ):
+            french = PaddleOcrBackend._get_engine(lang="fr")
+            self.assertIs(
+                french,
+                PaddleOcrBackend._get_engine(lang="fr"),
+            )
+            english = PaddleOcrBackend._get_engine(lang="en")
+            configured = PaddleOcrBackend._get_engine(
+                lang="fr", custom_option="different"
+            )
+
+        self.assertEqual(factory.call_count, 3)
+        self.assertEqual(french["lang"], "fr")
+        self.assertEqual(english["lang"], "en")
+        self.assertIsNot(french, configured)
 
     def test_missing_scores_do_not_drop_detected_words(self):
         result = {

@@ -527,10 +527,10 @@ def recuperer_texte_vectorise(doc: Document, pdf_path: str, backends, lang: str 
             # accumulés avant extend -- cf. _assigner_gras_relatif (seuil PAR PAGE)
             zones_par_mot = {}
             for zone in zones_a_traiter:
-                image, _ = rendre_zone_image(page_pymupdf, zone, dpi=dpi)
+                image, _, origine_image = rendre_zone_image(page_pymupdf, zone, dpi=dpi)
                 couleur_encre = _couleur_encre_zone(page, zone)
                 mots = fusionner_zone_multi_backend(
-                    image, offset=(zone.x0, zone.y0), backends=backends_utilisables, dpi=dpi, lang=lang,
+                    image, offset=origine_image, backends=backends_utilisables, dpi=dpi, lang=lang,
                     couleur_encre=couleur_encre,
                 )
                 if not mots:
