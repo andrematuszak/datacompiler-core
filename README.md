@@ -49,7 +49,8 @@ datacompiler chemin/vers/document.pdf
 ```
 
 Sans option, la commande écrit `document_rebuilt.pdf` : un nouveau PDF qui suit l'ordre de lecture
-résolu. Pour garder le PDF d'origine intact et n'y ajouter que du texte caché, utilise la stratégie
+résolu. Le texte reconnu à partir de glyphes vectoriels est réémis comme texte PDF sélectionnable ;
+les images et dessins non reconnus comme glyphes (par exemple les cadres) sont conservés. Pour garder le PDF d'origine intact et n'y ajouter que du texte caché, utilise la stratégie
 `overlay` (le format `faithful-pdf` exige `--strategy`) :
 
 ```bash
@@ -151,10 +152,10 @@ plus est refusé pour éviter de placer une traduction au mauvais endroit.
 `render_translated_pdf` produit un PDF reconstruit et ne modifie pas le modèle
 source. Chaque segment traduit reste à sa position et dans sa boîte d'origine,
 sans recomposition ni retour à la ligne. Pour une même boîte logique (bloc natif,
-cellule ou zone reconnue), le segment qui demande la plus forte réduction fixe
-un facteur de taille commun à tous les segments de cette boîte. La position,
-la couleur et le style source restent ainsi cohérents. Les traductions absentes
-conservent leur texte source.
+cellule ou zone reconnue), la taille source est conservée sans réduction
+automatique : le placement et les ajustements typographiques relèvent du LQA.
+La position, la couleur et le style source sont conservés au mieux. Les
+traductions absentes conservent leur texte source.
 Les commentaires PDF sont désactivés par défaut pour préserver la lisibilité ;
 `render_translated_pdf(..., include_comments=True)` les ajoute à la demande.
 Ils indiquent alors le texte source et traduit, le moteur, l'estimation de

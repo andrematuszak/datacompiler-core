@@ -23,10 +23,11 @@ def render_translated_pdf(
 ) -> TranslationApplication:
     """Apply imported XLIFF targets to a copy and write a rebuilt translated PDF.
 
-    Translated text stays in its source segment box; when needed, its font size
-    is reduced to fit. Original document data remains unchanged. Missing
-    targets preserve their source text and are listed. PDF comments are off by
-    default; set ``include_comments=True`` to add the review annotations.
+    Translated text stays at its source segment position and retains its
+    source font size. The output is a draft for manual layout review; text is
+    not automatically resized or reflowed. Original document data remains
+    unchanged. Missing targets preserve their source text and are listed. PDF
+    comments are off by default; set ``include_comments=True`` to add them.
     """
     application = apply_xliff_translation(
         document, translation, expected_units=expected_units,

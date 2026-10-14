@@ -1,4 +1,4 @@
-"""Rebuild a selectable PDF from ``page.resolved`` while retaining source-page geometry. The renderer preserves vectorized word outlines, copies images and graphics, and uses embedded substitute fonts where needed."""
+"""Rebuild a selectable PDF from resolved text and retained page graphics."""
 
 import logging
 from functools import lru_cache
@@ -57,7 +57,7 @@ def _hex_to_rgb(hex_color):
 
 
 def _copier_images_et_dessins(src_page, dst_page, report, exclure=None):
-    """Copy source images and vector drawings to the destination page. Exclude glyph paths only when their text is visibly reconstructed."""
+    """Copy page images and non-text drawings, omitting recognized glyph paths."""
     exclure = exclure or []
 
     def _match_exclusion(rect):
@@ -168,7 +168,9 @@ def _grouper_en_spans(mots, couleurs_echantillonnees=None, tolerance_y=3.0, ecar
         gras = bool(w.bold) or "bold" in (w.font or "").lower()
         italic = bool(w.italic) or "italic" in (w.font or "").lower()
         taille = w.font_size or max(4.0, b.height)
-        source_graphic = bool(w.is_vectorized and w.resolved_text == w.text)
+        # Recognized text is emitted as visible PDF text even when its source
+        # was a collection of vector glyph outlines.
+        source_graphic = False
 
         mot_id = id(w)
         if mot_id in couleurs_echantillonnees:
@@ -425,8 +427,8 @@ def _inserer_span(writers, page_rect, span, report, baseline_par_id=None):
     report["mots_inseres"] = report.get("mots_inseres", 0) + len(span["mots"])
     
 
-def _ecrire_bloc_traduit(page, word, *, scale=1.0, baseline_y=None):
-    """Write one translated segment at its source position, changing size only."""
+def _ecrire_bloc_traduit(page, word, *, baseline_y=None):
+    """Write one translated segment at its source position and source font size."""
     if not word.bbox:
         return None
     rect = pymupdf.Rect(word.bbox.x0, word.bbox.y0, word.bbox.x1, word.bbox.y1)
@@ -434,9 +436,7 @@ def _ecrire_bloc_traduit(page, word, *, scale=1.0, baseline_y=None):
         return "translated block has an empty layout box"
     font, _ = _font_objet(bool(word.bold), bool(word.italic))
     text = word.resolved_text or word.text or ""
-    base_size = max(4.0, float(getattr(word, "_translation_base_font_size", 10.0) or 10.0))
-
-    chosen_size = max(0.5, base_size * min(1.0, max(0.01, float(scale))))
+    base_size = max(0.1, float(getattr(word, "_translation_base_font_size", 10.0) or 10.0))
     baseline = baseline_y
     if baseline is None:
         ascender = getattr(font, "ascender", 0.8)
@@ -445,7 +445,7 @@ def _ecrire_bloc_traduit(page, word, *, scale=1.0, baseline_y=None):
         baseline = rect.y0 + base_size * (ascender if ascender > 0 else 0.8)
     writer = pymupdf.TextWriter(page.rect)
     writer.append(
-        pymupdf.Point(rect.x0, baseline), text, font=font, fontsize=chosen_size,
+        pymupdf.Point(rect.x0, baseline), text, font=font, fontsize=base_size,
     )
     color = _hex_to_rgb(word.color)
     writer.write_text(page, color=color)
@@ -539,12 +539,12 @@ def render_rebuilt_pdf(doc: Document, output_path: str, source_pdf: str = None,
             translated_blocks = [w for w in ordre if w.source == "xliff_translation"]
             ordinary_words = [w for w in ordre if w.source != "xliff_translation"]
 
-            # Exclusion des tracés vectoriels de glyphes
+            # Exclude recognized vector glyphs: their visible replacement is
+            # selectable text emitted below. Unrecognized artwork is retained.
             mots_exclus = [
                 w for w in ordre
                 if w.bbox
                 and (w.reconstructed or w.is_vectorized or w.source == "ocr_vectoriel")
-                and not (w.is_vectorized and w.resolved_text == w.text)
             ]
 
             # Copier les images et tracés graphiques
@@ -556,23 +556,6 @@ def render_rebuilt_pdf(doc: Document, output_path: str, source_pdf: str = None,
             # ordre AVANT le groupement en spans -- cf. docstring de
             # _calibrer_lignes pour pourquoi).
             baseline_par_id = _calibrer_lignes(ordinary_words)
-
-            # One scale is shared by every translated segment in a logical
-            # source box. The segment needing the greatest reduction sets it.
-            scale_par_bloc = {}
-            for word in translated_blocks:
-                if not word.bbox or word.bbox.width <= 0:
-                    continue
-                font, _ = _font_objet(bool(word.bold), bool(word.italic))
-                text = word.resolved_text or word.text or ""
-                base_size = max(
-                    0.5, float(getattr(word, "_translation_base_font_size", 10.0) or 10.0),
-                )
-                measured_width = font.text_length(text, fontsize=base_size)
-                fit = min(1.0, word.bbox.width / measured_width) if measured_width > 0 else 1.0
-                block_id = getattr(word, "_translation_block_id", None)
-                if block_id:
-                    scale_par_bloc[block_id] = min(scale_par_bloc.get(block_id, 1.0), fit)
 
             # Regrouper le texte par spans homogènes
             spans = _grouper_en_spans(ordinary_words, couleurs_echantillonnees=couleurs_echantillonnees)
@@ -601,10 +584,8 @@ def render_rebuilt_pdf(doc: Document, output_path: str, source_pdf: str = None,
                 )
 
             for translated_word in translated_blocks:
-                block_id = getattr(translated_word, "_translation_block_id", None)
                 warning = _ecrire_bloc_traduit(
                     dst_page, translated_word,
-                    scale=scale_par_bloc.get(block_id, 1.0),
                     baseline_y=getattr(translated_word, "_translation_baseline", None),
                 )
                 if warning:
