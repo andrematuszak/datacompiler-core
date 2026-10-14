@@ -557,6 +557,23 @@ def render_rebuilt_pdf(doc: Document, output_path: str, source_pdf: str = None,
             # _calibrer_lignes pour pourquoi).
             baseline_par_id = _calibrer_lignes(ordinary_words)
 
+            # One scale is shared by every translated segment in a logical
+            # source box. The segment needing the greatest reduction sets it.
+            scale_par_bloc = {}
+            for word in translated_blocks:
+                if not word.bbox or (word.bbox.x1 - word.bbox.x0) <= 0:
+                    continue
+                font, _ = _font_objet(bool(word.bold), bool(word.italic))
+                text = word.resolved_text or word.text or ""
+                base_size = max(
+                    0.5, float(getattr(word, "_translation_base_font_size", 10.0) or 10.0),
+                )
+                measured_width = font.text_length(text, fontsize=base_size)
+                fit = min(1.0, (word.bbox.x1 - word.bbox.x0) / measured_width) if measured_width > 0 else 1.0
+                block_id = getattr(word, "_translation_block_id", None)
+                if block_id:
+                    scale_par_bloc[block_id] = min(scale_par_bloc.get(block_id, 1.0), fit)
+
             # Regrouper le texte par spans homogènes
             spans = _grouper_en_spans(ordinary_words, couleurs_echantillonnees=couleurs_echantillonnees)
             report["spans_traites"] = len(spans)
