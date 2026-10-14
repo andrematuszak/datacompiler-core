@@ -425,8 +425,8 @@ def _inserer_span(writers, page_rect, span, report, baseline_par_id=None):
     report["mots_inseres"] = report.get("mots_inseres", 0) + len(span["mots"])
     
 
-def _ecrire_bloc_traduit(page, word):
-    """Lay out one translated paragraph in its source block box, wrapping first."""
+def _ecrire_bloc_traduit(page, word, *, scale=1.0, baseline_y=None):
+    """Write one translated segment at its source position, changing size only."""
     if not word.bbox:
         return None
     rect = pymupdf.Rect(word.bbox.x0, word.bbox.y0, word.bbox.x1, word.bbox.y1)
@@ -436,50 +436,19 @@ def _ecrire_bloc_traduit(page, word):
     text = word.resolved_text or word.text or ""
     base_size = max(4.0, float(getattr(word, "_translation_base_font_size", 10.0) or 10.0))
 
-    def _compose(size):
-        writer = pymupdf.TextWriter(page.rect)
-        try:
-            # None returns overflow lines while keeping the fitting part in
-            # the writer. warn=False raises instead of returning that list.
-            overflow = writer.fill_textbox(
-                rect, text, font=font, fontsize=size, lineheight=size * 1.2,
-                warn=None,
-            )
-        except ValueError as exc:
-            # If even the first line cannot start in the box, preserve the
-            # full text in the warning path rather than aborting PDF export.
-            if "Text must start in rectangle" not in str(exc):
-                raise
-            overflow = [(text, 0.0)]
-        return writer, overflow
-
-    writer, overflow = _compose(base_size)
-    chosen_size = base_size
-    if overflow:
-        low, high = 4.0, base_size
-        best = None
-        for _ in range(12):
-            mid = (low + high) / 2
-            candidate, remainder = _compose(mid)
-            if remainder:
-                high = mid
-            else:
-                best = (candidate, mid)
-                low = mid
-        if best:
-            writer, chosen_size = best
-            overflow = []
-        else:
-            writer, overflow = _compose(4.0)
-            chosen_size = 4.0
+    chosen_size = max(0.5, base_size * min(1.0, max(0.01, float(scale))))
+    baseline = baseline_y
+    if baseline is None:
+        ascender = getattr(font, "ascender", 0.8)
+        if ascender > 10:
+            ascender /= 1000.0
+        baseline = rect.y0 + base_size * (ascender if ascender > 0 else 0.8)
+    writer = pymupdf.TextWriter(page.rect)
+    writer.append(
+        pymupdf.Point(rect.x0, baseline), text, font=font, fontsize=chosen_size,
+    )
     color = _hex_to_rgb(word.color)
     writer.write_text(page, color=color)
-    if overflow:
-        leftover = " ".join(line for line, _ in overflow)
-        return (
-            f"{getattr(word, '_translation_block_id', 'block')}: text still overflows "
-            f"its source box at {chosen_size:.1f} pt ({leftover[:100]})."
-        )
     return None
 
 
@@ -540,7 +509,8 @@ def _annoter_bloc_traduit(page, word):
 
 
 def render_rebuilt_pdf(doc: Document, output_path: str, source_pdf: str = None,
-                       dpi: int = 300, simple_sort=False) -> str:
+                       dpi: int = 300, simple_sort=False,
+                       include_translation_comments: bool = False) -> str:
     """Rebuild a selectable PDF at the source positions using grouped text spans and visual lines."""
     source_path = source_pdf or doc.metadata.source_pdf
     if not source_path:
@@ -587,6 +557,23 @@ def render_rebuilt_pdf(doc: Document, output_path: str, source_pdf: str = None,
             # _calibrer_lignes pour pourquoi).
             baseline_par_id = _calibrer_lignes(ordinary_words)
 
+            # One scale is shared by every translated segment in a logical
+            # source box. The segment needing the greatest reduction sets it.
+            scale_par_bloc = {}
+            for word in translated_blocks:
+                if not word.bbox or word.bbox.width <= 0:
+                    continue
+                font, _ = _font_objet(bool(word.bold), bool(word.italic))
+                text = word.resolved_text or word.text or ""
+                base_size = max(
+                    0.5, float(getattr(word, "_translation_base_font_size", 10.0) or 10.0),
+                )
+                measured_width = font.text_length(text, fontsize=base_size)
+                fit = min(1.0, word.bbox.width / measured_width) if measured_width > 0 else 1.0
+                block_id = getattr(word, "_translation_block_id", None)
+                if block_id:
+                    scale_par_bloc[block_id] = min(scale_par_bloc.get(block_id, 1.0), fit)
+
             # Regrouper le texte par spans homogènes
             spans = _grouper_en_spans(ordinary_words, couleurs_echantillonnees=couleurs_echantillonnees)
             report["spans_traites"] = len(spans)
@@ -614,11 +601,17 @@ def render_rebuilt_pdf(doc: Document, output_path: str, source_pdf: str = None,
                 )
 
             for translated_word in translated_blocks:
-                warning = _ecrire_bloc_traduit(dst_page, translated_word)
+                block_id = getattr(translated_word, "_translation_block_id", None)
+                warning = _ecrire_bloc_traduit(
+                    dst_page, translated_word,
+                    scale=scale_par_bloc.get(block_id, 1.0),
+                    baseline_y=getattr(translated_word, "_translation_baseline", None),
+                )
                 if warning:
                     translated_word.notes.append(warning)
                     logger.warning(warning)
-                _annoter_bloc_traduit(dst_page, translated_word)
+                if include_translation_comments:
+                    _annoter_bloc_traduit(dst_page, translated_word)
                 report["mots_inseres"] += 1
 
             report["liens_inseres"] = reinserer_liens(dst_page, model_page)

@@ -96,7 +96,7 @@ def _block_for_line(page, line, line_number):
 
 
 def build_translation_units(document: Document) -> list[TranslationUnit]:
-    """Build one segment per resolved visual line in reading order."""
+    """Build one segment per resolved visual line."""
     result = []
     for page in document.pages:
         words = page.resolved.words
@@ -346,7 +346,7 @@ def apply_xliff_translation(
     *,
     expected_units: list[TranslationUnit] | None = None,
 ) -> TranslationApplication:
-    """Apply translated XLIFF units as reflowable paragraphs on a copy."""
+    """Apply translated XLIFF units in their original segment boxes on a copy."""
     source_units = expected_units if expected_units is not None else build_translation_units(document)
     source_by_id = {unit.id: unit for unit in source_units}
     translated_by_id = translation.units
@@ -356,69 +356,40 @@ def apply_xliff_translation(
 
     translated = deepcopy(document)
     pages = {page.number: page for page in translated.pages}
-    block_bounds = _layout_block_bounds(translated)
-    for source_unit in source_units:
-        if not source_unit.block_id:
-            continue
-        page = pages.get(source_unit.page)
-        if page is None:
-            continue
-        word_by_id = {word.id: word for word in page.resolved.words}
-        boxes = [
-            word_by_id[word_id].bbox for word_id in source_unit.word_ids
-            if word_id in word_by_id and word_by_id[word_id].bbox
-        ]
-        if boxes:
-            current = block_bounds.get(source_unit.block_id)
-            x0 = min(box.x0 for box in boxes)
-            y0 = min(box.y0 for box in boxes)
-            x1 = max(box.x1 for box in boxes)
-            y1 = max(box.y1 for box in boxes)
-            block_bounds[source_unit.block_id] = (
-                min(x0, current[0]) if current else x0,
-                min(y0, current[1]) if current else y0,
-                max(x1, current[2]) if current else x1,
-                max(y1, current[3]) if current else y1,
-            )
-    grouped = {}
+    # Keep the exact source baseline before replacing any source words.
+    from datacompiler.backend.rebuilt_pdf import _calibrer_lignes
+    baseline_by_page = {
+        page.number: _calibrer_lignes(page.resolved.words) for page in translated.pages
+    }
+    translated_units = []
     for source_unit in source_units:
         target_unit = translated_by_id.get(source_unit.id)
         if target_unit and target_unit.source and target_unit.source != source_unit.source:
             raise ValueError(f"Source text changed for XLIFF unit {source_unit.id}")
         if target_unit and (target_unit.target or "").strip():
-            key = (source_unit.page, source_unit.block_id or source_unit.id)
-            grouped.setdefault(key, []).append((source_unit, target_unit))
+            translated_units.append((source_unit, target_unit))
 
     applied = []
-    for (page_number, block_id), translated_lines in grouped.items():
+    for source_unit, target_unit in translated_units:
+        page_number, unit_id = source_unit.page, source_unit.id
+        block_id = source_unit.block_id or unit_id
         page = pages.get(page_number)
         if page is None:
             raise ValueError(f"Source page {page_number} for {block_id} is missing")
         word_by_id = {word.id: word for word in page.resolved.words}
-        # Include untranslated lines from the same block so a partial XLIFF
-        # round-trip does not silently remove their source text.
-        block_units = [unit for unit in source_units
-                       if unit.page == page_number and (unit.block_id or unit.id) == block_id]
-        texts = []
-        all_words = []
-        block_unit_ids = []
-        for unit in block_units:
-            target_unit = translated_by_id.get(unit.id)
-            text = ((target_unit.target or "").strip()
-                    if target_unit and (target_unit.target or "").strip()
-                    else unit.source.strip())
-            if text:
-                texts.append(text)
-            words = [word_by_id[word_id] for word_id in unit.word_ids if word_id in word_by_id]
-            if len(words) != len(unit.word_ids) or not words:
-                raise ValueError(f"Source words for {unit.id} are missing from the document")
-            all_words.extend(words)
-            block_unit_ids.append(unit.id)
+        text = (target_unit.target or "").strip()
+        words = [word_by_id[word_id] for word_id in source_unit.word_ids
+                 if word_id in word_by_id]
+        if len(words) != len(source_unit.word_ids) or not words:
+            raise ValueError(
+                f"Source words for {source_unit.id} are missing from the document"
+            )
+        all_words = words
 
         if not all_words:
             continue
-        # Unit order is the extraction/reading order; joining visual lines lets
-        # TextWriter perform natural wrapping inside the original block bounds.
+        # Keep one replacement per source segment so neighboring fields retain
+        # their own coordinates instead of flowing together as a paragraph.
         replacement = deepcopy(all_words[0])
         boxes = [word.bbox for word in all_words if word.bbox is not None]
         if boxes:
@@ -426,29 +397,25 @@ def apply_xliff_translation(
                 min(box.x0 for box in boxes), min(box.y0 for box in boxes),
                 max(box.x1 for box in boxes), max(box.y1 for box in boxes),
             )
-        block_extent = block_bounds.get(block_id)
-        if replacement.bbox and block_extent:
-            (replacement.bbox.x0, replacement.bbox.y0,
-             replacement.bbox.x1, replacement.bbox.y1) = block_extent
         replacement._translation_block_id = block_id
-        replacement._translation_unit_id = ",".join(block_unit_ids)
-        replacement._translation_segments = [
-            {
-                "id": unit.id,
-                "source": unit.source,
-                "target": target.target,
-                "quality_score": target.quality_score,
-                "quality_model": target.quality_model,
-                "provider": target.provider,
-                "review_recommended": target.review_recommended,
-                "human_reviewed": target.human_reviewed,
-            }
-            for unit, target in translated_lines
-        ]
+        replacement._translation_unit_id = source_unit.id
+        replacement._translation_segments = [{
+            "id": source_unit.id,
+            "source": source_unit.source,
+            "target": target_unit.target,
+            "quality_score": target_unit.quality_score,
+            "quality_model": target_unit.quality_model,
+            "provider": target_unit.provider,
+            "review_recommended": target_unit.review_recommended,
+            "human_reviewed": target_unit.human_reviewed,
+        }]
         replacement._translation_base_font_size = max(
             (word.font_size for word in all_words if word.font_size > 0), default=10.0,
         )
-        replacement.text = " ".join(texts)
+        replacement._translation_baseline = baseline_by_page[page_number].get(
+            id(all_words[0]),
+        )
+        replacement.text = text
         replacement.resolved_text = replacement.text
         replacement.replacement = None
         replacement.is_corrected = True
@@ -470,7 +437,7 @@ def apply_xliff_translation(
             if word.id not in remove_ids:
                 new_words.append(word)
         page.resolved.words = new_words
-        applied.extend(unit.id for unit, target in translated_lines)
+        applied.append(source_unit.id)
 
     missing = [
         unit_id for unit_id in source_by_id

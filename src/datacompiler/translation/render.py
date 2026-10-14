@@ -19,12 +19,14 @@ def render_translated_pdf(
     source_pdf: str | None = None,
     expected_units: list[TranslationUnit] | None = None,
     dpi: int = 300,
+    include_comments: bool = False,
 ) -> TranslationApplication:
     """Apply imported XLIFF targets to a copy and write a rebuilt translated PDF.
 
-    Translated lines in one source block are recomposed into a paragraph and
-    wrapped inside the block's source bounds. Original document data remains
-    unchanged. Missing targets preserve their source text and are listed.
+    Translated text stays in its source segment box; when needed, its font size
+    is reduced to fit. Original document data remains unchanged. Missing
+    targets preserve their source text and are listed. PDF comments are off by
+    default; set ``include_comments=True`` to add the review annotations.
     """
     application = apply_xliff_translation(
         document, translation, expected_units=expected_units,
@@ -35,6 +37,7 @@ def render_translated_pdf(
         application.document, output_path,
         source_pdf=source_pdf or document.metadata.source_pdf,
         dpi=dpi,
+        include_translation_comments=include_comments,
     )
     application.layout_warnings.extend(
         note

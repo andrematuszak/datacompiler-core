@@ -149,18 +149,17 @@ un XLIFF dont le texte source a été modifié ou dont les IDs ne correspondent
 plus est refusé pour éviter de placer une traduction au mauvais endroit.
 
 `render_translated_pdf` produit un PDF reconstruit et ne modifie pas le modèle
-source. Les lignes d'un même bloc de texte natif, d'une cellule de tableau ou
-d'une zone vectorielle reconnue sont recomposées en paragraphe, puis renvoyées
-à la ligne dans la boîte du bloc. La taille de police est réduite seulement si
-le paragraphe ne tient pas à la taille d'origine. Si du texte dépasse encore
-la boîte à la taille minimale, le résultat expose un avertissement dans
-`layout_warnings` à faire relire. Les traductions absentes conservent leur
-texte source dans le bloc. Le PDF contient également une annotation cliquable
-par bloc traduit : elle liste les identifiants de segments, le texte source et
-la traduction, le moteur utilisé, l'estimation de qualité et les indications
-de relecture. Une estimation COMETKiwi est explicitement marquée comme non
-calibrée : elle sert à prioriser la relecture et ne représente pas une
-probabilité que la traduction soit exacte.
+source. Chaque segment traduit reste à sa position et dans sa boîte d'origine,
+sans recomposition ni retour à la ligne. Pour une même boîte logique (bloc natif,
+cellule ou zone reconnue), le segment qui demande la plus forte réduction fixe
+un facteur de taille commun à tous les segments de cette boîte. La position,
+la couleur et le style source restent ainsi cohérents. Les traductions absentes
+conservent leur texte source.
+Les commentaires PDF sont désactivés par défaut pour préserver la lisibilité ;
+`render_translated_pdf(..., include_comments=True)` les ajoute à la demande.
+Ils indiquent alors le texte source et traduit, le moteur, l'estimation de
+qualité et les besoins de relecture. Une estimation COMETKiwi est marquée comme
+non calibrée et ne représente pas une probabilité que la traduction soit exacte.
 
 La détection automatique utilise le texte natif du PDF avant l'OCR ciblé et
 alimente PaddleOCR avec la langue détectée. Elle est aussi accessible via
