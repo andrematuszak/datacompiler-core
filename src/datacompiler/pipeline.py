@@ -2,6 +2,7 @@
 
 import argparse
 import logging
+import tempfile
 from pathlib import Path
 
 from datacompiler.frontend.diagnostic.vector_text import zones_texte_vectorise_probable
@@ -24,7 +25,7 @@ logger = logging.getLogger(__name__)
 progress = logging.getLogger("datacompiler.progress")
 
 
-def executer_pipeline(pdf_path, strategy="overlay", sauver_json=False,
+def executer_pipeline(pdf_path, strategy="rebuilt", sauver_json=False,
                       dpi=300, dpi_ocr_vectoriel=300, paddle_lang=None,
                       ocr_mode="auto"):
 
@@ -143,6 +144,39 @@ def executer_pipeline(pdf_path, strategy="overlay", sauver_json=False,
 run_pipeline = executer_pipeline
 
 
+def traduire_document(doc, pdf_path, target_lang, source_lang=None):
+    """Translate a processed document: XLIFF export, DeepL pre-translation, translated rebuilt PDF.
+
+    Writes ``<name>.<target_lang>.xlf`` (review-ready XLIFF) and ``<name>_<target_lang>_rebuilt.pdf``
+    next to the source PDF, and returns the path of the translated PDF.
+    """
+    from datacompiler.translation import export_xliff, import_xliff, render_translated_pdf
+    from datacompiler.translation.providers import translate_xliff_file
+
+    base = str(Path(pdf_path).with_suffix(""))
+    xliff_traduit = f"{base}.{target_lang}.xlf"
+    sortie = f"{base}_{target_lang}_rebuilt.pdf"
+    with tempfile.TemporaryDirectory() as dossier:
+        xliff_source = Path(dossier) / "source.xlf"
+        units = export_xliff(doc, xliff_source, target_language=target_lang, source_language=source_lang)
+        translate_xliff_file(xliff_source, xliff_traduit)
+    traduction = import_xliff(xliff_traduit, expected_units=units)
+    application = render_translated_pdf(doc, traduction, sortie, expected_units=units)
+    for avertissement in application.layout_warnings:
+        logger.warning("Translated layout: %s", avertissement)
+    return sortie
+
+
+# Format de sortie imposé par chaque stratégie de rendu en ligne de commande.
+_FORMAT_PAR_STRATEGIE = {
+    "overlay": "faithful-pdf",
+    "rasterized": "faithful-pdf",
+    "clean_overlay": "faithful-pdf",  # obsolète : redirigé vers rebuilt
+    "rebuilt": "rebuilt-pdf",
+    "flow": "flow-pdf",
+}
+
+
 def _configurer_journal_client():
     """Console utilisateur : avertissements et erreurs, plus deux lignes de progression."""
     logging.basicConfig(level=logging.WARNING, format="%(levelname)s: %(message)s", force=True)
@@ -164,12 +198,21 @@ def main():
     parser = argparse.ArgumentParser(description="PDF extraction and reconstruction pipeline")
     parser.add_argument("pdf")
     parser.add_argument("--format", choices=["faithful-pdf", "flow-pdf", "rebuilt-pdf", "markdown", "html", "docx"],
-                        default="faithful-pdf", help="Output format")
+                        default=None,
+                        help="Output format (default: rebuilt-pdf, a new PDF following the resolved reading order). "
+                             "faithful-pdf requires --strategy")
     parser.add_argument("--strategy", choices=["clean_overlay", "flow", "overlay", "rasterized", "rebuilt"],
-                        default="overlay",
-                        help="Rendering strategy: overlay (default: keeps the source PDF and adds hidden text only for "
-                             "corrected or recovered words), rebuilt (new PDF following the resolved reading order), "
-                             "rasterized, flow, or clean_overlay (deprecated: runs rebuilt)")
+                        default=None,
+                        help="Rendering strategy, required with --format faithful-pdf: overlay (keeps the source PDF "
+                             "and adds hidden text only for corrected or recovered words) or rasterized. "
+                             "clean_overlay is deprecated and runs rebuilt. Alone, --strategy selects the matching format")
+    parser.add_argument("--target-lang", default=None,
+                        help="Also translate the document into this language (e.g. en). Requires "
+                             "DEEPL_AUTH_KEY and datacompiler[translation]; the text is sent to DeepL")
+    parser.add_argument("--source-lang", default=None,
+                        help="Source language for translation (default: detect from the document)")
+    parser.add_argument("--no-translate", action="store_true",
+                        help="Never translate, even if --target-lang is given (useful to test files)")
     parser.add_argument("--dpi", type=int, default=300, help="DPI for final PDF rendering")
     parser.add_argument("--dpi-ocr-vectoriel", "--vector-ocr-dpi", dest="dpi_ocr_vectoriel", type=int, default=300,
                         help="DPI for targeted vector OCR, independent of --dpi")
@@ -185,15 +228,32 @@ def main():
             "use --ocr-mode vector for targeted OCR"
         )
 
+    if args.format is None:
+        args.format = _FORMAT_PAR_STRATEGIE.get(args.strategy, "rebuilt-pdf")
+    if args.format == "faithful-pdf" and args.strategy is None:
+        parser.error("--format faithful-pdf requires --strategy overlay or rasterized")
+    if args.strategy and args.format != _FORMAT_PAR_STRATEGIE[args.strategy]:
+        parser.error(f"--strategy {args.strategy} does not apply to --format {args.format}")
+
     _configurer_journal_client()
 
-    executer_pipeline(
+    document = executer_pipeline(
         args.pdf,
         strategy=_strategy_for_cli_format(args.format, args.strategy),
         sauver_json=False,
         dpi=args.dpi, dpi_ocr_vectoriel=args.dpi_ocr_vectoriel,
         paddle_lang=args.paddle_lang, ocr_mode=args.ocr_mode,
     )
+
+    if args.no_translate:
+        if args.target_lang:
+            progress.info("Traduction ignorée (--no-translate).")
+    elif args.target_lang:
+        try:
+            sortie = traduire_document(document, args.pdf, args.target_lang, args.source_lang)
+        except (RuntimeError, ValueError) as exc:
+            parser.exit(1, f"Translation failed (the PDF above was written): {exc}\n")
+        progress.info("Traduit : %s", sortie)
 
 
 if __name__ == "__main__":

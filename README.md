@@ -48,6 +48,23 @@ Une fois le package installé en mode éditable, tu peux exécuter directement l
 datacompiler chemin/vers/document.pdf
 ```
 
+Sans option, la commande écrit `document_rebuilt.pdf` : un nouveau PDF qui suit l'ordre de lecture
+résolu. Pour garder le PDF d'origine intact et n'y ajouter que du texte caché, utilise la stratégie
+`overlay` (le format `faithful-pdf` exige `--strategy`) :
+
+```bash
+datacompiler chemin/vers/document.pdf --strategy overlay
+```
+
+La stratégie `clean_overlay` est obsolète : elle lance `rebuilt` avec un avertissement.
+
+Pour traduire en plus le document (par exemple en anglais), ajoute `--target-lang en`. Il faut
+`python -m pip install -e ".[translation]"` et la variable d'environnement `DEEPL_AUTH_KEY` ; le texte
+est envoyé à DeepL. Sans `--source-lang fr`, la langue source est détectée automatiquement, ce qui
+demande l'extra `language` (`python -m pip install -e ".[language]"`). La commande écrit `document.en.xlf` (XLIFF à relire) et `document_en_rebuilt.pdf`.
+`--no-translate` désactive toujours la traduction, même si `--target-lang` est présent : pratique pour
+tester des fichiers sans rien envoyer à un service externe.
+
 ### 2. Utilisation en tant que bibliothèque
 ```python
 from datacompiler import executer_pipeline
