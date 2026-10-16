@@ -1,6 +1,7 @@
 """Rebuild a selectable PDF from resolved text and retained page graphics."""
 
 import logging
+from collections import Counter
 from functools import lru_cache
 from pathlib import Path
 import pymupdf
@@ -94,6 +95,7 @@ def _copier_images_et_dessins(src_page, dst_page, report, exclure=None):
 
     # --- Dessins vectoriels ---
     couleurs_echantillonnees = {}
+    couleurs_par_mot = {}
     shape = dst_page.new_shape()
     dessins_ignores = 0
     dessins_exclus_glyphes = 0
@@ -104,7 +106,7 @@ def _copier_images_et_dessins(src_page, dst_page, report, exclure=None):
             dessins_exclus_glyphes += 1
             couleur = draw.get("fill") or draw.get("color")
             if couleur is not None:
-                couleurs_echantillonnees[id(mot_touche)] = couleur
+                couleurs_par_mot.setdefault(id(mot_touche), []).append(tuple(couleur))
             continue
 
         items = draw.get("items", [])
@@ -142,6 +144,11 @@ def _copier_images_et_dessins(src_page, dst_page, report, exclure=None):
             shape.finish(color=color, fill=fill, width=width, dashes=dashes)
 
     shape.commit()
+    # A glyph is often made of several vector paths. Select its dominant
+    # sampled color rather than whichever path happened to be visited last.
+    for mot_id, couleurs in couleurs_par_mot.items():
+        dominante, _ = Counter(tuple(round(c, 3) for c in couleur) for couleur in couleurs).most_common(1)[0]
+        couleurs_echantillonnees[mot_id] = dominante
     report["dessins_ignores"] = report.get("dessins_ignores", 0) + dessins_ignores
     report["dessins_exclus_glyphes"] = report.get("dessins_exclus_glyphes", 0) + dessins_exclus_glyphes
 
@@ -427,7 +434,7 @@ def _inserer_span(writers, page_rect, span, report, baseline_par_id=None):
     report["mots_inseres"] = report.get("mots_inseres", 0) + len(span["mots"])
     
 
-def _ecrire_bloc_traduit(page, word, *, baseline_y=None):
+def _ecrire_bloc_traduit(page, word, *, baseline_y=None, color=None):
     """Write one translated segment at its source position and source font size."""
     if not word.bbox:
         return None
@@ -447,8 +454,7 @@ def _ecrire_bloc_traduit(page, word, *, baseline_y=None):
     writer.append(
         pymupdf.Point(rect.x0, baseline), text, font=font, fontsize=base_size,
     )
-    color = _hex_to_rgb(word.color)
-    writer.write_text(page, color=color)
+    writer.write_text(page, color=color or _hex_to_rgb(word.color))
     return None
 
 
@@ -588,6 +594,7 @@ def render_rebuilt_pdf(doc: Document, output_path: str, source_pdf: str = None,
                 warning = _ecrire_bloc_traduit(
                     dst_page, translated_word,
                     baseline_y=getattr(translated_word, "_translation_baseline", None),
+                    color=couleurs_echantillonnees.get(id(translated_word)),
                 )
                 if warning:
                     translated_word.notes.append(warning)

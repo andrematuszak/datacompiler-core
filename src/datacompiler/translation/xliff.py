@@ -95,6 +95,51 @@ def _block_for_line(page, line, line_number):
     return f"p{page.number}-l{line_number}"
 
 
+def _split_line_by_table_cells(page, line):
+    """Split a visual line into cell-local word groups when it crosses a table."""
+    table_cells = []
+    for table in page.graphics.tables:
+        for row_index, row in enumerate(table.cell_bboxes):
+            for column_index, cell in enumerate(row):
+                if cell:
+                    table_cells.append((
+                        f"p{page.number}-t{table.id}-r{row_index}-c{column_index}",
+                        cell,
+                    ))
+    if not table_cells:
+        return [(line, None)]
+
+    groups = []
+    current_key = None
+    current_words = []
+    for word in line:
+        box = word.bbox
+        center = ((box.x0 + box.x1) / 2, (box.y0 + box.y1) / 2) if box else None
+        cell_id = None
+        if center:
+            matches = [
+                key for key, cell in table_cells
+                if cell.x0 <= center[0] <= cell.x1 and cell.y0 <= center[1] <= cell.y1
+            ]
+            if matches:
+                cell_id = matches[0]
+
+        # Preserve the line as a whole if table geometry did not locate any
+        # word. Otherwise keep consecutive words in each cell together.
+        key = cell_id if cell_id is not None else f"unassigned-{len(groups)}"
+        if current_words and key != current_key:
+            groups.append((current_words, current_key if not current_key.startswith("unassigned-") else None))
+            current_words = []
+        current_key = key
+        current_words.append(word)
+    if current_words:
+        groups.append((current_words, current_key if not current_key.startswith("unassigned-") else None))
+
+    if not any(cell_id for _, cell_id in groups):
+        return [(line, None)]
+    return groups
+
+
 def build_translation_units(document: Document) -> list[TranslationUnit]:
     """Build one segment per resolved visual line."""
     result = []
@@ -119,25 +164,28 @@ def build_translation_units(document: Document) -> list[TranslationUnit]:
                     y0 = y
             if current:
                 groups.append(current)
-        for line_number, line in enumerate(groups, start=1):
-            source = " ".join((word.output_text or "").strip() for word in line).strip()
-            if not source:
-                continue
-            languages = [word.language for word in line if word.language]
-            language = languages[0] if languages and len(set(languages)) == 1 else None
-            if not language and len(source.split()) >= 5:
-                try:
-                    language = detect_language(source)
-                except RuntimeError:
-                    # Explicit source-language still permits XLIFF export
-                    # without installing the optional detection dependency.
-                    pass
-            result.append(TranslationUnit(
-                id=f"p{page.number}-l{line_number}", page=page.number,
-                word_ids=[word.id for word in line], source=source,
-                source_language=language,
-                block_id=_block_for_line(page, line, line_number),
-            ))
+        line_number = 0
+        for line in groups:
+            for segment, cell_id in _split_line_by_table_cells(page, line):
+                source = " ".join((word.output_text or "").strip() for word in segment).strip()
+                if not source:
+                    continue
+                line_number += 1
+                languages = [word.language for word in segment if word.language]
+                language = languages[0] if languages and len(set(languages)) == 1 else None
+                if not language and len(source.split()) >= 5:
+                    try:
+                        language = detect_language(source)
+                    except RuntimeError:
+                        # Explicit source-language still permits XLIFF export
+                        # without installing the optional detection dependency.
+                        pass
+                result.append(TranslationUnit(
+                    id=f"p{page.number}-l{line_number}", page=page.number,
+                    word_ids=[word.id for word in segment], source=source,
+                    source_language=language,
+                    block_id=cell_id or _block_for_line(page, segment, line_number),
+                ))
     return result
 
 

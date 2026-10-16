@@ -78,8 +78,10 @@ print(f"Pages traitées : {len(document.pages)}")
 
 ### Échange de traductions XLIFF
 
-DataCompiler exporte une unité par ligne résolue en XLIFF 1.2. Les identifiants
-de page et de mots sont conservés dans une note DataCompiler afin de rattacher
+DataCompiler exporte les lignes résolues en unités XLIFF 1.2. Lorsqu'une ligne
+traverse plusieurs cellules d'un tableau détecté, elle est séparée par cellule
+pour que chaque traduction garde sa propre position. Les identifiants de page,
+de mots et de bloc sont conservés dans une note DataCompiler afin de rattacher
 les traductions au PDF. Le texte source du document n'est jamais remplacé à
 l'import.
 
