@@ -57,7 +57,7 @@ def _hex_to_rgb(hex_color):
 
 
 def _copier_images_et_dessins(src_page, dst_page, report, exclure=None):
-    """Copy page images and non-text drawings, omitting recognized glyph paths."""
+    """Copy page images and drawings, omitting glyph paths replaced by text."""
     exclure = exclure or []
 
     def _match_exclusion(rect):
@@ -168,9 +168,9 @@ def _grouper_en_spans(mots, couleurs_echantillonnees=None, tolerance_y=3.0, ecar
         gras = bool(w.bold) or "bold" in (w.font or "").lower()
         italic = bool(w.italic) or "italic" in (w.font or "").lower()
         taille = w.font_size or max(4.0, b.height)
-        # Recognized text is emitted as visible PDF text even when its source
-        # was a collection of vector glyph outlines.
-        source_graphic = False
+        # Keep unchanged vectorized text as source glyph paths; the matching
+        # PDF text layer is invisible and exists for selection/copying only.
+        source_graphic = bool(w.is_vectorized and w.resolved_text == w.text)
 
         mot_id = id(w)
         if mot_id in couleurs_echantillonnees:
@@ -545,6 +545,7 @@ def render_rebuilt_pdf(doc: Document, output_path: str, source_pdf: str = None,
                 w for w in ordre
                 if w.bbox
                 and (w.reconstructed or w.is_vectorized or w.source == "ocr_vectoriel")
+                and not (w.is_vectorized and w.resolved_text == w.text)
             ]
 
             # Copier les images et tracés graphiques
@@ -556,23 +557,6 @@ def render_rebuilt_pdf(doc: Document, output_path: str, source_pdf: str = None,
             # ordre AVANT le groupement en spans -- cf. docstring de
             # _calibrer_lignes pour pourquoi).
             baseline_par_id = _calibrer_lignes(ordinary_words)
-
-            # One scale is shared by every translated segment in a logical
-            # source box. The segment needing the greatest reduction sets it.
-            scale_par_bloc = {}
-            for word in translated_blocks:
-                if not word.bbox or (word.bbox.x1 - word.bbox.x0) <= 0:
-                    continue
-                font, _ = _font_objet(bool(word.bold), bool(word.italic))
-                text = word.resolved_text or word.text or ""
-                base_size = max(
-                    0.5, float(getattr(word, "_translation_base_font_size", 10.0) or 10.0),
-                )
-                measured_width = font.text_length(text, fontsize=base_size)
-                fit = min(1.0, (word.bbox.x1 - word.bbox.x0) / measured_width) if measured_width > 0 else 1.0
-                block_id = getattr(word, "_translation_block_id", None)
-                if block_id:
-                    scale_par_bloc[block_id] = min(scale_par_bloc.get(block_id, 1.0), fit)
 
             # Regrouper le texte par spans homogènes
             spans = _grouper_en_spans(ordinary_words, couleurs_echantillonnees=couleurs_echantillonnees)

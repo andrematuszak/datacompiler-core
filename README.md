@@ -49,8 +49,9 @@ datacompiler chemin/vers/document.pdf
 ```
 
 Sans option, la commande écrit `document_rebuilt.pdf` : un nouveau PDF qui suit l'ordre de lecture
-résolu. Le texte reconnu à partir de glyphes vectoriels est réémis comme texte PDF sélectionnable ;
-les images et dessins non reconnus comme glyphes (par exemple les cadres) sont conservés. Pour garder le PDF d'origine intact et n'y ajouter que du texte caché, utilise la stratégie
+résolu. Les glyphes vectoriels du texte inchangé sont conservés à l'écran et accompagnés d'une couche
+de texte invisible sélectionnable. Les segments reconstruits sont, eux, émis comme texte visible ;
+les images et dessins non textuels sont conservés. Pour garder le PDF d'origine intact et n'y ajouter que du texte caché, utilise la stratégie
 `overlay` (le format `faithful-pdf` exige `--strategy`) :
 
 ```bash
