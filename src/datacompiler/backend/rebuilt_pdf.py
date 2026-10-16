@@ -443,6 +443,8 @@ def _ecrire_bloc_traduit(page, word, *, baseline_y=None, color=None):
         return "translated block has an empty layout box"
     font, _ = _font_objet(bool(word.bold), bool(word.italic))
     text = word.resolved_text or word.text or ""
+    if not text.strip():
+        return None
     base_size = max(0.1, float(getattr(word, "_translation_base_font_size", 10.0) or 10.0))
     baseline = baseline_y
     if baseline is None:
@@ -450,9 +452,16 @@ def _ecrire_bloc_traduit(page, word, *, baseline_y=None, color=None):
         if ascender > 10:
             ascender /= 1000.0
         baseline = rect.y0 + base_size * (ascender if ascender > 0 else 0.8)
+    script = getattr(word, "_translation_script", "normal")
+    script_factor = 0.65 if script in {"superscript", "subscript"} else 1.0
+    render_size = base_size * script_factor
+    if script == "superscript":
+        baseline -= base_size * 0.32
+    elif script == "subscript":
+        baseline += base_size * 0.16
     writer = pymupdf.TextWriter(page.rect)
     writer.append(
-        pymupdf.Point(rect.x0, baseline), text, font=font, fontsize=base_size,
+        pymupdf.Point(rect.x0, baseline), text, font=font, fontsize=render_size,
     )
     writer.write_text(page, color=color or _hex_to_rgb(word.color))
     return None
@@ -542,8 +551,9 @@ def render_rebuilt_pdf(doc: Document, output_path: str, source_pdf: str = None,
             }
 
             ordre = model_page.resolved.words
-            translated_blocks = [w for w in ordre if w.source == "xliff_translation"]
-            ordinary_words = [w for w in ordre if w.source != "xliff_translation"]
+            translation_sources = {"xliff_translation", "manual_translation"}
+            translated_blocks = [w for w in ordre if w.source in translation_sources]
+            ordinary_words = [w for w in ordre if w.source not in translation_sources]
 
             # Exclude recognized vector glyphs: their visible replacement is
             # selectable text emitted below. Unrecognized artwork is retained.

@@ -144,13 +144,15 @@ def executer_pipeline(pdf_path, strategy="rebuilt", sauver_json=False,
 run_pipeline = executer_pipeline
 
 
-def traduire_document(doc, pdf_path, target_lang, source_lang=None):
+def traduire_document(doc, pdf_path, target_lang, source_lang=None, *, edit=False):
     """Translate a processed document: XLIFF export, DeepL pre-translation, translated rebuilt PDF.
 
     Writes ``<name>.<target_lang>.xlf`` (review-ready XLIFF) and ``<name>_<target_lang>_rebuilt.pdf``
     next to the source PDF, and returns the path of the translated PDF.
     """
-    from datacompiler.translation import export_xliff, import_xliff, render_translated_pdf
+    from datacompiler.translation import (
+        edit_translation_pdf, export_xliff, import_xliff, render_translated_pdf,
+    )
     from datacompiler.translation.providers import translate_xliff_file
 
     base = str(Path(pdf_path).with_suffix(""))
@@ -161,7 +163,14 @@ def traduire_document(doc, pdf_path, target_lang, source_lang=None):
         units = export_xliff(doc, xliff_source, target_language=target_lang, source_language=source_lang)
         translate_xliff_file(xliff_source, xliff_traduit)
     traduction = import_xliff(xliff_traduit, expected_units=units)
-    application = render_translated_pdf(doc, traduction, sortie, expected_units=units)
+    if edit:
+        application = edit_translation_pdf(
+            doc, traduction, sortie, expected_units=units,
+        )
+        if application is None:
+            return None
+    else:
+        application = render_translated_pdf(doc, traduction, sortie, expected_units=units)
     for avertissement in application.layout_warnings:
         logger.warning("Translated layout: %s", avertissement)
     return sortie
@@ -213,6 +222,8 @@ def main():
                         help="Source language for translation (default: detect from the document)")
     parser.add_argument("--no-translate", action="store_true",
                         help="Never translate, even if --target-lang is given (useful to test files)")
+    parser.add_argument("--edit-translation", action="store_true",
+                        help="Open the lightweight desktop editor after machine translation; requires --target-lang")
     parser.add_argument("--dpi", type=int, default=300, help="DPI for final PDF rendering")
     parser.add_argument("--dpi-ocr-vectoriel", "--vector-ocr-dpi", dest="dpi_ocr_vectoriel", type=int, default=300,
                         help="DPI for targeted vector OCR, independent of --dpi")
@@ -227,6 +238,8 @@ def main():
             "--ocr-mode force is not implemented in this release; "
             "use --ocr-mode vector for targeted OCR"
         )
+    if args.edit_translation and (not args.target_lang or args.no_translate):
+        parser.error("--edit-translation requires --target-lang and cannot be combined with --no-translate")
 
     if args.format is None:
         args.format = _FORMAT_PAR_STRATEGIE.get(args.strategy, "rebuilt-pdf")
@@ -250,10 +263,16 @@ def main():
             progress.info("Traduction ignorée (--no-translate).")
     elif args.target_lang:
         try:
-            sortie = traduire_document(document, args.pdf, args.target_lang, args.source_lang)
+            sortie = traduire_document(
+                document, args.pdf, args.target_lang, args.source_lang,
+                edit=args.edit_translation,
+            )
         except (RuntimeError, ValueError) as exc:
-            parser.exit(1, f"Translation failed (the PDF above was written): {exc}\n")
-        progress.info("Traduit : %s", sortie)
+            parser.exit(1, f"Translation failed: {exc}\n")
+        if sortie:
+            progress.info("Traduit : %s", sortie)
+        else:
+            progress.info("Éditeur fermé sans enregistrement du PDF.")
 
 
 if __name__ == "__main__":

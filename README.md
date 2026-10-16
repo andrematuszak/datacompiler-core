@@ -103,6 +103,31 @@ application = render_translated_pdf(
 print("Segments traduits :", len(application.translated_units))
 ```
 
+Pour corriger manuellement le placement et le style dans une interface de
+bureau légère, remplacez l'appel final par `edit_translation_pdf`. L'aperçu
+permet de sélectionner, déplacer ou redimensionner chaque segment, de corriger
+son texte et sa taille, et de régler le gras, l'italique ou les exposants et
+indices. Le bouton d'ajout crée un bloc de texte libre. L'enregistrement
+permet aussi de scinder un segment fusionné en deux blocs déplaçables. Il
+produit le PDF et un fichier `.layout.json` qui conserve ces corrections par
+ID XLIFF pour les rendus suivants. L'interface requiert un environnement
+Python avec Tkinter et une session graphique.
+
+```python
+from datacompiler.translation import edit_translation_pdf
+
+application = edit_translation_pdf(
+    document, translation, "document-en-lqa.pdf",
+    expected_units=units,
+)
+```
+
+Le même éditeur s'ouvre directement après la traduction CLI :
+
+```powershell
+datacompiler document.pdf --target-lang en --edit-translation
+```
+
 ### Relecture humaine dans Matecat
 
 DataCompiler peut créer un projet Matecat à partir du XLIFF qu'il vient de
