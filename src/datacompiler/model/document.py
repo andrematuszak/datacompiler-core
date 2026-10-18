@@ -69,6 +69,9 @@ class Word:
     # (~0,84-0,88 non-gras vs ~1,01-1,54 gras, seuil Otsu a 0,93). None pour
     # tout mot natif (pas de tracé vectoriel a mesurer) ou non mesure.
     stroke_width: Optional[float] = None
+    # Immutable source-space rectangles used to suppress original glyph paths.
+    # Unlike bbox, these must not move when an editor adjusts translated text.
+    source_glyph_bboxes: Tuple[Tuple[float, float, float, float], ...] = ()
 
     @property
     def output_text(self) -> str:
@@ -227,6 +230,9 @@ class Document:
         def word(d):
             d = dict(d)
             d["bbox"] = BBox.from_dict(d.get("bbox"))
+            d["source_glyph_bboxes"] = tuple(
+                tuple(box) for box in d.get("source_glyph_bboxes", ())
+            )
             d["decision"] = decision(d.get("decision"))
             return Word(**{k: v for k, v in d.items() if k in Word.__dataclass_fields__})
 

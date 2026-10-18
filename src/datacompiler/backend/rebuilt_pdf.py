@@ -65,12 +65,14 @@ def _copier_images_et_dessins(src_page, dst_page, report, exclure=None):
         if rect is None:
             return None
         for w in exclure:
-            if not w.bbox:
-                continue
-            zone = pymupdf.Rect(w.bbox.x0, w.bbox.y0, w.bbox.x1, w.bbox.y1)
-            inter = rect & zone
-            if not inter.is_empty and inter.get_area() >= 0.6 * rect.get_area():
-                return w
+            zones = w.source_glyph_bboxes
+            if not zones and w.bbox:
+                zones = ((w.bbox.x0, w.bbox.y0, w.bbox.x1, w.bbox.y1),)
+            for bounds in zones:
+                zone = pymupdf.Rect(*bounds)
+                inter = rect & zone
+                if not inter.is_empty and inter.get_area() >= 0.6 * rect.get_area():
+                    return w
         return None
 
     # --- Images ---
@@ -559,7 +561,7 @@ def render_rebuilt_pdf(doc: Document, output_path: str, source_pdf: str = None,
             # selectable text emitted below. Unrecognized artwork is retained.
             mots_exclus = [
                 w for w in ordre
-                if w.bbox
+                if (w.bbox or w.source_glyph_bboxes)
                 and (w.reconstructed or w.is_vectorized or w.source == "ocr_vectoriel")
                 and not (w.is_vectorized and w.resolved_text == w.text)
             ]

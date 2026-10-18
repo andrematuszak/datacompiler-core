@@ -447,6 +447,15 @@ def apply_xliff_translation(
             )
         replacement._translation_block_id = block_id
         replacement._translation_unit_id = source_unit.id
+        source_glyph_bboxes = []
+        for word in all_words:
+            if word.source_glyph_bboxes:
+                source_glyph_bboxes.extend(word.source_glyph_bboxes)
+            elif word.bbox is not None:
+                source_glyph_bboxes.append(
+                    (word.bbox.x0, word.bbox.y0, word.bbox.x1, word.bbox.y1)
+                )
+        replacement.source_glyph_bboxes = tuple(source_glyph_bboxes)
         replacement._translation_segments = [{
             "id": source_unit.id,
             "source": source_unit.source,

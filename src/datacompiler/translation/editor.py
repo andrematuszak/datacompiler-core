@@ -52,6 +52,7 @@ def _save_layout(application, path):
                 "text": word.resolved_text or word.text or "",
                 "bbox": ([word.bbox.x0, word.bbox.y0, word.bbox.x1, word.bbox.y1]
                          if word.bbox else None),
+                "source_glyph_bboxes": [list(box) for box in word.source_glyph_bboxes],
                 "font_size": float(getattr(word, "_translation_base_font_size", word.font_size or 10.0)),
                 "bold": bool(word.bold),
                 "italic": bool(word.italic),
@@ -93,9 +94,16 @@ def _load_layout(application, path):
             word._translation_block_id = unit_id
             word._translation_baseline = None
             word._translation_segments = []
+            word.source_glyph_bboxes = tuple(
+                tuple(box) for box in record.get("source_glyph_bboxes", ())
+            )
             page.resolved.words.append(word)
             words[unit_id] = word
         else:
+            if "source_glyph_bboxes" in record:
+                word.source_glyph_bboxes = tuple(
+                    tuple(box) for box in record["source_glyph_bboxes"]
+                )
             source_segments = getattr(word, "_translation_segments", [])
             expected_source = source_segments[0].get("source") if source_segments else None
             if record.get("source") is not None and record["source"] != expected_source:
@@ -438,6 +446,7 @@ class TranslationEditor(tk.Tk if tk is not None else object):
                 )
                 word._translation_script = getattr(original, "_translation_script", "normal")
                 word._translation_segments = []
+                word.source_glyph_bboxes = original.source_glyph_bboxes
                 page.resolved.words.append(word)
                 self.words.append(word)
             self.words = [word for word in self.words if word is not original]
