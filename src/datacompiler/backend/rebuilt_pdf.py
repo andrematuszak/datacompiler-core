@@ -562,8 +562,14 @@ def render_rebuilt_pdf(doc: Document, output_path: str, source_pdf: str = None,
             mots_exclus = [
                 w for w in ordre
                 if (w.bbox or w.source_glyph_bboxes)
-                and (w.reconstructed or w.is_vectorized or w.source == "ocr_vectoriel")
-                and not (w.is_vectorized and w.resolved_text == w.text)
+                and (
+                    getattr(w, "_translation_deleted", False)
+                    or w.reconstructed or w.is_vectorized or w.source == "ocr_vectoriel"
+                )
+                and (
+                    getattr(w, "_translation_deleted", False)
+                    or not (w.is_vectorized and w.resolved_text == w.text)
+                )
             ]
 
             # Copier les images et tracés graphiques
@@ -603,6 +609,8 @@ def render_rebuilt_pdf(doc: Document, output_path: str, source_pdf: str = None,
                 )
 
             for translated_word in translated_blocks:
+                if getattr(translated_word, "_translation_deleted", False):
+                    continue
                 warning = _ecrire_bloc_traduit(
                     dst_page, translated_word,
                     baseline_y=getattr(translated_word, "_translation_baseline", None),

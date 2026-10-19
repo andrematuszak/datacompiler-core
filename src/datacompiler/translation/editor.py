@@ -36,10 +36,17 @@ def _translation_words(application):
     return _all_translation_words(application)
 
 
+def _replace_word_with_blocks(page, editor_words, original, replacements):
+    page_index = page.resolved.words.index(original)
+    editor_index = editor_words.index(original)
+    page.resolved.words[page_index:page_index + 1] = replacements
+    editor_words[editor_index:editor_index + 1] = replacements
+
+
 def _save_layout(application, path):
     units = {}
     for page in application.document.pages:
-        for word in page.resolved.words:
+        for order, word in enumerate(page.resolved.words):
             if word.source not in {"xliff_translation", "manual_translation"}:
                 continue
             unit_id = getattr(word, "_translation_unit_id", None)
@@ -57,7 +64,10 @@ def _save_layout(application, path):
                 "bold": bool(word.bold),
                 "italic": bool(word.italic),
                 "script": getattr(word, "_translation_script", "normal"),
+                "deleted": bool(getattr(word, "_translation_deleted", False)),
+                "order": order,
             }
+        units.update(getattr(page, "_translation_layout_tombstones", {}))
     payload = {"schema_version": _LAYOUT_SCHEMA_VERSION, "units": units}
     Path(path).parent.mkdir(parents=True, exist_ok=True)
     Path(path).write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -75,11 +85,21 @@ def _load_layout(application, path):
         getattr(word, "_translation_unit_id", ""): word
         for word in _all_translation_words(application)
     }
+    split_parent_ids = set()
+    manual_records = []
     for unit_id, record in payload.get("units", {}).items():
         word = words.get(unit_id)
+        page = pages.get(record.get("page"))
+        if record.get("split_into"):
+            split_parent_ids.add(unit_id)
+            if page is not None:
+                tombstones = getattr(page, "_translation_layout_tombstones", {})
+                tombstones[unit_id] = record
+                page._translation_layout_tombstones = tombstones
         if word is None:
+            if record.get("split_into"):
+                continue
             # Entries absent from the fresh XLIFF are manual text blocks.
-            page = pages.get(record.get("page"))
             box = record.get("bbox")
             if page is None or not box or not unit_id.startswith("manual-"):
                 continue
@@ -122,6 +142,33 @@ def _load_layout(application, path):
         word.font_size = float(record.get("font_size", word.font_size or 10.0))
         word._translation_base_font_size = word.font_size
         word._translation_script = record.get("script", "normal")
+        word._translation_deleted = bool(record.get("deleted", False))
+        if unit_id.startswith("manual-") and page is not None:
+            manual_records.append((page, record, word))
+
+    for page in application.document.pages:
+        if not split_parent_ids:
+            break
+        page.resolved.words = [
+            word for word in page.resolved.words
+            if getattr(word, "_translation_unit_id", None) not in split_parent_ids
+        ]
+
+    manual_by_page = {}
+    for page, record, word in manual_records:
+        manual_by_page.setdefault(page.number, []).append((record, word))
+    for page in application.document.pages:
+        records = manual_by_page.get(page.number, [])
+        if not records:
+            continue
+        manual_word_ids = {id(word) for _, word in records}
+        page.resolved.words = [
+            word for word in page.resolved.words if id(word) not in manual_word_ids
+        ]
+        for record, word in sorted(records, key=lambda item: item[0].get("order", float("inf"))):
+            order = record.get("order")
+            index = min(max(order, 0), len(page.resolved.words)) if isinstance(order, int) else len(page.resolved.words)
+            page.resolved.words.insert(index, word)
 
 
 class TranslationEditor(tk.Tk if tk is not None else object):
@@ -168,6 +215,8 @@ class TranslationEditor(tk.Tk if tk is not None else object):
         self.segment_list.bind("<<ListboxSelect>>", self._select_from_list)
         ttk.Button(left, text="Ajouter un bloc texte", command=self._add_text).pack(fill=tk.X)
         ttk.Button(left, text="Scinder le segment en deux", command=self._split_selected).pack(fill=tk.X, pady=(4, 0))
+        self.delete_button = ttk.Button(left, command=self._toggle_deleted)
+        self.delete_button.pack(fill=tk.X, pady=(4, 0))
 
         controls = ttk.LabelFrame(left, text="Segment sélectionné", padding=8)
         controls.pack(fill=tk.X, pady=8)
@@ -216,7 +265,8 @@ class TranslationEditor(tk.Tk if tk is not None else object):
             unit_id = getattr(word, "_translation_unit_id", str(word.id))
             page_num = next((page.number for page in self.document.pages if word in page.resolved.words), "?")
             text = (word.resolved_text or word.text or "").replace("\n", " ")
-            self.segment_list.insert(tk.END, f"p.{page_num}  {unit_id}  |  {text[:46]}")
+            deleted = " [supprimé]" if getattr(word, "_translation_deleted", False) else ""
+            self.segment_list.insert(tk.END, f"p.{page_num}  {unit_id}  |  {text[:46]}{deleted}")
             if unit_id == keep_id:
                 self.segment_list.selection_set(tk.END)
                 self.segment_list.see(tk.END)
@@ -238,6 +288,10 @@ class TranslationEditor(tk.Tk if tk is not None else object):
         self.bold_value.set(bool(word.bold))
         self.italic_value.set(bool(word.italic))
         self.script_value.set(getattr(word, "_translation_script", "normal"))
+        deleted = bool(getattr(word, "_translation_deleted", False))
+        self.delete_button.configure(
+            text="Restaurer le bloc" if deleted else "Supprimer le bloc"
+        )
 
     def _commit_fields(self):
         if self.selected is None:
@@ -355,6 +409,18 @@ class TranslationEditor(tk.Tk if tk is not None else object):
         self._draw_page()
         self.status.set("Modifications prévisualisées. Enregistrez pour produire le PDF et le fichier de corrections.")
 
+    def _toggle_deleted(self):
+        if self.selected is None:
+            return
+        self._commit_fields()
+        self.selected._translation_deleted = not getattr(
+            self.selected, "_translation_deleted", False,
+        )
+        unit_id = getattr(self.selected, "_translation_unit_id", None)
+        self._load_fields()
+        self._refresh_list(keep_id=unit_id)
+        self._draw_page()
+
     def _add_text(self):
         page = self.document.pages[0] if self.document.pages else None
         if page is None:
@@ -382,6 +448,7 @@ class TranslationEditor(tk.Tk if tk is not None else object):
             getattr(word, "_translation_unit_id", "")
             for word in page.resolved.words
         }
+        existing.update(getattr(page, "_translation_layout_tombstones", {}))
         suffix = 1
         while f"manual-p{page.number}-{suffix}" in existing:
             suffix += 1
@@ -390,6 +457,7 @@ class TranslationEditor(tk.Tk if tk is not None else object):
     def _split_selected(self):
         if self.selected is None:
             return
+        self._commit_fields()
         page = self._page_for_word(self.selected)
         if page is None or not self.selected.bbox:
             return
@@ -424,21 +492,34 @@ class TranslationEditor(tk.Tk if tk is not None else object):
             box = original.bbox
             middle = (box.x0 + box.x1) / 2
             baseline = getattr(original, "_translation_baseline", None)
-            original.text = ""
-            original.resolved_text = ""
+            source_segments = getattr(original, "_translation_segments", [])
+            source_text = source_segments[0].get("source") if source_segments else None
+            parent_id = getattr(original, "_translation_unit_id", str(original.id))
+            used_unit_ids = {
+                getattr(word, "_translation_unit_id", "")
+                for word in page.resolved.words
+            }
+            used_unit_ids.update(getattr(page, "_translation_layout_tombstones", {}))
+            next_suffix = 1
+            new_words = []
             for text, bounds in (
                 (first_text, BBox(box.x0, box.y0, middle, box.y1)),
                 (second_text, BBox(middle, box.y0, box.x1, box.y1)),
             ):
+                while f"manual-p{page.number}-{next_suffix}" in used_unit_ids:
+                    next_suffix += 1
+                unit_id = f"manual-p{page.number}-{next_suffix}"
+                used_unit_ids.add(unit_id)
+                next_suffix += 1
                 word = Word(
-                    id=max((item.id for item in page.resolved.words), default=0) + 1,
+                    id=max((item.id for item in page.resolved.words), default=0) + len(new_words) + 1,
                     text=text, bbox=bounds,
                     font_size=float(getattr(original, "_translation_base_font_size", original.font_size or 10.0)),
                     bold=bool(original.bold), italic=bool(original.italic),
                     source="manual_translation", reconstructed=True,
                 )
                 word.resolved_text = text
-                word._translation_unit_id = self._new_manual_id(page)
+                word._translation_unit_id = unit_id
                 word._translation_block_id = word._translation_unit_id
                 word._translation_baseline = baseline
                 word._translation_base_font_size = float(
@@ -447,11 +528,25 @@ class TranslationEditor(tk.Tk if tk is not None else object):
                 word._translation_script = getattr(original, "_translation_script", "normal")
                 word._translation_segments = []
                 word.source_glyph_bboxes = original.source_glyph_bboxes
-                page.resolved.words.append(word)
-                self.words.append(word)
-            self.words = [word for word in self.words if word is not original]
+                new_words.append(word)
+            tombstones = getattr(page, "_translation_layout_tombstones", {})
+            tombstones[parent_id] = {
+                "page": page.number,
+                "source": source_text,
+                "text": "",
+                "bbox": [box.x0, box.y0, box.x1, box.y1],
+                "source_glyph_bboxes": [list(bounds) for bounds in original.source_glyph_bboxes],
+                "font_size": float(getattr(original, "_translation_base_font_size", original.font_size or 10.0)),
+                "bold": bool(original.bold),
+                "italic": bool(original.italic),
+                "script": getattr(original, "_translation_script", "normal"),
+                "deleted": True,
+                "split_into": [word._translation_unit_id for word in new_words],
+            }
+            page._translation_layout_tombstones = tombstones
+            _replace_word_with_blocks(page, self.words, original, new_words)
             dialog.destroy()
-            self.selected = self.words[-1]
+            self.selected = new_words[0]
             self._load_fields()
             self._refresh_list(getattr(self.selected, "_translation_unit_id", None))
             self._draw_page()
