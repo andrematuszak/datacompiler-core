@@ -142,8 +142,8 @@ L'API Python propose également `edit_document_pdf(document, "document_rebuilt.p
 pour ouvrir ce mode sur un document déjà résolu.
 
 Les mots résolus reçoivent des identifiants stables fondés sur la page et l'identifiant du mot.
-Modifier ou déplacer un texte reconnu comme vectoriel masque ses tracés source à partir de la
-géométrie d'origine ; les dessins non reconnus restent conservés. Le sidecar `.layout.json`
+Dans ce mode, les tracés des glyphes vectoriels sont remplacés par du texte natif, qu'ils aient
+été modifiés ou non ; les dessins non reconnus restent conservés. Le sidecar `.layout.json`
 préserve le texte, les boîtes et les styles pris en charge.
 
 ### Relecture humaine dans Matecat

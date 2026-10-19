@@ -62,18 +62,10 @@ def _source_vector_matches_layout(word):
         return False
     if not getattr(word, "_editor_generic", False):
         return True
-    if word.bbox is None or not word.source_glyph_bboxes:
-        return False
-    bounds = word.source_glyph_bboxes
-    source_bbox = (
-        min(box[0] for box in bounds),
-        min(box[1] for box in bounds),
-        max(box[2] for box in bounds),
-        max(box[3] for box in bounds),
-    )
-    return source_bbox == (
-        word.bbox.x0, word.bbox.y0, word.bbox.x1, word.bbox.y1,
-    )
+    # Generic editing always reconstructs vectorized text as native text,
+    # including untouched words. Keep source glyph outlines only in the
+    # fidelity-focused non-editor rebuild path.
+    return False
 
 
 def _copier_images_et_dessins(src_page, dst_page, report, exclure=None):
