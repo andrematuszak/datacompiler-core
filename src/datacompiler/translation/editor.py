@@ -497,9 +497,18 @@ class TranslationEditor(tk.Tk if tk is not None else object):
             text="Ctrl/Cmd+clic ou Maj+clic pour sélectionner plusieurs blocs.",
             wraplength=330,
         ).pack(anchor="w")
-        self.segment_list = tk.Listbox(content, width=42, exportselection=False)
+        list_frame = ttk.Frame(content)
+        list_frame.pack(fill=tk.X, pady=(4, 8))
+        self.segment_list = tk.Listbox(
+            list_frame, width=42, height=5, exportselection=False,
+        )
         self.segment_list.configure(selectmode=tk.EXTENDED)
-        self.segment_list.pack(fill=tk.BOTH, expand=True, pady=(4, 8))
+        list_scrollbar = ttk.Scrollbar(
+            list_frame, orient=tk.VERTICAL, command=self.segment_list.yview,
+        )
+        self.segment_list.configure(yscrollcommand=list_scrollbar.set)
+        self.segment_list.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        list_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
         self.segment_list.bind("<<ListboxSelect>>", self._select_from_list)
         self.segment_list.bind("<ButtonRelease-1>", self._list_click_released, add="+")
         self.segment_list.bind("<KeyRelease>", self._list_key_released, add="+")
