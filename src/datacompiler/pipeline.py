@@ -27,9 +27,13 @@ progress = logging.getLogger("datacompiler.progress")
 
 def executer_pipeline(pdf_path, strategy="rebuilt", sauver_json=False,
                       dpi=300, dpi_ocr_vectoriel=300, paddle_lang=None,
-                      ocr_mode="auto"):
+                      ocr_mode="auto", render=True):
 
-    """Run extraction, diagnostics, OCR enrichment, resolution, and rendering."""
+    """Run extraction, diagnostics, OCR enrichment, and resolution.
+
+    Set ``render=False`` when a caller will edit the resolved document before
+    producing its output. Rendering remains enabled by default for compatibility.
+    """
     if ocr_mode == "force":
         raise NotImplementedError(
             "Full-page OCR is not implemented in this release. "
@@ -114,28 +118,33 @@ def executer_pipeline(pdf_path, strategy="rebuilt", sauver_json=False,
     resoudre(doc)
 
     base = str(Path(pdf_path).with_suffix(""))
-    logger.info("[6/6] Rendering with strategy %s...", strategy)
-    if strategy in ("overlay", "clean_overlay", "rasterized"):
-        fichier_sortie = base + "_propre.pdf"
-        render_faithful_pdf(doc, fichier_sortie, strategy=strategy, dpi=dpi)
-    elif strategy == "flow":
-        fichier_sortie = base + "_flow.pdf"
-        render_flow_pdf(doc, fichier_sortie)
-    elif strategy == "rebuilt":
-        fichier_sortie = base + "_rebuilt.pdf"
-        render_rebuilt_pdf(doc, fichier_sortie, source_pdf=pdf_path, dpi=dpi)
-    elif strategy in FORMATS:
-        fichier_sortie = base + f"_propre.{EXTENSIONS[strategy]}"
-        FORMATS[strategy](doc, fichier_sortie)
+    fichier_sortie = None
+    if render:
+        logger.info("[6/6] Rendering with strategy %s...", strategy)
+        if strategy in ("overlay", "clean_overlay", "rasterized"):
+            fichier_sortie = base + "_propre.pdf"
+            render_faithful_pdf(doc, fichier_sortie, strategy=strategy, dpi=dpi)
+        elif strategy == "flow":
+            fichier_sortie = base + "_flow.pdf"
+            render_flow_pdf(doc, fichier_sortie)
+        elif strategy == "rebuilt":
+            fichier_sortie = base + "_rebuilt.pdf"
+            render_rebuilt_pdf(doc, fichier_sortie, source_pdf=pdf_path, dpi=dpi)
+        elif strategy in FORMATS:
+            fichier_sortie = base + f"_propre.{EXTENSIONS[strategy]}"
+            FORMATS[strategy](doc, fichier_sortie)
+        else:
+            raise ValueError(f"Unknown rendering strategy: {strategy}")
     else:
-        raise ValueError(f"Unknown rendering strategy: {strategy}")
+        logger.info("[6/6] Rendering deferred until document editing is complete.")
 
     if sauver_json:
         json_path = base + ".document.json"
         doc.save(json_path)
         logger.info("      Document JSON: %s", json_path)
-    logger.info("      Wrote: %s", fichier_sortie)
-    progress.info("Terminé : %s", fichier_sortie)
+    if fichier_sortie:
+        logger.info("      Wrote: %s", fichier_sortie)
+        progress.info("Terminé : %s", fichier_sortie)
     return doc
 
 
@@ -224,7 +233,7 @@ def main():
                         help="Never translate, even if --target-lang is given (useful to test files)")
     parser.add_argument("--edit-translation", action="store_true",
                         help="Open the lightweight desktop editor after machine translation; requires --target-lang")
-    parser.add_argument("--editor", action="store_true",
+    parser.add_argument("-editor", "--editor", action="store_true",
                         help="Open the editor for resolved document text; with --target-lang, edit the translation")
     parser.add_argument("--dpi", type=int, default=300, help="DPI for final PDF rendering")
     parser.add_argument("--dpi-ocr-vectoriel", "--vector-ocr-dpi", dest="dpi_ocr_vectoriel", type=int, default=300,
@@ -260,6 +269,7 @@ def main():
         sauver_json=False,
         dpi=args.dpi, dpi_ocr_vectoriel=args.dpi_ocr_vectoriel,
         paddle_lang=args.paddle_lang, ocr_mode=args.ocr_mode,
+        render=not (args.editor or args.edit_translation),
     )
 
     if args.no_translate:
