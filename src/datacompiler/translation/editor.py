@@ -43,6 +43,36 @@ def _replace_word_with_blocks(page, editor_words, original, replacements):
     editor_words[editor_index:editor_index + 1] = replacements
 
 
+def _align_words(words, reference, axis, anchor):
+    """Align selected word boxes to a reference without changing their sizes or order."""
+    coordinates = {
+        ("horizontal", "left"): lambda box: box.x0,
+        ("horizontal", "center"): lambda box: (box.x0 + box.x1) / 2,
+        ("horizontal", "right"): lambda box: box.x1,
+        ("vertical", "top"): lambda box: box.y0,
+        ("vertical", "center"): lambda box: (box.y0 + box.y1) / 2,
+        ("vertical", "bottom"): lambda box: box.y1,
+    }
+    try:
+        coordinate = coordinates[(axis, anchor)]
+    except KeyError as exc:
+        raise ValueError(f"Unsupported alignment: {axis}/{anchor}") from exc
+
+    reference_position = coordinate(reference.bbox)
+    for word in words:
+        if word is reference or word.bbox is None:
+            continue
+        box = word.bbox
+        delta = reference_position - coordinate(box)
+        if axis == "horizontal":
+            word.bbox = BBox(box.x0 + delta, box.y0, box.x1 + delta, box.y1)
+        else:
+            word.bbox = BBox(box.x0, box.y0 + delta, box.x1, box.y1 + delta)
+            baseline = getattr(word, "_translation_baseline", None)
+            if baseline is not None:
+                word._translation_baseline = baseline + delta
+
+
 def _save_layout(application, path):
     units = {}
     for page in application.document.pages:
@@ -210,13 +240,43 @@ class TranslationEditor(tk.Tk if tk is not None else object):
         root.add(right, weight=4)
 
         ttk.Label(left, text="Segments traduits et blocs manuels").pack(anchor="w")
+        ttk.Label(
+            left,
+            text="Ctrl/Cmd+clic ou Maj+clic pour sélectionner plusieurs blocs.",
+            wraplength=330,
+        ).pack(anchor="w")
         self.segment_list = tk.Listbox(left, width=48, exportselection=False)
+        self.segment_list.configure(selectmode=tk.EXTENDED)
         self.segment_list.pack(fill=tk.BOTH, expand=True, pady=(4, 8))
         self.segment_list.bind("<<ListboxSelect>>", self._select_from_list)
+        self.segment_list.bind("<ButtonRelease-1>", self._list_click_released, add="+")
+        self.segment_list.bind("<KeyRelease>", self._list_key_released, add="+")
         ttk.Button(left, text="Ajouter un bloc texte", command=self._add_text).pack(fill=tk.X)
         ttk.Button(left, text="Scinder le segment en deux", command=self._split_selected).pack(fill=tk.X, pady=(4, 0))
         self.delete_button = ttk.Button(left, command=self._toggle_deleted)
         self.delete_button.pack(fill=tk.X, pady=(4, 0))
+        self.reference_value = tk.StringVar(value="Référence : aucune")
+        ttk.Label(left, textvariable=self.reference_value, wraplength=330).pack(
+            anchor="w", pady=(8, 2),
+        )
+
+        alignments = ttk.LabelFrame(left, text="Aligner les blocs sélectionnés", padding=6)
+        alignments.pack(fill=tk.X, pady=(4, 0))
+        for column, (label, axis, anchor) in enumerate((
+            ("Bords gauches", "horizontal", "left"),
+            ("Centres horizontaux", "horizontal", "center"),
+            ("Bords droits", "horizontal", "right"),
+            ("Bords hauts", "vertical", "top"),
+            ("Centres verticaux", "vertical", "center"),
+            ("Bords bas", "vertical", "bottom"),
+        )):
+            ttk.Button(
+                alignments,
+                text=label,
+                command=lambda a=axis, p=anchor: self._align_selection(a, p),
+            ).grid(row=column // 2, column=column % 2, sticky="ew", padx=2, pady=2)
+        alignments.columnconfigure(0, weight=1)
+        alignments.columnconfigure(1, weight=1)
 
         controls = ttk.LabelFrame(left, text="Segment sélectionné", padding=8)
         controls.pack(fill=tk.X, pady=8)
@@ -275,10 +335,37 @@ class TranslationEditor(tk.Tk if tk is not None else object):
         selection = self.segment_list.curselection()
         if not selection:
             return
+        reference_index = getattr(self, "_reference_index", None)
+        if reference_index not in selection:
+            reference_index = selection[-1]
+        self._reference_index = reference_index
         self._commit_fields()
-        self.selected = self.words[selection[0]]
+        self.selected = self.words[reference_index]
+        self._update_reference_label()
         self._load_fields()
         self._draw_page()
+
+    def _list_click_released(self, event):
+        index = self.segment_list.nearest(event.y)
+        selection = self.segment_list.curselection()
+        if selection:
+            self._reference_index = index if index in selection else selection[-1]
+            self._select_from_list()
+
+    def _list_key_released(self, _event):
+        selection = self.segment_list.curselection()
+        if selection:
+            active_index = self.segment_list.index("active")
+            self._reference_index = (
+                active_index if active_index in selection else selection[-1]
+            )
+            self._select_from_list()
+
+    def _update_reference_label(self):
+        if self.selected is None or not hasattr(self, "reference_value"):
+            return
+        unit_id = getattr(self.selected, "_translation_unit_id", str(self.selected.id))
+        self.reference_value.set(f"Référence (dernier bloc sélectionné) : {unit_id}")
 
     def _load_fields(self):
         word = self.selected
@@ -420,6 +507,26 @@ class TranslationEditor(tk.Tk if tk is not None else object):
         self._load_fields()
         self._refresh_list(keep_id=unit_id)
         self._draw_page()
+
+    def _align_selection(self, axis, anchor):
+        self._commit_fields()
+        selection = self.segment_list.curselection()
+        if len(selection) < 2:
+            self.status.set("Sélectionnez au moins deux blocs pour les aligner.")
+            return
+        reference_index = getattr(self, "_reference_index", None)
+        if reference_index not in selection:
+            reference_index = selection[-1]
+        selected_words = [self.words[index] for index in selection]
+        reference = self.words[reference_index]
+        _align_words(selected_words, reference, axis, anchor)
+        self.selected = reference
+        self._update_reference_label()
+        self._draw_page()
+        self.status.set(
+            f"Blocs alignés : {anchor} sur {reference._translation_unit_id}. "
+            "Tailles et ordre de lecture conservés."
+        )
 
     def _add_text(self):
         page = self.document.pages[0] if self.document.pages else None

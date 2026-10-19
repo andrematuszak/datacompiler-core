@@ -8,6 +8,7 @@ from datacompiler.model.document import Document, Page, ResolvedContainer, Word
 from datacompiler.model.geometry import BBox
 from datacompiler.model.metadata import Metadata
 from datacompiler.translation.editor import (
+    _align_words,
     _load_layout,
     _replace_word_with_blocks,
     _save_layout,
@@ -236,3 +237,51 @@ def test_deleted_translation_masks_glyphs_and_survives_layout_reload(tmp_path):
         assert drawing_rects.isdisjoint(SOURCE_GLYPH_RECTS)
         assert BACKGROUND_RECT in drawing_rects
         assert "translated phrase" not in page.get_text()
+
+
+@pytest.mark.parametrize(
+    ("axis", "anchor", "expected"),
+    [
+        ("horizontal", "left", BBox(100, 20, 120, 40)),
+        ("horizontal", "center", BBox(110, 20, 130, 40)),
+        ("horizontal", "right", BBox(120, 20, 140, 40)),
+        ("vertical", "top", BBox(10, 200, 30, 220)),
+        ("vertical", "center", BBox(10, 210, 30, 230)),
+        ("vertical", "bottom", BBox(10, 220, 30, 240)),
+    ],
+)
+def test_alignment_uses_last_selected_reference_without_resizing_or_reordering(
+    axis, anchor, expected,
+):
+    first = Word(id=1, text="first", bbox=BBox(10, 20, 30, 40))
+    reference = Word(id=2, text="reference", bbox=BBox(100, 200, 140, 240))
+    reading_order = [first, reference]
+    page = Page(
+        number=1,
+        width=180,
+        height=120,
+        resolved=ResolvedContainer(words=reading_order),
+    )
+    original_reference_box = BBox(100, 200, 140, 240)
+
+    _align_words([first, reference], reference, axis, anchor)
+
+    assert first.bbox == expected
+    assert (first.bbox.x1 - first.bbox.x0, first.bbox.y1 - first.bbox.y0) == (20, 20)
+    assert reference.bbox == original_reference_box
+    assert page.resolved.words == [first, reference]
+
+
+def test_alignment_geometry_persists_through_layout_sidecar(tmp_path):
+    source_path = tmp_path / "source.pdf"
+    layout_path = tmp_path / "layout.json"
+    _write_source_pdf(source_path)
+    document = _translated_document(source_path)
+    translated = document.pages[0].resolved.words[0]
+    translated.bbox = BBox(70, 70, 120, 90)
+    _save_layout(SimpleNamespace(document=document), layout_path)
+
+    reloaded = _translated_document(source_path)
+    _load_layout(SimpleNamespace(document=reloaded), layout_path)
+
+    assert reloaded.pages[0].resolved.words[0].bbox == BBox(70, 70, 120, 90)
