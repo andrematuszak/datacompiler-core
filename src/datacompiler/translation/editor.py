@@ -9,15 +9,17 @@ import tempfile
 from types import SimpleNamespace
 try:
     import tkinter as tk
-    from tkinter import messagebox, ttk
+    from tkinter import colorchooser, messagebox, ttk
 except ImportError:  # Keep the non-GUI translation API usable without Tk support.
     tk = None
+    colorchooser = None
     messagebox = None
     ttk = None
 
 import pymupdf
 from datacompiler.model.document import Word
 from datacompiler.model.geometry import BBox
+from datacompiler.utils.colors import normalize_hex_color
 from .xliff import TranslationUnit, XliffTranslation, apply_xliff_translation
 
 _LAYOUT_SCHEMA_VERSION = 1
@@ -132,6 +134,7 @@ def _save_layout(application, path):
                 "bold": bool(word.bold),
                 "italic": bool(word.italic),
                 "script": getattr(word, "_translation_script", "normal"),
+                "editor_color": word.editor_color,
                 "deleted": bool(getattr(word, "_translation_deleted", False)),
                 "order": order,
             }
@@ -225,6 +228,10 @@ def _load_layout(application, path):
         word.font_size = float(record.get("font_size", word.font_size or 10.0))
         word._translation_base_font_size = word.font_size
         word._translation_script = record.get("script", "normal")
+        editor_color = record.get("editor_color")
+        word.editor_color = (
+            normalize_hex_color(editor_color) if editor_color is not None else None
+        )
         word._translation_deleted = bool(record.get("deleted", False))
         if unit_id.startswith("manual-") and page is not None:
             manual_records.append((page, record, word))
@@ -366,6 +373,19 @@ class TranslationEditor(tk.Tk if tk is not None else object):
             values=("normal", "superscript", "subscript"),
         ).grid(row=4, column=1, sticky="e", pady=(4, 0))
         ttk.Button(controls, text="Appliquer et prévisualiser", command=self._apply_and_preview).grid(row=5, column=0, columnspan=2, sticky="ew", pady=(8, 0))
+        ttk.Label(controls, text="Couleur du texte").grid(row=6, column=0, sticky="w", pady=(6, 0))
+        self.color_value = tk.StringVar(value="Source")
+        self.color_swatch = tk.Label(
+            controls, textvariable=self.color_value, relief=tk.SOLID, bd=1,
+            padx=6, pady=2,
+        )
+        self.color_swatch.grid(row=6, column=1, sticky="ew", pady=(6, 0))
+        ttk.Button(
+            controls, text="Choisir une couleur…", command=self._choose_color,
+        ).grid(row=7, column=0, columnspan=2, sticky="ew", pady=(4, 0))
+        ttk.Button(
+            controls, text="Utiliser la couleur source", command=self._clear_color,
+        ).grid(row=8, column=0, columnspan=2, sticky="ew", pady=(4, 0))
 
         footer = ttk.Frame(left)
         footer.pack(fill=tk.X, pady=(4, 0))
@@ -444,6 +464,7 @@ class TranslationEditor(tk.Tk if tk is not None else object):
         self.bold_value.set(bool(word.bold))
         self.italic_value.set(bool(word.italic))
         self.script_value.set(getattr(word, "_translation_script", "normal"))
+        self._update_color_display()
         deleted = bool(getattr(word, "_translation_deleted", False))
         self.delete_button.configure(
             text="Restaurer le bloc" if deleted else "Supprimer le bloc"
@@ -466,6 +487,51 @@ class TranslationEditor(tk.Tk if tk is not None else object):
         self.selected.bold = self.bold_value.get()
         self.selected.italic = self.italic_value.get()
         self.selected._translation_script = self.script_value.get()
+
+    def _update_color_display(self):
+        if self.selected is None or not hasattr(self, "color_value"):
+            return
+        color = self.selected.editor_color
+        if color is None:
+            self.color_value.set("Source")
+            self.color_swatch.configure(background="#FFFFFF", foreground="#000000")
+        else:
+            color = normalize_hex_color(color)
+            self.color_value.set(color)
+            self.color_swatch.configure(
+                background=color,
+                foreground="#FFFFFF" if sum(
+                    int(color[index:index + 2], 16) for index in (1, 3, 5)
+                ) < 384 else "#000000",
+            )
+
+    def _choose_color(self):
+        if self.selected is None:
+            return
+        initial = self.selected.editor_color or self.selected.color or "#000000"
+        try:
+            initial = normalize_hex_color(initial)
+        except ValueError:
+            initial = "#000000"
+        _rgb, chosen = colorchooser.askcolor(
+            color=initial, parent=self, title="Couleur du texte",
+        )
+        if chosen is None:
+            return
+        try:
+            self.selected.editor_color = normalize_hex_color(chosen)
+        except ValueError as exc:
+            messagebox.showerror("Couleur invalide", str(exc), parent=self)
+            return
+        self._update_color_display()
+        self._draw_page()
+
+    def _clear_color(self):
+        if self.selected is None:
+            return
+        self.selected.editor_color = None
+        self._update_color_display()
+        self._draw_page()
 
     def _page_for_word(self, word):
         return next((page for page in self.document.pages if word in page.resolved.words), None)
@@ -703,6 +769,7 @@ class TranslationEditor(tk.Tk if tk is not None else object):
                 word._translation_script = getattr(original, "_translation_script", "normal")
                 word._translation_segments = []
                 word.source_glyph_bboxes = original.source_glyph_bboxes
+                word.editor_color = original.editor_color
                 new_words.append(word)
             tombstones = getattr(page, "_translation_layout_tombstones", {})
             tombstones[parent_id] = {
@@ -715,6 +782,7 @@ class TranslationEditor(tk.Tk if tk is not None else object):
                 "bold": bool(original.bold),
                 "italic": bool(original.italic),
                 "script": getattr(original, "_translation_script", "normal"),
+                "editor_color": original.editor_color,
                 "deleted": True,
                 "split_into": [word._translation_unit_id for word in new_words],
             }

@@ -9,6 +9,7 @@ import pymupdf
 from datacompiler.backend.liens_pdf import reinserer_liens
 from datacompiler.model.document import Document
 from datacompiler.utils.font_metrics import ratio_encre_em
+from datacompiler.utils.colors import normalize_hex_color
 
 logger = logging.getLogger(__name__)
 
@@ -188,12 +189,15 @@ def _grouper_en_spans(mots, couleurs_echantillonnees=None, tolerance_y=3.0, ecar
         gras = bool(w.bold) or "bold" in (w.font or "").lower()
         italic = bool(w.italic) or "italic" in (w.font or "").lower()
         taille = w.font_size or max(4.0, b.height)
-        # Keep unchanged vectorized text as source glyph paths; the matching
-        # PDF text layer is invisible and exists for selection/copying only.
+        # In fidelity mode unchanged vector text stays as source glyph paths;
+        # generic editor mode reconstructs it as visible text instead.
         source_graphic = _source_vector_matches_layout(w)
 
         mot_id = id(w)
-        if mot_id in couleurs_echantillonnees:
+        editor_color = getattr(w, "editor_color", None)
+        if editor_color is not None:
+            couleur = _hex_to_rgb(normalize_hex_color(editor_color))
+        elif mot_id in couleurs_echantillonnees:
             couleur = tuple(couleurs_echantillonnees[mot_id])
         else:
             couleur = _hex_to_rgb(getattr(w, "color", "#000000"))
@@ -476,7 +480,12 @@ def _ecrire_bloc_traduit(page, word, *, baseline_y=None, color=None):
     writer.append(
         pymupdf.Point(rect.x0, baseline), text, font=font, fontsize=render_size,
     )
-    writer.write_text(page, color=color or _hex_to_rgb(word.color))
+    editor_color = getattr(word, "editor_color", None)
+    if editor_color is not None:
+        render_color = _hex_to_rgb(normalize_hex_color(editor_color))
+    else:
+        render_color = color or _hex_to_rgb(word.color)
+    writer.write_text(page, color=render_color)
     return None
 
 

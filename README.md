@@ -116,6 +116,12 @@ permet aussi de scinder un segment fusionné en deux blocs déplaçables. Il
 produit le PDF et un fichier `.layout.json` qui conserve ces corrections par
 ID XLIFF pour les rendus suivants. L'interface requiert un environnement
 Python avec Tkinter et une session graphique.
+La couleur du texte se règle par mot ou bloc avec le sélecteur natif du système
+et peut être réinitialisée sur la couleur source. Cette couleur d'édition est
+indépendante de l'échantillonnage des tracés glyphiques et est conservée dans le
+sidecar. Le texte natif est édité au niveau des mots résolus : un lien tel que
+`impots.gouv.fr` peut avoir sa couleur propre lorsqu'il constitue un mot extrait
+distinct. Aucun regroupement ou découpage automatique de segments n'est effectué.
 
 ```python
 from datacompiler.translation import edit_translation_pdf

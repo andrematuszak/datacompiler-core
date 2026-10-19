@@ -72,6 +72,8 @@ class Word:
     # Immutable source-space rectangles used to suppress original glyph paths.
     # Unlike bbox, these must not move when an editor adjusts translated text.
     source_glyph_bboxes: Tuple[Tuple[float, float, float, float], ...] = ()
+    # Explicit editor override, independent of sampled source-glyph colors.
+    editor_color: Optional[str] = None
 
     @property
     def output_text(self) -> str:
