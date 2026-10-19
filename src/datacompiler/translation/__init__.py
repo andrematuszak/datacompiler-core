@@ -6,7 +6,7 @@ from .xliff import (
     apply_xliff_translation, export_xliff, import_xliff,
 )
 from .render import render_translated_pdf
-from .editor import edit_translation_pdf
+from .editor import edit_document_pdf, edit_translation_pdf
 from .providers import (
     CometKiwiQualityEstimator, DeepLTranslator, translate_xliff_file,
 )
@@ -20,6 +20,7 @@ __all__ = [
     "detect_language", "export_xliff", "import_xliff",
     "detect_document_languages", "detect_document_language",
     "apply_xliff_translation", "render_translated_pdf", "edit_translation_pdf",
+    "edit_document_pdf",
     "DeepLTranslator", "CometKiwiQualityEstimator", "translate_xliff_file",
     "MatecatClient", "MatecatProject", "submit_document_to_matecat",
     "import_matecat_xliff",

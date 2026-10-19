@@ -57,6 +57,25 @@ def _hex_to_rgb(hex_color):
     return (0.0, 0.0, 0.0)
 
 
+def _source_vector_matches_layout(word):
+    if not (word.is_vectorized and word.resolved_text == word.text):
+        return False
+    if not getattr(word, "_editor_generic", False):
+        return True
+    if word.bbox is None or not word.source_glyph_bboxes:
+        return False
+    bounds = word.source_glyph_bboxes
+    source_bbox = (
+        min(box[0] for box in bounds),
+        min(box[1] for box in bounds),
+        max(box[2] for box in bounds),
+        max(box[3] for box in bounds),
+    )
+    return source_bbox == (
+        word.bbox.x0, word.bbox.y0, word.bbox.x1, word.bbox.y1,
+    )
+
+
 def _copier_images_et_dessins(src_page, dst_page, report, exclure=None):
     """Copy page images and drawings, omitting glyph paths replaced by text."""
     exclure = exclure or []
@@ -179,7 +198,7 @@ def _grouper_en_spans(mots, couleurs_echantillonnees=None, tolerance_y=3.0, ecar
         taille = w.font_size or max(4.0, b.height)
         # Keep unchanged vectorized text as source glyph paths; the matching
         # PDF text layer is invisible and exists for selection/copying only.
-        source_graphic = bool(w.is_vectorized and w.resolved_text == w.text)
+        source_graphic = _source_vector_matches_layout(w)
 
         mot_id = id(w)
         if mot_id in couleurs_echantillonnees:
@@ -555,7 +574,11 @@ def render_rebuilt_pdf(doc: Document, output_path: str, source_pdf: str = None,
             ordre = model_page.resolved.words
             translation_sources = {"xliff_translation", "manual_translation"}
             translated_blocks = [w for w in ordre if w.source in translation_sources]
-            ordinary_words = [w for w in ordre if w.source not in translation_sources]
+            ordinary_words = [
+                w for w in ordre
+                if w.source not in translation_sources
+                and not getattr(w, "_translation_deleted", False)
+            ]
 
             # Exclude recognized vector glyphs: their visible replacement is
             # selectable text emitted below. Unrecognized artwork is retained.
@@ -568,7 +591,7 @@ def render_rebuilt_pdf(doc: Document, output_path: str, source_pdf: str = None,
                 )
                 and (
                     getattr(w, "_translation_deleted", False)
-                    or not (w.is_vectorized and w.resolved_text == w.text)
+                    or not _source_vector_matches_layout(w)
                 )
             ]
 

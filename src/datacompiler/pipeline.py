@@ -224,6 +224,8 @@ def main():
                         help="Never translate, even if --target-lang is given (useful to test files)")
     parser.add_argument("--edit-translation", action="store_true",
                         help="Open the lightweight desktop editor after machine translation; requires --target-lang")
+    parser.add_argument("--editor", action="store_true",
+                        help="Open the editor for resolved document text; with --target-lang, edit the translation")
     parser.add_argument("--dpi", type=int, default=300, help="DPI for final PDF rendering")
     parser.add_argument("--dpi-ocr-vectoriel", "--vector-ocr-dpi", dest="dpi_ocr_vectoriel", type=int, default=300,
                         help="DPI for targeted vector OCR, independent of --dpi")
@@ -247,6 +249,8 @@ def main():
         parser.error("--format faithful-pdf requires --strategy overlay or rasterized")
     if args.strategy and args.format != _FORMAT_PAR_STRATEGIE[args.strategy]:
         parser.error(f"--strategy {args.strategy} does not apply to --format {args.format}")
+    if args.editor and args.format != "rebuilt-pdf":
+        parser.error("--editor requires the rebuilt-pdf output format")
 
     _configurer_journal_client()
 
@@ -261,16 +265,28 @@ def main():
     if args.no_translate:
         if args.target_lang:
             progress.info("Traduction ignorée (--no-translate).")
-    elif args.target_lang:
+    if args.target_lang and not args.no_translate:
         try:
             sortie = traduire_document(
                 document, args.pdf, args.target_lang, args.source_lang,
-                edit=args.edit_translation,
+                edit=args.edit_translation or args.editor,
             )
         except (RuntimeError, ValueError) as exc:
             parser.exit(1, f"Translation failed: {exc}\n")
         if sortie:
             progress.info("Traduit : %s", sortie)
+        else:
+            progress.info("Éditeur fermé sans enregistrement du PDF.")
+    elif args.editor:
+        from datacompiler.translation import edit_document_pdf
+
+        output_path = str(Path(args.pdf).with_suffix("")) + "_rebuilt.pdf"
+        try:
+            result = edit_document_pdf(document, output_path)
+        except (RuntimeError, ValueError) as exc:
+            parser.exit(1, f"Editor failed: {exc}\n")
+        if result is not None:
+            progress.info("Édité : %s", output_path)
         else:
             progress.info("Éditeur fermé sans enregistrement du PDF.")
 

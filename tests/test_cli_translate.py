@@ -7,16 +7,25 @@ import sys
 import pytest
 
 from datacompiler import pipeline
+from datacompiler import translation
 
 
 @pytest.fixture
 def espions(monkeypatch):
     traductions = []
+    edits = []
     monkeypatch.setattr(pipeline, "executer_pipeline", lambda *a, **k: "document-factice")
-    monkeypatch.setattr(pipeline, "traduire_document",
-                        lambda *a: traductions.append(a) or "sortie_en_rebuilt.pdf")
+    monkeypatch.setattr(
+        pipeline, "traduire_document",
+        lambda *a, **kwargs: traductions.append((a, kwargs))
+        or "sortie_en_rebuilt.pdf",
+    )
+    monkeypatch.setattr(
+        translation, "edit_document_pdf",
+        lambda *a, **kwargs: edits.append((a, kwargs)) or "document-factice",
+    )
     monkeypatch.setattr(pipeline, "_configurer_journal_client", lambda: None)
-    return traductions
+    return traductions, edits
 
 
 def _lancer(monkeypatch, *arguments):
@@ -26,22 +35,47 @@ def _lancer(monkeypatch, *arguments):
 
 def test_no_target_lang_means_no_translation(monkeypatch, espions):
     _lancer(monkeypatch)
-    assert espions == []
+    assert espions == ([], [])
 
 
 def test_target_lang_triggers_translation(monkeypatch, espions):
     _lancer(monkeypatch, "--target-lang", "en", "--source-lang", "fr")
-    assert espions == [("document-factice", "x.pdf", "en", "fr")]
+    assert espions == ([
+        (("document-factice", "x.pdf", "en", "fr"), {"edit": False}),
+    ], [])
 
 
 def test_no_translate_wins_over_target_lang(monkeypatch, espions):
     _lancer(monkeypatch, "--target-lang", "en", "--no-translate")
-    assert espions == []
+    assert espions == ([], [])
 
 
 def test_no_translate_alone_is_accepted(monkeypatch, espions):
     _lancer(monkeypatch, "--no-translate")
-    assert espions == []
+    assert espions == ([], [])
+
+
+def test_editor_without_target_language_opens_generic_editor(monkeypatch, espions):
+    _lancer(monkeypatch, "--editor")
+    assert espions == (
+        [],
+        [(("document-factice", "x_rebuilt.pdf"), {})],
+    )
+
+
+def test_editor_with_target_language_uses_translation_editor(monkeypatch, espions):
+    _lancer(monkeypatch, "--target-lang", "en", "--editor")
+    assert espions == ([
+        (("document-factice", "x.pdf", "en", None), {"edit": True}),
+    ], [])
+
+
+def test_editor_with_no_translate_uses_generic_editor(monkeypatch, espions):
+    _lancer(monkeypatch, "--target-lang", "en", "--no-translate", "--editor")
+    assert espions == (
+        [],
+        [(("document-factice", "x_rebuilt.pdf"), {})],
+    )
 
 
 pymupdf = pytest.importorskip("pymupdf")

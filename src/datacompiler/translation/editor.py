@@ -6,6 +6,7 @@ import base64
 import json
 from pathlib import Path
 import tempfile
+from types import SimpleNamespace
 try:
     import tkinter as tk
     from tkinter import messagebox, ttk
@@ -34,6 +35,40 @@ def _all_translation_words(application):
 
 def _translation_words(application):
     return _all_translation_words(application)
+
+
+def _generic_unit_id(page, word):
+    return f"generic-p{page.number}-w{word.id}"
+
+
+def _apply_editor_text(word, text, *, generic=False):
+    if not (generic and word.source != "manual_translation"):
+        word.text = text
+    word.resolved_text = text
+
+
+def _prepare_generic_words(document):
+    """Give resolved text stable editor IDs without changing reading order."""
+    words = []
+    for page in document.pages:
+        for word in page.resolved.words:
+            if word.bbox is None:
+                continue
+            unit_id = getattr(word, "_translation_unit_id", "")
+            if not (word.source == "manual_translation" and unit_id.startswith("manual-")):
+                unit_id = _generic_unit_id(page, word)
+            word._translation_unit_id = unit_id
+            word._translation_block_id = word._translation_unit_id
+            word._editor_generic = True
+            if (
+                (word.is_vectorized or word.source == "ocr_vectoriel")
+                and not word.source_glyph_bboxes
+            ):
+                word.source_glyph_bboxes = (
+                    (word.bbox.x0, word.bbox.y0, word.bbox.x1, word.bbox.y1),
+                )
+            words.append(word)
+    return words
 
 
 def _replace_word_with_blocks(page, editor_words, original, replacements):
@@ -77,7 +112,8 @@ def _save_layout(application, path):
     units = {}
     for page in application.document.pages:
         for order, word in enumerate(page.resolved.words):
-            if word.source not in {"xliff_translation", "manual_translation"}:
+            generic = bool(getattr(word, "_editor_generic", False))
+            if word.source not in {"xliff_translation", "manual_translation"} and not generic:
                 continue
             unit_id = getattr(word, "_translation_unit_id", None)
             if not unit_id:
@@ -86,6 +122,8 @@ def _save_layout(application, path):
                 "page": page.number,
                 "source": (word._translation_segments[0].get("source")
                            if getattr(word, "_translation_segments", None) else None),
+                "base_text": word.text if generic else None,
+                "generic": generic,
                 "text": word.resolved_text or word.text or "",
                 "bbox": ([word.bbox.x0, word.bbox.y0, word.bbox.x1, word.bbox.y1]
                          if word.bbox else None),
@@ -113,7 +151,13 @@ def _load_layout(application, path):
     pages = {page.number: page for page in application.document.pages}
     words = {
         getattr(word, "_translation_unit_id", ""): word
-        for word in _all_translation_words(application)
+        for page in application.document.pages
+        for word in page.resolved.words
+        if word.bbox is not None
+        and (
+            word.source in {"xliff_translation", "manual_translation"}
+            or getattr(word, "_editor_generic", False)
+        )
     }
     split_parent_ids = set()
     manual_records = []
@@ -142,6 +186,7 @@ def _load_layout(application, path):
             word.resolved_text = word.text
             word._translation_unit_id = unit_id
             word._translation_block_id = unit_id
+            word._editor_generic = bool(record.get("generic", False))
             word._translation_baseline = None
             word._translation_segments = []
             word.source_glyph_bboxes = tuple(
@@ -150,6 +195,13 @@ def _load_layout(application, path):
             page.resolved.words.append(word)
             words[unit_id] = word
         else:
+            if record.get("generic"):
+                if not getattr(word, "_editor_generic", False):
+                    raise ValueError(f"Layout correction for {unit_id} is not a generic editor unit")
+                if record.get("base_text") != word.text:
+                    raise ValueError(
+                        f"Layout correction for {unit_id} belongs to different source text"
+                    )
             if "source_glyph_bboxes" in record:
                 word.source_glyph_bboxes = tuple(
                     tuple(box) for box in record["source_glyph_bboxes"]
@@ -165,8 +217,9 @@ def _load_layout(application, path):
                 if word.bbox and getattr(word, "_translation_baseline", None) is not None:
                     word._translation_baseline += corrected_bbox.y0 - word.bbox.y0
                 word.bbox = corrected_bbox
-        word.text = record.get("text", word.text)
-        word.resolved_text = word.text
+        if not record.get("generic"):
+            word.text = record.get("text", word.text)
+        word.resolved_text = record.get("text", word.text)
         word.bold = bool(record.get("bold", word.bold))
         word.italic = bool(record.get("italic", word.italic))
         word.font_size = float(record.get("font_size", word.font_size or 10.0))
@@ -212,7 +265,12 @@ class TranslationEditor(tk.Tk if tk is not None else object):
         self.output_path = Path(output_path)
         self.corrections_path = Path(corrections_path)
         self.document = application.document
-        self.words = _translation_words(application)
+        self.mode = getattr(application, "editor_mode", "translation")
+        self.words = (
+            _prepare_generic_words(self.document)
+            if self.mode == "generic"
+            else _translation_words(application)
+        )
         self.by_id = {getattr(word, "_translation_unit_id", str(word.id)): word for word in self.words}
         self.selected = None
         self.scale = 1.0
@@ -222,7 +280,12 @@ class TranslationEditor(tk.Tk if tk is not None else object):
         self.saved = False
         self._preview_dir = tempfile.TemporaryDirectory(prefix="datacompiler-editor-")
         self.preview_path = Path(self._preview_dir.name) / "preview.pdf"
-        self.title("DataCompiler — édition légère des segments")
+        title = (
+            "DataCompiler — édition du document"
+            if self.mode == "generic"
+            else "DataCompiler — édition légère des segments"
+        )
+        self.title(title)
         self.geometry("1320x900")
         self._build_ui()
         self._refresh_list()
@@ -239,7 +302,12 @@ class TranslationEditor(tk.Tk if tk is not None else object):
         root.add(left, weight=1)
         root.add(right, weight=4)
 
-        ttk.Label(left, text="Segments traduits et blocs manuels").pack(anchor="w")
+        list_title = (
+            "Texte résolu et blocs manuels"
+            if self.mode == "generic"
+            else "Segments traduits et blocs manuels"
+        )
+        ttk.Label(left, text=list_title).pack(anchor="w")
         ttk.Label(
             left,
             text="Ctrl/Cmd+clic ou Maj+clic pour sélectionner plusieurs blocs.",
@@ -280,7 +348,8 @@ class TranslationEditor(tk.Tk if tk is not None else object):
 
         controls = ttk.LabelFrame(left, text="Segment sélectionné", padding=8)
         controls.pack(fill=tk.X, pady=8)
-        ttk.Label(controls, text="Texte cible").grid(row=0, column=0, columnspan=2, sticky="w")
+        text_label = "Texte édité" if self.mode == "generic" else "Texte cible"
+        ttk.Label(controls, text=text_label).grid(row=0, column=0, columnspan=2, sticky="w")
         self.text_value = tk.Text(controls, width=36, height=5, wrap=tk.WORD)
         self.text_value.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(2, 6))
         ttk.Label(controls, text="Taille (pt)").grid(row=2, column=0, sticky="w")
@@ -391,8 +460,7 @@ class TranslationEditor(tk.Tk if tk is not None else object):
         except ValueError:
             messagebox.showerror("Taille invalide", "La taille doit être un nombre positif.")
             return
-        self.selected.text = text
-        self.selected.resolved_text = text
+        _apply_editor_text(self.selected, text, generic=self.mode == "generic")
         self.selected.font_size = size
         self.selected._translation_base_font_size = size
         self.selected.bold = self.bold_value.get()
@@ -708,3 +776,22 @@ def edit_translation_pdf(
     editor = TranslationEditor(application, output_path, corrections_path)
     editor.mainloop()
     return application if editor.saved else None
+
+
+def edit_document_pdf(
+    document,
+    output_path: str | Path,
+    *,
+    corrections_path: str | Path | None = None,
+):
+    """Open the editor on resolved source text without requiring a translation."""
+    if not document.metadata.source_pdf:
+        raise ValueError("The source PDF path is required (doc.metadata.source_pdf).")
+    output_path = Path(output_path)
+    corrections_path = Path(corrections_path or output_path.with_suffix(".layout.json"))
+    application = SimpleNamespace(document=document, editor_mode="generic")
+    _prepare_generic_words(document)
+    _load_layout(application, corrections_path)
+    editor = TranslationEditor(application, output_path, corrections_path)
+    editor.mainloop()
+    return document if editor.saved else None

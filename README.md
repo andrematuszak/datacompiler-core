@@ -66,6 +66,10 @@ est envoyé à DeepL. Sans `--source-lang fr`, la langue source est détectée a
 demande l'extra `language` (`python -m pip install -e ".[language]"`). La commande écrit `document.en.xlf` (XLIFF à relire) et `document_en_rebuilt.pdf`.
 `--no-translate` désactive toujours la traduction, même si `--target-lang` est présent : pratique pour
 tester des fichiers sans rien envoyer à un service externe.
+Pour ouvrir l'éditeur sans traduire, ajoute `--editor` : il permet de modifier le texte résolu
+et ses boîtes, avec sauvegarde des corrections dans `document_rebuilt.layout.json`. Avec
+`--target-lang`, `--editor` ouvre le même éditeur après traduction ; `--no-translate` garde
+la voie d'édition générique. L'éditeur nécessite Tkinter et une session graphique.
 
 ### 2. Utilisation en tant que bibliothèque
 ```python
@@ -127,6 +131,20 @@ Le même éditeur s'ouvre directement après la traduction CLI :
 ```powershell
 datacompiler document.pdf --target-lang en --edit-translation
 ```
+
+Pour éditer directement le document résolu sans créer de traduction :
+
+```powershell
+datacompiler document.pdf --editor
+```
+
+L'API Python propose également `edit_document_pdf(document, "document_rebuilt.pdf")`
+pour ouvrir ce mode sur un document déjà résolu.
+
+Les mots résolus reçoivent des identifiants stables fondés sur la page et l'identifiant du mot.
+Modifier ou déplacer un texte reconnu comme vectoriel masque ses tracés source à partir de la
+géométrie d'origine ; les dessins non reconnus restent conservés. Le sidecar `.layout.json`
+préserve le texte, les boîtes et les styles pris en charge.
 
 ### Relecture humaine dans Matecat
 
