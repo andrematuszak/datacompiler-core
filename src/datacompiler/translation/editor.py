@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import base64
+import copy
+import hashlib
 import json
 from pathlib import Path
 import tempfile
@@ -80,6 +82,127 @@ def _replace_word_with_blocks(page, editor_words, original, replacements):
     editor_words[editor_index:editor_index + 1] = replacements
 
 
+def _editor_word_record(page, word, order):
+    generic = bool(getattr(word, "_editor_generic", False))
+    return {
+        "page": page.number,
+        "source": (word._translation_segments[0].get("source")
+                   if getattr(word, "_translation_segments", None) else None),
+        "base_text": word.text if generic else None,
+        "generic": generic,
+        "text": word.resolved_text or word.text or "",
+        "bbox": ([word.bbox.x0, word.bbox.y0, word.bbox.x1, word.bbox.y1]
+                 if word.bbox else None),
+        "source_glyph_bboxes": [list(box) for box in word.source_glyph_bboxes],
+        "font_size": float(getattr(word, "_translation_base_font_size", word.font_size or 10.0)),
+        "bold": bool(word.bold),
+        "italic": bool(word.italic),
+        "script": getattr(word, "_translation_script", "normal"),
+        "editor_color": word.editor_color,
+        "deleted": bool(getattr(word, "_translation_deleted", False)),
+        "order": order,
+    }
+
+
+def _word_source_ids(word):
+    return tuple(
+        getattr(word, "_editor_source_ids", ())
+        or (getattr(word, "_translation_unit_id", str(word.id)),)
+    )
+
+
+def _merged_unit_id(member_ids):
+    stable_value = "\n".join(member_ids).encode("utf-8")
+    return "merged-" + hashlib.sha256(stable_value).hexdigest()[:20]
+
+
+def _merge_words(page, editor_words, selected_words, reference):
+    """Merge words in page reading order, using reference formatting and identity."""
+    if len(selected_words) < 2:
+        raise ValueError("Select at least two blocks to merge")
+    if not any(word is reference for word in selected_words):
+        raise ValueError("The merge reference must be one of the selected blocks")
+    if any(word not in page.resolved.words for word in selected_words):
+        raise ValueError("All merged blocks must belong to the same page")
+    if any(word not in editor_words for word in selected_words):
+        raise ValueError("All merged blocks must be present in the editor list")
+
+    selected_set = {id(word) for word in selected_words}
+    ordered = [
+        word for word in page.resolved.words
+        if id(word) in selected_set
+    ]
+    if len(ordered) != len(selected_words):
+        raise ValueError("A block can only be selected once for merging")
+    bbox_words = [word for word in ordered if word.bbox is not None]
+    if len(bbox_words) != len(ordered):
+        raise ValueError("Every merged block must have a layout box")
+
+    member_ids = tuple(
+        member_id
+        for word in ordered
+        for member_id in _word_source_ids(word)
+    )
+    if len(member_ids) != len(set(member_ids)):
+        raise ValueError("Selected blocks overlap in their source members")
+
+    merged = copy.deepcopy(reference)
+    merged.id = max((word.id for word in page.resolved.words), default=0) + 1
+    merged.bbox = BBox(
+        min(word.bbox.x0 for word in bbox_words),
+        min(word.bbox.y0 for word in bbox_words),
+        max(word.bbox.x1 for word in bbox_words),
+        max(word.bbox.y1 for word in bbox_words),
+    )
+    merged_text = " ".join(
+        (word.resolved_text or word.text or "").strip()
+        for word in ordered
+        if (word.resolved_text or word.text or "").strip()
+    )
+    merged.text = merged_text
+    merged.resolved_text = merged_text
+    merged.source = "manual_translation"
+    merged.reconstructed = True
+    merged.is_vectorized = False
+    merged._translation_unit_id = _merged_unit_id(member_ids)
+    merged._translation_block_id = merged._translation_unit_id
+    merged._editor_source_ids = member_ids
+    merged._editor_composite_members = member_ids
+    merged._editor_reference_id = getattr(reference, "_translation_unit_id", str(reference.id))
+    merged._editor_generic = any(getattr(word, "_editor_generic", False) for word in ordered)
+    merged._translation_segments = [
+        segment
+        for word in ordered
+        for segment in getattr(word, "_translation_segments", [])
+    ]
+    glyph_bboxes = []
+    for word in ordered:
+        if word.source_glyph_bboxes:
+            glyph_bboxes.extend(word.source_glyph_bboxes)
+        elif word.is_vectorized or word.source == "ocr_vectoriel":
+            if word.bbox:
+                glyph_bboxes.append(
+                    (word.bbox.x0, word.bbox.y0, word.bbox.x1, word.bbox.y1)
+                )
+    merged.source_glyph_bboxes = tuple(dict.fromkeys(glyph_bboxes))
+
+    page_position = min(page.resolved.words.index(word) for word in ordered)
+    page.resolved.words[:] = [
+        word for word in page.resolved.words
+        if id(word) not in selected_set
+    ]
+    page.resolved.words.insert(page_position, merged)
+
+    editor_positions = [editor_words.index(word) for word in ordered]
+    editor_position = min(editor_positions)
+    editor_words[:] = [
+        word for word in editor_words
+        if id(word) not in selected_set
+    ]
+    editor_words.insert(editor_position, merged)
+    return merged, ordered
+
+
 def _align_words(words, reference, axis, anchor):
     """Align selected word boxes to a reference without changing their sizes or order."""
     coordinates = {
@@ -120,24 +243,10 @@ def _save_layout(application, path):
             unit_id = getattr(word, "_translation_unit_id", None)
             if not unit_id:
                 continue
-            units[unit_id] = {
-                "page": page.number,
-                "source": (word._translation_segments[0].get("source")
-                           if getattr(word, "_translation_segments", None) else None),
-                "base_text": word.text if generic else None,
-                "generic": generic,
-                "text": word.resolved_text or word.text or "",
-                "bbox": ([word.bbox.x0, word.bbox.y0, word.bbox.x1, word.bbox.y1]
-                         if word.bbox else None),
-                "source_glyph_bboxes": [list(box) for box in word.source_glyph_bboxes],
-                "font_size": float(getattr(word, "_translation_base_font_size", word.font_size or 10.0)),
-                "bold": bool(word.bold),
-                "italic": bool(word.italic),
-                "script": getattr(word, "_translation_script", "normal"),
-                "editor_color": word.editor_color,
-                "deleted": bool(getattr(word, "_translation_deleted", False)),
-                "order": order,
-            }
+            units[unit_id] = _editor_word_record(page, word, order)
+            if getattr(word, "_editor_composite_members", None):
+                units[unit_id]["composite_members"] = list(word._editor_composite_members)
+                units[unit_id]["reference_id"] = word._editor_reference_id
         units.update(getattr(page, "_translation_layout_tombstones", {}))
     payload = {"schema_version": _LAYOUT_SCHEMA_VERSION, "units": units}
     Path(path).parent.mkdir(parents=True, exist_ok=True)
@@ -164,7 +273,11 @@ def _load_layout(application, path):
     }
     split_parent_ids = set()
     manual_records = []
+    composite_records = []
     for unit_id, record in payload.get("units", {}).items():
+        if record.get("composite_members"):
+            composite_records.append((unit_id, record))
+            continue
         word = words.get(unit_id)
         page = pages.get(record.get("page"))
         if record.get("split_into"):
@@ -260,6 +373,59 @@ def _load_layout(application, path):
             index = min(max(order, 0), len(page.resolved.words)) if isinstance(order, int) else len(page.resolved.words)
             page.resolved.words.insert(index, word)
 
+    for composite_id, record in composite_records:
+        page = pages.get(record.get("page"))
+        if page is None:
+            continue
+        member_ids = record["composite_members"]
+        members = {
+            getattr(word, "_translation_unit_id", ""): word
+            for word in page.resolved.words
+        }
+        if any(member_id not in members for member_id in member_ids):
+            raise ValueError(
+                f"Layout correction for {composite_id} references missing merge members"
+            )
+        source_words = [members[member_id] for member_id in member_ids]
+        reference_id = record.get("reference_id")
+        reference = members.get(reference_id, source_words[-1])
+        merged, _ = _merge_words(
+            page, list(page.resolved.words), source_words, reference,
+        )
+        if merged._translation_unit_id != composite_id:
+            raise ValueError(f"Invalid stable composite ID for {composite_id}")
+        merged.bbox = BBox(*record["bbox"])
+        merged.text = record.get("text", merged.text)
+        merged.resolved_text = merged.text
+        merged.font_size = float(record.get("font_size", merged.font_size or 10.0))
+        merged._translation_base_font_size = merged.font_size
+        merged.bold = bool(record.get("bold", merged.bold))
+        merged.italic = bool(record.get("italic", merged.italic))
+        merged._translation_script = record.get("script", "normal")
+        merged.editor_color = (
+            normalize_hex_color(record["editor_color"])
+            if record.get("editor_color") is not None else None
+        )
+        merged._translation_deleted = bool(record.get("deleted", False))
+        merged.source_glyph_bboxes = tuple(
+            tuple(bounds) for bounds in record.get("source_glyph_bboxes", ())
+        )
+        merged._editor_generic = bool(record.get("generic", False))
+        merged._translation_unit_id = composite_id
+        merged._translation_block_id = composite_id
+        merged._editor_source_ids = tuple(member_ids)
+        merged._editor_composite_members = tuple(member_ids)
+        merged._editor_reference_id = reference_id
+        tombstones = getattr(page, "_translation_layout_tombstones", {})
+        page._translation_layout_tombstones = tombstones
+        for member_id in member_ids:
+            member_record = payload["units"].get(member_id)
+            if member_record is not None:
+                tombstones[member_id] = {
+                    **member_record,
+                    "merged_into": composite_id,
+                }
+
 
 class TranslationEditor(tk.Tk if tk is not None else object):
     """A local segment editor; PDF geometry is stored in points in a JSON sidecar."""
@@ -293,7 +459,8 @@ class TranslationEditor(tk.Tk if tk is not None else object):
             else "DataCompiler — édition légère des segments"
         )
         self.title(title)
-        self.geometry("1320x900")
+        self.geometry("1400x850")
+        self.minsize(1100, 650)
         self._build_ui()
         self._refresh_list()
         if self.words:
@@ -306,7 +473,7 @@ class TranslationEditor(tk.Tk if tk is not None else object):
         root.pack(fill=tk.BOTH, expand=True)
         left = ttk.Frame(root, padding=8)
         right = ttk.Frame(root, padding=8)
-        root.add(left, weight=1)
+        root.add(left, weight=2)
         root.add(right, weight=4)
 
         list_title = (
@@ -314,28 +481,39 @@ class TranslationEditor(tk.Tk if tk is not None else object):
             if self.mode == "generic"
             else "Segments traduits et blocs manuels"
         )
-        ttk.Label(left, text=list_title).pack(anchor="w")
+        footer = ttk.Frame(left, padding=(0, 4, 0, 0))
+        footer.pack(side=tk.BOTTOM, fill=tk.X)
+        ttk.Button(
+            footer, text="Enregistrer le PDF et les corrections", command=self._save,
+        ).pack(fill=tk.X)
+        self.status = tk.StringVar(value="Glissez un segment pour déplacer un bloc ; tirez son coin inférieur droit pour le redimensionner.")
+        ttk.Label(footer, textvariable=self.status, wraplength=440).pack(anchor="w", pady=4)
+
+        content = ttk.Frame(left)
+        content.pack(fill=tk.BOTH, expand=True)
+        ttk.Label(content, text=list_title).pack(anchor="w")
         ttk.Label(
-            left,
+            content,
             text="Ctrl/Cmd+clic ou Maj+clic pour sélectionner plusieurs blocs.",
             wraplength=330,
         ).pack(anchor="w")
-        self.segment_list = tk.Listbox(left, width=48, exportselection=False)
+        self.segment_list = tk.Listbox(content, width=42, exportselection=False)
         self.segment_list.configure(selectmode=tk.EXTENDED)
         self.segment_list.pack(fill=tk.BOTH, expand=True, pady=(4, 8))
         self.segment_list.bind("<<ListboxSelect>>", self._select_from_list)
         self.segment_list.bind("<ButtonRelease-1>", self._list_click_released, add="+")
         self.segment_list.bind("<KeyRelease>", self._list_key_released, add="+")
-        ttk.Button(left, text="Ajouter un bloc texte", command=self._add_text).pack(fill=tk.X)
-        ttk.Button(left, text="Scinder le segment en deux", command=self._split_selected).pack(fill=tk.X, pady=(4, 0))
-        self.delete_button = ttk.Button(left, command=self._toggle_deleted)
+        ttk.Button(content, text="Ajouter un bloc texte", command=self._add_text).pack(fill=tk.X)
+        ttk.Button(content, text="Scinder le segment en deux", command=self._split_selected).pack(fill=tk.X, pady=(4, 0))
+        self.delete_button = ttk.Button(content, command=self._toggle_deleted)
         self.delete_button.pack(fill=tk.X, pady=(4, 0))
+        ttk.Button(content, text="Fusionner les segments", command=self._merge_selection).pack(fill=tk.X, pady=(4, 0))
         self.reference_value = tk.StringVar(value="Référence : aucune")
-        ttk.Label(left, textvariable=self.reference_value, wraplength=330).pack(
+        ttk.Label(content, textvariable=self.reference_value, wraplength=330).pack(
             anchor="w", pady=(8, 2),
         )
 
-        alignments = ttk.LabelFrame(left, text="Aligner les blocs sélectionnés", padding=6)
+        alignments = ttk.LabelFrame(content, text="Aligner les blocs sélectionnés", padding=6)
         alignments.pack(fill=tk.X, pady=(4, 0))
         for column, (label, axis, anchor) in enumerate((
             ("Bords gauches", "horizontal", "left"),
@@ -353,45 +531,46 @@ class TranslationEditor(tk.Tk if tk is not None else object):
         alignments.columnconfigure(0, weight=1)
         alignments.columnconfigure(1, weight=1)
 
-        controls = ttk.LabelFrame(left, text="Segment sélectionné", padding=8)
+        controls = ttk.LabelFrame(content, text="Segment sélectionné", padding=8)
         controls.pack(fill=tk.X, pady=8)
+        editor_fields = ttk.Frame(controls)
+        editor_fields.grid(row=0, column=0, sticky="nsew", padx=(0, 6))
+        color_controls = ttk.LabelFrame(controls, text="Couleur", padding=6)
+        color_controls.grid(row=0, column=1, sticky="sew")
+        controls.columnconfigure(0, weight=1)
+        controls.columnconfigure(1, weight=0)
+        controls.rowconfigure(0, weight=1)
         text_label = "Texte édité" if self.mode == "generic" else "Texte cible"
-        ttk.Label(controls, text=text_label).grid(row=0, column=0, columnspan=2, sticky="w")
-        self.text_value = tk.Text(controls, width=36, height=5, wrap=tk.WORD)
+        ttk.Label(editor_fields, text=text_label).grid(row=0, column=0, columnspan=2, sticky="w")
+        self.text_value = tk.Text(editor_fields, width=28, height=4, wrap=tk.WORD)
         self.text_value.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(2, 6))
-        ttk.Label(controls, text="Taille (pt)").grid(row=2, column=0, sticky="w")
+        ttk.Label(editor_fields, text="Taille (pt)").grid(row=2, column=0, sticky="w")
         self.size_value = tk.StringVar(value="10")
-        ttk.Spinbox(controls, from_=1, to=120, increment=0.5, textvariable=self.size_value, width=10).grid(row=2, column=1, sticky="e")
+        ttk.Spinbox(editor_fields, from_=1, to=120, increment=0.5, textvariable=self.size_value, width=10).grid(row=2, column=1, sticky="e")
         self.bold_value = tk.BooleanVar()
         self.italic_value = tk.BooleanVar()
-        ttk.Checkbutton(controls, text="Gras", variable=self.bold_value).grid(row=3, column=0, sticky="w")
-        ttk.Checkbutton(controls, text="Italique", variable=self.italic_value).grid(row=3, column=1, sticky="w")
-        ttk.Label(controls, text="Position verticale").grid(row=4, column=0, sticky="w", pady=(4, 0))
+        ttk.Checkbutton(editor_fields, text="Gras", variable=self.bold_value).grid(row=3, column=0, sticky="w")
+        ttk.Checkbutton(editor_fields, text="Italique", variable=self.italic_value).grid(row=3, column=1, sticky="w")
+        ttk.Label(editor_fields, text="Position verticale").grid(row=4, column=0, sticky="w", pady=(4, 0))
         self.script_value = tk.StringVar(value="normal")
         ttk.Combobox(
-            controls, textvariable=self.script_value, state="readonly", width=14,
+            editor_fields, textvariable=self.script_value, state="readonly", width=14,
             values=("normal", "superscript", "subscript"),
         ).grid(row=4, column=1, sticky="e", pady=(4, 0))
-        ttk.Button(controls, text="Appliquer et prévisualiser", command=self._apply_and_preview).grid(row=5, column=0, columnspan=2, sticky="ew", pady=(8, 0))
-        ttk.Label(controls, text="Couleur du texte").grid(row=6, column=0, sticky="w", pady=(6, 0))
+        ttk.Button(editor_fields, text="Appliquer et prévisualiser", command=self._apply_and_preview).grid(row=5, column=0, columnspan=2, sticky="ew", pady=(8, 0))
+        ttk.Label(color_controls, text="Couleur du texte").pack(anchor="w")
         self.color_value = tk.StringVar(value="Source")
         self.color_swatch = tk.Label(
-            controls, textvariable=self.color_value, relief=tk.SOLID, bd=1,
+            color_controls, textvariable=self.color_value, relief=tk.SOLID, bd=1,
             padx=6, pady=2,
         )
-        self.color_swatch.grid(row=6, column=1, sticky="ew", pady=(6, 0))
+        self.color_swatch.pack(fill=tk.X, pady=(4, 2))
         ttk.Button(
-            controls, text="Choisir une couleur…", command=self._choose_color,
-        ).grid(row=7, column=0, columnspan=2, sticky="ew", pady=(4, 0))
+            color_controls, text="Choisir…", command=self._choose_color,
+        ).pack(fill=tk.X, pady=(4, 0))
         ttk.Button(
-            controls, text="Utiliser la couleur source", command=self._clear_color,
-        ).grid(row=8, column=0, columnspan=2, sticky="ew", pady=(4, 0))
-
-        footer = ttk.Frame(left)
-        footer.pack(fill=tk.X, pady=(4, 0))
-        ttk.Button(footer, text="Enregistrer le PDF et les corrections", command=self._save).pack(fill=tk.X)
-        self.status = tk.StringVar(value="Glissez un segment pour le déplacer ; tirez son coin inférieur droit pour le redimensionner.")
-        ttk.Label(left, textvariable=self.status, wraplength=330).pack(anchor="w", pady=6)
+            color_controls, text="Couleur source", command=self._clear_color,
+        ).pack(fill=tk.X, pady=(4, 0))
 
         canvas_frame = ttk.Frame(right)
         canvas_frame.pack(fill=tk.BOTH, expand=True)
@@ -408,17 +587,18 @@ class TranslationEditor(tk.Tk if tk is not None else object):
         self.canvas.bind("<B1-Motion>", self._mouse_drag)
         self.canvas.bind("<ButtonRelease-1>", self._mouse_up)
 
-    def _refresh_list(self, keep_id=None):
+    def _refresh_list(self, keep_id=None, selected_ids=()):
         self.segment_list.delete(0, tk.END)
-        for word in self.words:
+        selected_ids = set(selected_ids)
+        for index, word in enumerate(self.words):
             unit_id = getattr(word, "_translation_unit_id", str(word.id))
             page_num = next((page.number for page in self.document.pages if word in page.resolved.words), "?")
             text = (word.resolved_text or word.text or "").replace("\n", " ")
             deleted = " [supprimé]" if getattr(word, "_translation_deleted", False) else ""
             self.segment_list.insert(tk.END, f"p.{page_num}  {unit_id}  |  {text[:46]}{deleted}")
-            if unit_id == keep_id:
-                self.segment_list.selection_set(tk.END)
-                self.segment_list.see(tk.END)
+            if unit_id == keep_id or unit_id in selected_ids:
+                self.segment_list.selection_set(index)
+                self.segment_list.see(index)
 
     def _select_from_list(self, _event=None):
         selection = self.segment_list.curselection()
@@ -660,6 +840,53 @@ class TranslationEditor(tk.Tk if tk is not None else object):
         self.status.set(
             f"Blocs alignés : {anchor} sur {reference._translation_unit_id}. "
             "Tailles et ordre de lecture conservés."
+        )
+
+    def _merge_selection(self):
+        selection = self.segment_list.curselection()
+        if len(selection) < 2:
+            self.status.set("Sélectionnez au moins deux blocs pour les fusionner.")
+            return
+        self._commit_fields()
+        selected_words = [self.words[index] for index in selection]
+        reference_index = getattr(self, "_reference_index", None)
+        if reference_index not in selection:
+            reference_index = selection[-1]
+        reference = self.words[reference_index]
+        page = self._page_for_word(reference)
+        if page is None or any(self._page_for_word(word) is not page for word in selected_words):
+            self.status.set("Les blocs à fusionner doivent appartenir à la même page.")
+            return
+
+        page_order = {id(word): index for index, word in enumerate(page.resolved.words)}
+        try:
+            merged, ordered = _merge_words(page, self.words, selected_words, reference)
+        except ValueError as exc:
+            self.status.set(str(exc))
+            return
+        tombstones = getattr(page, "_translation_layout_tombstones", {})
+        for word in ordered:
+            if getattr(word, "_editor_composite_members", None):
+                continue
+            unit_id = getattr(word, "_translation_unit_id", str(word.id))
+            tombstones.setdefault(
+                unit_id, _editor_word_record(page, word, page_order.get(id(word), 0)),
+            )
+        for member_id in merged._editor_composite_members:
+            if member_id in tombstones:
+                tombstones[member_id]["merged_into"] = merged._translation_unit_id
+        page._translation_layout_tombstones = tombstones
+
+        self.selected = merged
+        self._reference_index = self.words.index(merged)
+        selected_id = merged._translation_unit_id
+        self._refresh_list(keep_id=selected_id, selected_ids=(selected_id,))
+        self._update_reference_label()
+        self._load_fields()
+        self._draw_page()
+        self.status.set(
+            f"Segments fusionnés en un bloc unique : {selected_id}. "
+            "L'ordre de lecture et les tracés sources sont conservés."
         )
 
     def _add_text(self):

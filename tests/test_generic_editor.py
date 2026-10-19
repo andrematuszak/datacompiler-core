@@ -9,7 +9,9 @@ from datacompiler.model.geometry import BBox
 from datacompiler.model.metadata import Metadata
 from datacompiler.translation.editor import (
     _apply_editor_text,
+    _editor_word_record,
     _load_layout,
+    _merge_words,
     _prepare_generic_words,
     _save_layout,
 )
@@ -301,3 +303,115 @@ def test_generic_vector_edit_masks_recognized_source_glyphs(
         assert drawing_rects.isdisjoint(source_glyph_rects)
         assert (10.0, 10.0, 100.0, 60.0) in drawing_rects
         assert replacement in page.get_text()
+
+
+def test_merge_preserves_reading_order_ids_reference_style_and_source_masks(tmp_path):
+    source_path = tmp_path / "source.pdf"
+    output_path = tmp_path / "merged.pdf"
+    layout_path = tmp_path / "merged.layout.json"
+    pdf = pymupdf.open()
+    page = pdf.new_page(width=220, height=100)
+    page.draw_rect(
+        pymupdf.Rect(8, 8, 205, 70), color=(0, 0, 1), fill=(0.9, 0.9, 0.9),
+    )
+    glyph_rectangles = {
+        "one": (20, 20, 28, 32),
+        "two": (80, 20, 88, 32),
+        "three": (140, 20, 148, 32),
+    }
+    for rectangle in glyph_rectangles.values():
+        page.draw_rect(pymupdf.Rect(*rectangle), color=None, fill=(0, 0, 0))
+    pdf.save(source_path)
+    pdf.close()
+
+    words = [
+        Word(
+            id=1, text="one", bbox=BBox(18, 18, 32, 36), source="ocr_vectoriel",
+            is_vectorized=True, font_size=10,
+        ),
+        Word(id=2, text="two", bbox=BBox(78, 18, 92, 36), source="native"),
+        Word(
+            id=3, text="three", bbox=BBox(138, 18, 155, 36), source="ocr_vectoriel",
+            is_vectorized=True, font_size=14, bold=True, editor_color="#2468AC",
+        ),
+    ]
+    document = _document(source_path, words[0])
+    document.pages[0].resolved.words.extend(words[1:])
+    page_model = document.pages[0]
+    editor_words = _prepare_generic_words(document)
+    source_ids = [word._translation_unit_id for word in words]
+    source_records = {
+        word._translation_unit_id: _editor_word_record(page_model, word, index)
+        for index, word in enumerate(words)
+    }
+
+    merged, ordered = _merge_words(
+        page_model, editor_words, [words[2], words[0]], reference=words[2],
+    )
+    composite_id = merged._translation_unit_id
+    for source_id, record in source_records.items():
+        if source_id in merged._editor_composite_members:
+            record["merged_into"] = composite_id
+            page_model._translation_layout_tombstones = getattr(
+                page_model, "_translation_layout_tombstones", {},
+            )
+            page_model._translation_layout_tombstones[source_id] = record
+
+    assert [word.text for word in ordered] == ["one", "three"]
+    assert merged.resolved_text == "one three"
+    assert merged.bbox == BBox(18, 18, 155, 36)
+    assert merged.font_size == 14
+    assert merged.bold is True
+    assert merged.editor_color == "#2468AC"
+    assert merged._editor_composite_members == (
+        "generic-p1-w1", "generic-p1-w3",
+    )
+    assert [word._translation_unit_id for word in page_model.resolved.words] == [
+        composite_id, source_ids[1],
+    ]
+    assert source_ids[1] == "generic-p1-w2"
+
+    _save_layout(SimpleNamespace(document=document), layout_path)
+    restored_words = [
+        Word(
+            id=1, text="one", bbox=BBox(18, 18, 32, 36), source="ocr_vectoriel",
+            is_vectorized=True, font_size=10,
+        ),
+        Word(id=2, text="two", bbox=BBox(78, 18, 92, 36), source="native"),
+        Word(
+            id=3, text="three", bbox=BBox(138, 18, 155, 36), source="ocr_vectoriel",
+            is_vectorized=True, font_size=14, bold=True, editor_color="#2468AC",
+        ),
+    ]
+    restored = _document(source_path, restored_words[0])
+    restored.pages[0].resolved.words.extend(restored_words[1:])
+    _prepare_generic_words(restored)
+    _load_layout(SimpleNamespace(document=restored), layout_path)
+    restored_page = restored.pages[0]
+    restored_composite = restored_page.resolved.words[0]
+
+    assert restored_composite._translation_unit_id == composite_id
+    assert restored_composite.resolved_text == "one three"
+    assert restored_composite._editor_composite_members == (
+        "generic-p1-w1", "generic-p1-w3",
+    )
+    assert restored_composite.source_glyph_bboxes == (
+        (18, 18, 32, 36), (138, 18, 155, 36),
+    )
+    assert [word._translation_unit_id for word in restored_page.resolved.words] == [
+        composite_id, "generic-p1-w2",
+    ]
+
+    render_rebuilt_pdf(restored, str(output_path))
+    with pymupdf.open(output_path) as rendered:
+        rendered_page = rendered[0]
+        drawing_rects = {
+            tuple(round(value, 1) for value in drawing["rect"])
+            for drawing in rendered_page.get_drawings()
+        }
+        assert glyph_rectangles["one"] not in drawing_rects
+        assert glyph_rectangles["three"] not in drawing_rects
+        assert glyph_rectangles["two"] in drawing_rects
+        assert (8.0, 8.0, 205.0, 70.0) in drawing_rects
+        assert "one three" in rendered_page.get_text()
+        assert "two" in rendered_page.get_text()
