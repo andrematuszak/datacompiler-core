@@ -1,5 +1,4 @@
-"""typography.py — Métadonnées typographiques pures. Homonyme volontaire de
-compile/typography.py (données ici, transformations là-bas)."""
+"""Store plain typographic metadata. This module describes font data; transformations live in ``compile.typography``."""
 
 from dataclasses import dataclass, field
 from typing import List

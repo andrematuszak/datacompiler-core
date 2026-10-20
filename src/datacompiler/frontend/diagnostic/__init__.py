@@ -1,4 +1,4 @@
-﻿"""diagnostic/ — Remplit page.diagnostic (et agrège doc.diagnostic) à partir
+"""diagnostic/ — Remplit page.diagnostic (et agrège doc.diagnostic) à partir
 de l'objet Document DÉJÀ EXTRAIT. Ne rouvre jamais le PDF."""
 
 from datacompiler.model.document import Document
@@ -6,6 +6,8 @@ from datacompiler.model.metadata import Diagnostic
 
 from .categorize import SEUIL_QUALITE_CORROMPU, categoriser, evaluer_segmentation_page
 from . import blind_spots, container, spatial_integrity, text_integrity, vector_text, visual_integrity
+
+__all__ = ["diagnostiquer"]
 
 def _diagnostiquer_page(page) -> Diagnostic:
     notes = []
@@ -27,40 +29,40 @@ def _diagnostiquer_page(page) -> Diagnostic:
     ocr_integre = pleine_page and has_native
 
     if ocr_integre:
-        notes.append("OCR tiers probable (image pleine page + texte natif présent)")
+        notes.append("Likely embedded OCR (full-page image plus native text)")
         qualite = min(qualite, 0.4) if qualite is not None else 0.4
 
     if text_integrity.page_a_faible_densite(page) and not page.graphics.images and has_native:
-        notes.append("Densité textuelle anormalement basse pour une page non vide")
+        notes.append("Unusually low text density for a non-empty page")
 
     images_basse_res = visual_integrity.images_basse_resolution(page)
     for img, dpi in images_basse_res:
-        notes.append(f"Image basse résolution ({dpi:.0f} DPI effectif)")
+        notes.append(f"Low-resolution image ({dpi:.0f} effective DPI)")
 
     chevauchements = spatial_integrity.detecter_chevauchements(page)
     if chevauchements:
-        notes.append(f"{len(chevauchements)} paire(s) de mots avec bbox chevauchantes")
+        notes.append(f"{len(chevauchements)} pair(s) of overlapping word boxes")
 
     hors_limites = spatial_integrity.detecter_hors_limites(page)
     if hors_limites:
-        notes.append(f"{len(hors_limites)} mot(s) hors des limites de la page")
+        notes.append(f"{len(hors_limites)} word(s) outside the page bounds")
 
     ordre = spatial_integrity.score_ordre_lecture(page)
     if ordre < 0.85:
-        notes.append(f"Ordre de lecture instable (score {ordre:.2f})")
+        notes.append(f"Unstable reading order (score {ordre:.2f})")
 
     if not has_native:
-        notes.append("Aucun texte natif -- OCR obligatoire")
+        notes.append("No native text; OCR is required")
 
     if couverture_native is not None and couverture_native < 0.9:
-        notes.append(f"Couverture texte natif insuffisante ({couverture_native:.1%}) -- texte vectoriel à extraire")
+        notes.append(f"Insufficient native-text coverage ({couverture_native:.1%}); vector text should be extracted")
 
     if symboles:
-        notes.append(f"Symboles corrompus suspects : {symboles}")
+        notes.append(f"Potentially corrupted symbols: {symboles}")
 
     if not confiance["confiance_suffisante"]:
         notes.append(
-            f"Échantillon court ({confiance['nb_mots_analyses']} mots) -- "
+            f"Small sample ({confiance['nb_mots_analyses']} words); "
             "score de qualité peu fiable"
         )
 
@@ -189,7 +191,7 @@ def diagnostiquer(doc: Document) -> Document:
             couvertures_natives.append(pd.native_text_coverage)
 
         for note in pd.notes:
-            notes.append(f"Page {page.number} : {note}")
+            notes.append(f"Page {page.number}: {note}")
         for reason in pd.ocr_reasons:
             if reason not in ocr_reasons:
                 ocr_reasons.append(reason)
@@ -200,18 +202,18 @@ def diagnostiquer(doc: Document) -> Document:
 
     encrypted = doc.metadata.encrypted
     if encrypted:
-        notes.append("Document chiffré -- l'extraction peut être incomplète ou échouer selon les restrictions")
+        notes.append("The document is encrypted; extraction may be incomplete or blocked by its permissions")
 
     suspect = container.producteur_suspect(doc)
     if suspect:
-        notes.append(f"Producteur '{suspect}' déjà observé comme peu fiable sur vos tests précédents")
+        notes.append(f"Producer '{suspect}' was previously found unreliable in your tests")
 
     recommend_ocr = any(page.diagnostic.recommend_ocr for page in doc.pages)
 
     if recommend_ocr and not notes:
-        notes.append("Enrichissement recommandé (raison non détaillée par page)")
+        notes.append("Enrichment is recommended (no page-level reason is available)")
     if not recommend_ocr:
-        notes.append("Texte natif jugé suffisamment fiable sur toutes les pages -- OCR non recommandé (économie)")
+        notes.append("Native text appears reliable on every page; OCR is not recommended")
 
     doc.diagnostic.has_native_text = a_texte_natif
     doc.diagnostic.has_images = a_images

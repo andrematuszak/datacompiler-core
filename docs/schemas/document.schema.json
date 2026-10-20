@@ -1,0 +1,60 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "DataCompiler document (minimal v1.0 contract)",
+  "type": "object",
+  "required": ["schema_version", "metadata", "pages"],
+  "properties": {
+    "schema_version": {"const": "1.0"},
+    "metadata": {"type": "object"},
+    "pages": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["number", "width", "height", "resolved"],
+        "properties": {
+          "number": {"type": "integer", "minimum": 1},
+          "width": {"type": "number", "minimum": 0},
+          "height": {"type": "number", "minimum": 0},
+          "resolved": {
+            "type": "object",
+            "required": ["words"],
+            "properties": {
+              "words": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": ["id", "text"],
+                  "properties": {
+                    "id": {"type": "integer"},
+                    "text": {"type": "string"},
+                    "resolved_text": {"type": ["string", "null"]},
+                    "bbox": {
+                      "oneOf": [
+                        {"type": "null"},
+                        {
+                          "type": "object",
+                          "required": ["x0", "y0", "x1", "y1"],
+                          "properties": {
+                            "x0": {"type": "number"},
+                            "y0": {"type": "number"},
+                            "x1": {"type": "number"},
+                            "y1": {"type": "number"}
+                          },
+                          "additionalProperties": true
+                        }
+                      ]
+                    }
+                  },
+                  "additionalProperties": true
+                }
+              }
+            },
+            "additionalProperties": true
+          }
+        },
+        "additionalProperties": true
+      }
+    }
+  },
+  "additionalProperties": true
+}

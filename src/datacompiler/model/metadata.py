@@ -1,6 +1,4 @@
-﻿"""metadata.py — Informations descriptives au niveau document : provenance
-du fichier (Metadata) et résultat du diagnostic (Diagnostic). Ni l'une ni
-l'autre ne référence Word/Page."""
+"""Store document provenance and diagnostic results independently of page and word objects."""
 
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional

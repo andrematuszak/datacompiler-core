@@ -1,25 +1,4 @@
-"""rebuilt_pdf.py — Reconstruit un PDF NEUF, texte VISIBLE et sélectionnable,
-à partir de page.resolved uniquement.
-
-Différence de fond avec faithful_pdf.py : celui-ci préserve l'apparence
-exacte du PDF source (image du PDF d'origine + texte invisible superposé à
-la même position). rebuilt_pdf.py ABANDONNE la géométrie d'origine et
-reflue le contenu comme un traitement de texte -- marges fixes, lignes
-empilées dans l'ordre de lecture déjà établi par resolve/reading_order.py,
-même logique que markdown.py/html.py mais rendue en PDF réel.
-
-CHOIX DE CONCEPTION À VALIDER : ce module suppose qu'on veut un flux texte
-linéaire (comme markdown.py/html.py), pas une reconstruction proche de la
-géométrie d'origine mais en texte visible (ce qui serait alors très proche
-de faithful_pdf.py en mode overlay, sans l'image de fond). Si l'intention
-était plutôt "même mise en page, texte visible et éditable", c'est un autre
-renderer -- à clarifier avant de considérer ce fichier comme la version
-finale.
-
-Réutilise la police Unicode de faithful_pdf.py plutôt que "helv" : "helv"
-n'a pas le glyphe "€" (bug déjà rencontré sur la couche invisible -- ici le
-texte est VISIBLE, donc l'erreur serait visible aussi, pas seulement dans
-l'extraction)."""
+"""Render a new, selectable PDF from ``page.resolved`` using a linear reading order and flowing layout. This renderer prioritizes readable text flow over reproducing the source geometry."""
 
 from pathlib import Path
 import pymupdf

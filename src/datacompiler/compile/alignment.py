@@ -1,18 +1,4 @@
-"""alignment.py — Aligne les mots natifs et les mots OCR d'une page.
-
-Contrainte structurelle (cf. ocr.py) : Mistral ne fournit de bbox qu'au
-niveau BLOC (paragraphe), jamais au niveau mot -- page.ocr.words n'a que
-texte + confiance, bbox=None. L'alignement géométrique précis mot-à-mot est
-donc IMPOSSIBLE avec les données actuelles. On aligne à la place les deux
-SÉQUENCES DE TEXTE (natif et OCR) comme deux versions du même document,
-avec difflib -- l'équivalent d'un diff de texte, pas d'un rapprochement
-spatial.
-
-Prérequis : `mots_natifs` doit déjà être dans l'ordre de lecture réel
-(reading_order.py) et normalisé côté typographie (typography.py), sinon le
-diff n'a aucune raison de s'aligner correctement avec l'ordre dans lequel
-Mistral retourne son propre flux de mots.
-"""
+"""Align native and OCR text sequences at the block level. The OCR provider may not supply word bounding boxes, so geometric word-to-word alignment is unavailable; sequence matching is used instead."""
 
 from dataclasses import dataclass
 from difflib import SequenceMatcher
@@ -29,8 +15,7 @@ class UniteAlignement:
 
 
 def aligner(mots_natifs: list, mots_ocr: list) -> list:
-    """Retourne une liste de UniteAlignement décrivant la correspondance
-    entre les deux séquences."""
+    """Return alignment units describing the correspondence between native and OCR text sequences."""
     textes_natifs = [w.output_text for w in mots_natifs]
     textes_ocr = [w.text for w in mots_ocr]
 

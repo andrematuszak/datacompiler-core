@@ -1,7 +1,4 @@
-"""markdown.py — Rendu Markdown, EXCLUSIVEMENT depuis page.resolved (jamais
-native/ocr directement). Extrait de l'ancien render.py, logique inchangée à
-part l'import de grouper_par_ligne (désormais output/layout.py, avec
-le correctif de tri décrit dans ce module)."""
+"""Render Markdown from ``page.resolved`` only. Native and OCR layers are consumed through the resolved output model."""
 
 from datacompiler.model.document import Document
 from datacompiler.compile.layout import grouper_par_ligne

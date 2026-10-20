@@ -1,6 +1,4 @@
-﻿"""heuristics_text.py — Signaux bas niveau partagés entre diagnostic/ et
-resolve/confidence.py. Regroupés ici pour éviter la duplication (les deux
-modules réimplémentaient indépendamment les mêmes patterns)."""
+"""Share low-level text-integrity signals between diagnostics and confidence estimation to avoid duplicated heuristics."""
 
 
 import re

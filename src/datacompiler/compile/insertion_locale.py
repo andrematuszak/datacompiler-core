@@ -1,23 +1,4 @@
-"""insertion_locale.py — Insertion PRUDENTE de tokens de référence
-manquants côté natif, seulement quand ils comblent un petit espace entre
-deux mots natifs déjà proches et déjà ordonnés (cf. ordre_mistral.py).
-
-SCOPE DÉLIBÉRÉMENT ÉTROIT, différent de la toute première tentative
-d'intégration Mistral (alignment.py + conflict_resolution.py ::
-_interpoler_bboxes, qui interpole une bbox pour CHAQUE mot "ocr_seul"
-sans limite de distance -- c'est ce qui avait produit des dizaines de
-tokens entassés dans des espaces minuscules, texte collé partout, cf.
-historique du projet). Ici, un token n'est inséré QUE s'il tombe entre
-deux mots natifs consécutifs (dans l'ordre déjà corrigé par
-ordre_mistral.ordre_par_correspondance) séparés par moins de
-SEUIL_ECART_INSERTION points -- même principe de prudence que
-SEUIL_PROXIMITE_MOT dans layout_tree.py. Un token qui devrait combler un
-grand vide, ou une longue série de tokens sans ancre proche des deux
-côtés, n'est JAMAIS inséré -- laissé de côté plutôt que mal placé.
-
-Dépend de l'ordre déjà produit par ordre_mistral.ordre_par_correspondance
--- ne fonctionne pas seul, doit être appelé APRÈS, sur son résultat.
-"""
+"""Conservatively insert OCR reference tokens missing from native text only when they fit a small gap between adjacent native words. Tokens without nearby anchors are omitted rather than placed speculatively."""
 
 from collections import defaultdict, deque
 
@@ -30,22 +11,7 @@ SEUIL_ECART_INSERTION = 15.0
 
 
 def inserer_tokens_manquants(mots_ordonnes, tokens_reference, cle_texte=lambda m: m.text, seuil=SEUIL_ECART_INSERTION):
-    """mots_ordonnes : liste de Word DÉJÀ triée par
-    ordre_mistral.ordre_par_correspondance (même tokens_reference).
-
-    Retourne une NOUVELLE liste, avec des Word synthétiques insérés aux
-    positions où un ou plusieurs tokens de référence consécutifs, sans
-    correspondance native, tombent entre deux mots natifs consécutifs
-    dont l'écart horizontal est <= seuil. Bbox interpolée linéairement
-    dans l'espace disponible, répartie par longueur de texte -- même
-    principe que conflict_resolution.py::_interpoler_bboxes, mais
-    restreint à ce petit espace, jamais étendu au-delà.
-
-    IMPORTANT : reproduit EXACTEMENT la même consommation FIFO par texte
-    que ordre_par_correspondance (même `cle_texte`) pour retrouver quel
-    rang de référence chaque mot déjà placé a consommé -- doit tourner
-    sur la sortie de cette fonction précisément, pas sur une liste
-    réordonnée autrement, sinon les rangs ne correspondent plus à rien."""
+    """Return a new word list with reference tokens inserted only into small gaps between adjacent native words."""
     files_par_texte = defaultdict(deque)
     for j, tok in enumerate(tokens_reference):
         files_par_texte[tok].append(j)

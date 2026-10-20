@@ -1,46 +1,51 @@
-"""ocr/ — Registre des backends OCR disponibles.
+"""Lazy registry of OCR backends.
 
-Usage :
-    from datacompiler.frontend.ocr import get_backend, ocraliser
-    
-    # Via le registre :
-    backend = get_backend("paddle", lang="fr")
-    backend.ocraliser(doc, pdf_path, pages=[3, 4])
-
-    # Ou via le helper direct :
-    ocraliser(doc, pdf_path, backend_name="paddle")
+Importing the registry does not import model frameworks or OCR engines. The
+selected backend is imported only when ``get_backend`` is called.
 """
+
+from importlib import import_module
+from collections.abc import Mapping
 
 from datacompiler.frontend.ocr.base import OcrBackend
 
-BACKENDS = {}
+__all__ = ["OcrBackend", "BACKENDS", "get_backend", "ocraliser"]
 
-try:
-    from .paddle import PaddleOCRBackend
-    BACKENDS["paddle"] = PaddleOCRBackend
-except ImportError:
-    pass
+_BACKEND_MODULES = {
+    "paddle": (".paddle", "PaddleOCRBackend"),
+    "mistral": (".mistral", "MistralBackend"),
+}
 
-try:
-    from .tesseract import TesseractBackend
-    BACKENDS["tesseract"] = TesseractBackend
-except ImportError:
-    pass
 
-try:
-    from .mistral import MistralBackend
-    BACKENDS["mistral"] = MistralBackend
-except ImportError:
-    pass
+class _BackendRegistry(Mapping):
+    def __getitem__(self, name):
+        try:
+            module_name, class_name = _BACKEND_MODULES[name]
+        except KeyError:
+            raise KeyError(name) from None
+        module = import_module(module_name, __name__)
+        return getattr(module, class_name)
+
+    def __iter__(self):
+        return iter(_BACKEND_MODULES)
+
+    def __len__(self):
+        return len(_BACKEND_MODULES)
+
+    def __contains__(self, name):
+        return name in _BACKEND_MODULES
+
+
+BACKENDS = _BackendRegistry()
 
 
 def get_backend(name: str, **kwargs) -> OcrBackend:
     if name not in BACKENDS:
-        raise ValueError(f"Backend OCR inconnu : {name!r} (disponibles : {list(BACKENDS)})")
+        raise ValueError(f"Unknown OCR backend: {name!r} (available: {list(BACKENDS)})")
     return BACKENDS[name](**kwargs)
 
 
 def ocraliser(doc, pdf_path: str, backend_name: str = "paddle", pages: list = None, **kwargs):
-    """Point d'entrée global pour exécuter l'OCR sur un document."""
+    """Run the selected OCR backend on a document and populate its OCR layer."""
     backend = get_backend(backend_name, **kwargs)
     return backend.ocraliser(doc, pdf_path, pages=pages, **kwargs)

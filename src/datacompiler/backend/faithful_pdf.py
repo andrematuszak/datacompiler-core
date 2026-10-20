@@ -1,22 +1,13 @@
-"""faithful_pdf.py — PDF fidèle avec trois stratégies.
+"""Render a faithful PDF while preserving the source appearance.
 
-Les modes :
-- overlay : superpose une couche invisible sur le PDF source.
-- clean_overlay : recrée la page à partir des éléments graphiques du source
-  (images, dessins) et réinjecte le texte résolu dans l'ordre de lecture,
-  avec les polices extraites du source. Le PDF final ne contient qu’un seul
-  flux de texte.
-- rasterized : rasterise chaque page en image, puis ajoute la couche invisible.
-
-Retourne un rapport détaillant les actions effectuées (polices extraites,
-images copiées, dessins ignorés, mots insérés, fallbacks, etc.).
-"""
+The overlay strategy adds invisible resolved text to the source. The clean-overlay strategy recreates images and vector graphics, then writes resolved text as a single text layer. The rasterized strategy uses a page image with an invisible text layer. Each strategy returns a report of copied, skipped, and recovered elements."""
 
 from pathlib import Path
 import gc
 import logging
 import pymupdf
 
+from datacompiler.backend.liens_pdf import reinserer_liens
 from datacompiler.model.document import Document
 from datacompiler.compile.layout import grouper_par_ligne
 
@@ -42,18 +33,7 @@ def _hex_to_rgb(hex_color):
 
 
 def _font_objet(fontname, fontfile=None):
-    """Retourne un objet pymupdf.Font, avec cache.
-
-    N'espère plus que `fontname` soit forcément un nom PyMuPDF valide : le
-    code appelant (_inserer_tous_les_mots) peut transmettre tel quel un
-    word.font qui est en réalité une valeur sentinelle posée en amont par
-    l'extraction (ex. la chaîne littérale "Unknown" quand la police n'a pas
-    pu être identifiée) -- pas un vrai nom de police. pymupdf.Font() plante
-    dans ce cas (FzErrorArgument: cannot find builtin font), confirmé en
-    production sur ce document précis. Repli explicite et loggué sur
-    _FALLBACK_FONTNAME plutôt qu'un crash du pipeline entier ; le repli est
-    mis en cache SOUS LE NOM DEMANDÉ pour ne pas retenter (et re-logger) à
-    chaque mot utilisant ce même nom invalide."""
+    """Return a cached PyMuPDF font, falling back when the requested font name cannot be resolved."""
     if fontname not in _polices_chargees:
         try:
             _polices_chargees[fontname] = (
@@ -72,7 +52,7 @@ def _font_objet(fontname, fontfile=None):
 
 def _inserer_texte(page, x0, y1, texte, largeur_cible, taille_nominale,
                    nom_police, couleur_hex, render_mode=0):
-    """Insère un mot en ajustant la taille pour coller à la largeur cible."""
+    """Insert one word, adjusting its font size to fit the target width."""
     police = _font_objet(nom_police, _FALLBACK_FONTFILE)
     # Le nom RÉELLEMENT utilisable, après repli éventuel dans _font_objet --
     # PAS nom_police tel quel. _font_objet gère déjà le cas d'un nom
@@ -97,10 +77,7 @@ def _inserer_texte(page, x0, y1, texte, largeur_cible, taille_nominale,
 
 
 def _inserer_tous_les_mots(page, words, render_mode=0, font_mapping=None):
-    """
-    Insère tous les mots dans l'ordre donné, en gérant les espaces.
-    font_mapping : dict {nom_source -> nom_dest} pour résoudre les polices.
-    """
+    """Insert all words in the requested order, preserving spacing and resolving source font names through the mapping."""
     if font_mapping is None:
         font_mapping = {}
     for ligne in grouper_par_ligne(words):
@@ -133,11 +110,7 @@ def _inserer_tous_les_mots(page, words, render_mode=0, font_mapping=None):
 
 
 def _extraire_et_ajouter_polices(source_doc, dest_doc, mots, report):
-    """
-    Extrait les polices intégrées utilisées par les mots et les ajoute au
-    document destination. Retourne un mapping nom_source -> nom_dest.
-    Report contient des compteurs pour les fallbacks.
-    """
+    """Extract embedded fonts used by the words and add them to the destination document. Return a source-to-destination font map and update the report counters."""
     # Récupérer tous les noms de polices uniques utilisés dans les mots
     font_names = set()
     for w in mots:
@@ -163,14 +136,14 @@ def _extraire_et_ajouter_polices(source_doc, dest_doc, mots, report):
                     font_obj = pymupdf.Font(xref=xref)
                     font_buffer = font_obj.buffer
                     if not font_buffer:
-                        raise ValueError("Buffer vide")
+                        raise ValueError("Empty font buffer")
                     # Ajouter au document destination avec un nom unique
                     dest_name = f"F{xref}_{name.replace('+', '_')}"
                     dest_doc.insert_font(fontname=dest_name, fontbuffer=font_buffer)
                     mapping[name] = dest_name
                     report.setdefault("polices_extraites", []).append(name)
                 except Exception as e:
-                    logger.warning(f"Échec extraction police '{name}' (xref {xref}): {e}")
+                    logger.warning(f"Could not extract font '{name}' (xref {xref}): {e}")
                     # Fallback : on utilise la police standard
                     mapping[name] = _FALLBACK_FONTNAME
                     report.setdefault("polices_fallback", []).append(name)
@@ -189,10 +162,7 @@ def _extraire_et_ajouter_polices(source_doc, dest_doc, mots, report):
 
 
 def _copier_images_et_dessins(src_page, dst_page, report):
-    """
-    Copie les images (via extract_image) et les dessins vectoriels (via Shape).
-    Report accumule les compteurs.
-    """
+    """Copy page images and vector drawings, recording copied and skipped elements in the report."""
     # --- Images ---
     for img in src_page.get_images():
         xref = img[0]
@@ -204,7 +174,7 @@ def _copier_images_et_dessins(src_page, dst_page, report):
             # après ce fix, mais ce n'est pas la même cause que le bug
             # liste/objet ci-dessous.
             report["images_ignorees"] = report.get("images_ignorees", 0) + 1
-            logger.warning(f"Aucune occurrence trouvée pour l'image xref {xref} sur cette page -- ignorée")
+            logger.warning(f"No occurrence found for image xref {xref} on this page; skipping it")
             continue
         try:
             # Extraction brute du flux original (pas de Pixmap)
@@ -217,7 +187,7 @@ def _copier_images_et_dessins(src_page, dst_page, report):
             else:
                 report["images_ignorees"] = report.get("images_ignorees", 0) + 1
         except Exception as e:
-            logger.warning(f"Échec copie image xref {xref}: {e}")
+            logger.warning(f"Could not copy image xref {xref}: {e}")
             report["images_ignorees"] = report.get("images_ignorees", 0) + 1
 
     # --- Dessins vectoriels ---
@@ -251,6 +221,10 @@ def _copier_images_et_dessins(src_page, dst_page, report):
                     dessins_ignores += 1
                     continue
             except Exception:
+                logger.debug(
+                    "Dessin vectoriel ignoré page %s (commande %r)",
+                    getattr(src_page, "number", "?"), typ, exc_info=True,
+                )
                 dessins_ignores += 1
                 continue
         # Appliquer les propriétés à tout le dessin
@@ -264,28 +238,16 @@ def render_faithful_pdf(doc: Document, output_path: str,
                         source_pdf: str = None,
                         strategy: str = "overlay",
                         dpi: int = 300) -> tuple[str, dict]:
-    """
-    Rend le document en PDF fidèle selon la stratégie choisie.
-
-    Retourne (chemin_fichier, rapport) où rapport est un dict avec :
-        - strategy : la stratégie utilisée
-        - mots_inseres : nombre total de mots insérés
-        - polices_extraites : liste des noms extraits
-        - polices_fallback : liste des noms en fallback
-        - images_copiees : nombre d'images copiées
-        - images_ignorees : nombre d'images non copiées
-        - dessins_ignores : nombre d'éléments de dessin ignorés
-    """
+    """Render a document with the selected faithful-PDF strategy and return the output path and a report of rendering actions."""
     source_path = source_pdf or doc.metadata.source_pdf
     if not source_path:
-        raise ValueError("Le chemin du PDF source est requis.")
+        raise ValueError("The source PDF path is required.")
     if strategy not in {"overlay", "clean_overlay", "rasterized"}:
-        raise ValueError("strategy doit être 'overlay', 'clean_overlay' ou 'rasterized'.")
+        raise ValueError("strategy must be 'overlay', 'clean_overlay', or 'rasterized'.")
+    if strategy == "clean_overlay":
+        logger.warning("Strategy 'clean_overlay' is deprecated; use render_rebuilt_pdf instead.")
 
     source = pymupdf.open(source_path)
-    if len(source) != len(doc.pages):
-        raise ValueError("Le PDF source et Document n'ont pas le même nombre de pages.")
-
     report = {
         "strategy": strategy,
         "mots_inseres": 0,
@@ -298,6 +260,9 @@ def render_faithful_pdf(doc: Document, output_path: str,
 
     output = None
     try:
+        if len(source) != len(doc.pages):
+            raise ValueError("The source PDF and document must have the same number of pages.")
+
         if strategy == "rasterized":
             output = pymupdf.open()
             scale = dpi / 72.0
@@ -309,6 +274,7 @@ def render_faithful_pdf(doc: Document, output_path: str,
                 del pix
                 # Insérer les mots en mode invisible
                 _inserer_tous_les_mots(target, model_page.resolved.words, render_mode=3)
+                reinserer_liens(target, model_page)
                 report["mots_inseres"] += len([w for w in model_page.resolved.words if w.resolved_text.strip()])
 
             output.set_metadata({"producer": "DataCompiler faithful_pdf (rasterized)",
@@ -332,6 +298,7 @@ def render_faithful_pdf(doc: Document, output_path: str,
                 # Insérer le texte résolu en mode visible (render_mode=0)
                 _inserer_tous_les_mots(new_page, model_page.resolved.words,
                                        render_mode=0, font_mapping=font_mapping)
+                reinserer_liens(new_page, model_page)
                 report["mots_inseres"] += len([w for w in model_page.resolved.words if w.resolved_text.strip()])
 
             output.set_metadata({"producer": "DataCompiler faithful_pdf (clean_overlay)",
@@ -375,8 +342,7 @@ def render_faithful_pdf(doc: Document, output_path: str,
         gc.collect()  # Nettoyer les références résiduelles
         if output is not None:
             output.close()
-        if source is not None:
-            source.close()
+        source.close()
         gc.collect()
 
     return output_path, report

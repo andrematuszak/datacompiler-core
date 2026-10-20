@@ -11,3 +11,10 @@ from datacompiler.model.document import (
     NativeContainer, GraphicsContainer, OcrContainer, ResolvedContainer,
     ImageElement, TableElement, GraphicVector, OcrBlock,
 )
+
+__all__ = [
+    "BBox", "Polygon", "Font", "Metadata", "Diagnostic", "Document", "Page",
+    "Word", "Decision", "Flag", "NativeContainer", "GraphicsContainer",
+    "OcrContainer", "ResolvedContainer", "ImageElement", "TableElement",
+    "GraphicVector", "OcrBlock",
+]

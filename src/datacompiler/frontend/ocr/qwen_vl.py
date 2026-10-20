@@ -1,33 +1,14 @@
-"""qwen_vl.py — Backend OCR utilisant Qwen2.5-VL (open source, léger,
-donne des coordonnées) en remplacement de Mistral.
-
-⚠️ JAMAIS TESTÉ CONTRE LE VRAI MODÈLE -- aucun GPU ni poids disponibles
-dans l'environnement où ce fichier a été écrit. Contrairement à tout le
-reste de ce projet, ce backend n'a pas été validé par un test structurel
-avant livraison. À vérifier en priorité, avant toute confiance :
-
-  1. UN SEUL mot isolé, bbox connue à l'avance -- comparer la bbox
-     retournée au pixel près, exactement comme le premier diagnostic fait
-     sur "Pavis" au tout début de ce projet. Ne pas passer à l'échelle
-     avant que ce test unitaire ne soit concluant.
-  2. Signalement communautaire d'un décalage de coordonnées (surtout en
-     Y) sur Qwen2.5-VL, discussion HuggingFace du modèle -- cause
-     probable : le modèle voit l'image REDIMENSIONNÉE en interne (par
-     blocs de 28px), pas l'image d'origine, et les bbox retournées sont
-     relatives à CETTE taille redimensionnée. Ce module force
-     explicitement resized_height/resized_width (voir _dimensions_cible)
-     plutôt que de laisser qwen-vl-utils redimensionner automatiquement.
-
-Dépendances : transformers (récent), qwen-vl-utils, torch. GPU fortement
-recommandé -- "léger" reste relatif, un VLM n'est pas Tesseract.
-"""
+"""Use Qwen2.5-VL for targeted OCR with word-level coordinates. The model and coordinate scaling have not been validated against real model weights; treat results as experimental."""
 
 import json
+import logging
 import re
 import torch
 
 from datacompiler.frontend.ocr.base import OcrBackend
 from datacompiler.model.document import BBox, Document, Word
+
+logger = logging.getLogger(__name__)
 
 MODELE_QWEN = "Qwen/Qwen2.5-VL-3B-Instruct"
 
@@ -52,7 +33,7 @@ def _arrondir_a_taille_patch(valeur: float) -> int:
 
 
 def _dimensions_cible(largeur_orig: int, hauteur_orig: int) -> tuple:
-    """Calcule une taille cible multiple de TAILLE_PATCH sous PIXELS_MAX_CIBLE."""
+    """Choose target image dimensions aligned to the model patch size and pixel limit."""
     ratio_max = (PIXELS_MAX_CIBLE / (largeur_orig * hauteur_orig)) ** 0.5
     ratio = min(ratio_max, 1.0)
     largeur_cible = _arrondir_a_taille_patch(largeur_orig * ratio)
@@ -105,9 +86,7 @@ class QwenVLBackend(OcrBackend):
         try:
             from transformers import AutoProcessor, Qwen2_5_VLForConditionalGeneration
 
-            print(
-                f"[QwenVLBackend] Chargement de {modele} sur device='{self.device}' ({self.dtype})..."
-            )
+            logger.info("Loading %s on device=%s with dtype=%s", modele, self.device, self.dtype)
 
             if self.device in ("mps", "cpu"):
                 self._model = (
@@ -124,21 +103,18 @@ class QwenVLBackend(OcrBackend):
 
             self._processor = AutoProcessor.from_pretrained(modele)
             self._import_ok = True
-            print("✅ Qwen2.5-VL chargé avec succès !")
+            logger.info("Qwen2.5-VL loaded successfully")
 
         except ImportError:
-            print(
-                "❌ transformers/qwen-vl-utils non installés. "
-                "Exécutez : pip install git+https://github.com/huggingface/transformers qwen-vl-utils"
-            )
-        except Exception as e:
-            print(
-                f"❌ Erreur lors du chargement de Qwen2.5-VL ({modele}) : {e}"
-            )
+            logger.error("Optional Qwen dependencies are missing; install transformers and qwen-vl-utils")
+        except Exception:
+            # Model loading crosses optional Transformers, Torch and device APIs;
+            # leave OCR unavailable while preserving the diagnostic traceback.
+            logger.exception("Could not load Qwen2.5-VL model %s", modele)
 
     def _extraire(self, image) -> list:
         if not self._import_ok:
-            raise RuntimeError("Qwen2.5-VL n'est pas disponible.")
+            raise RuntimeError("Qwen2.5-VL is unavailable.")
 
         largeur_orig, hauteur_orig = image.size
         largeur_cible, hauteur_cible = _dimensions_cible(
@@ -174,9 +150,7 @@ class QwenVLBackend(OcrBackend):
             clean_up_tokenization_spaces=False,
         )[0]
 
-        # --- AJOUTEZ CE PRINT POUR DÉBOGUER ---
-        print(f"\n[DEBUG Qwen2.5-VL Reponse Brute] :\n{texte_reponse}\n")
-        # -------------------------------------
+        logger.debug("Raw Qwen2.5-VL response: %s", texte_reponse)
 
         detections = _extraire_json_bbox(texte_reponse)
 
@@ -233,5 +207,5 @@ class QwenVLBackend(OcrBackend):
         self, doc: Document, pdf_path: str, pages: list = None, **kwargs
     ) -> Document:
         raise NotImplementedError(
-            "QwenVLBackend ne supporte pour l'instant que l'OCR de zone ciblée (ocraliser_zone)."
+            "QwenVLBackend currently supports targeted OCR only (ocraliser_zone)."
         )

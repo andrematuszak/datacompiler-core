@@ -41,18 +41,22 @@ eggs/
 # --- Fichiers de sorties temporaires & Logs ---
 *.log
 *.output.pdf
+*.xlf
 *_rebuilt.pdf
 *_cleaned.pdf
 *_propre.pdf
 *_propre.json
 *document.json
 *repomap.json
+*.json
+!docs/schemas/*.json
 
 # --- Sensible & Secrets ---
 anciens/
 apps/
 experiments/
 sources/
+work-trees/
 .aider*
 .editorconfig
 .continue.ctx

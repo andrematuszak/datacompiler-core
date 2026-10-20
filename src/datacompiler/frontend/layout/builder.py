@@ -1,7 +1,4 @@
-"""
-Module de construction de l'arbre de mise en page (LayoutTree).
-Instancie les objets LayoutBox et génère le nœud racine page.layout_root.
-"""
+"""Build a ``LayoutTree`` from detected page regions and assign its root to ``page.layout_root``."""
 
 from typing import List
 from datacompiler.model.document import LayoutBox
@@ -11,7 +8,7 @@ from datacompiler.frontend.layout.detectors import detecter_toutes_les_zones
 
 
 def construire_boite_depuis_zone(zone_desc: dict, index: int) -> LayoutBox:
-    """Instancie une LayoutBox à partir d'un dictionnaire descriptif issu des détecteurs."""
+    """Create a LayoutBox from a region description produced by a detector."""
     b_type = zone_desc.get("type", "container")
     bbox = zone_desc.get("bbox")
 
@@ -39,11 +36,7 @@ def construire_boite_depuis_zone(zone_desc: dict, index: int) -> LayoutBox:
 
 
 def construire_arbre_layout(page) -> LayoutBox:
-    """Segmenter la page et construire la hiérarchie complète des LayoutBox.
-    
-    Renseigne page.layout_root avec un conteneur 'page' englobant
-    toutes les sous-boîtes ordonnées spatialement.
-    """
+    """Segment a page, build its ordered LayoutBox hierarchy, and store the root on the page."""
     zones_detectees = detecter_toutes_les_zones(page)
     boites_enfants: List[LayoutBox] = [
         construire_boite_depuis_zone(zone, idx) for idx, zone in enumerate(zones_detectees)

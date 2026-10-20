@@ -1,5 +1,4 @@
-﻿"""geometry.py — Primitives spatiales pures, sans dépendance vers le reste
-du modèle."""
+"""Provide dependency-free spatial primitives used by the rest of the document model."""
 
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
@@ -19,11 +18,7 @@ class BBox:
 
 @dataclass
 class Polygon:
-    """Forme non rectangulaire (région OCR incurvée, bloc pivoté...).
-    Squelette en attente d'un cas d'usage réel -- pas encore consommé
-    par extract.py, ocr/ ni compile/. Même prudence que la limite de
-    détection de colonnes documentée dans compile/reading_order.py :
-    pas de champs inventés tant qu'un test réel n'en précise le besoin."""
+    """Represent a non-rectangular region, such as curved OCR text or a rotated block."""
     points: List[tuple] = field(default_factory=list)
 
     @classmethod

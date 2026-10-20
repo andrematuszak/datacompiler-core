@@ -1,29 +1,10 @@
-"""table_reconstruction.py — Repli pour les tableaux que pdfplumber détecte
-mais dont il ne trouve pas les colonnes (aucune verticale interne, cf.
-test-sans-bordures-2-extrait.pdf : un tableau RFC dont les filets sont des
-segments de LIGNES HORIZONTALES coupés exactement aux frontières de
-colonnes, mais sans aucune verticale interne pour le confirmer).
-
-Ne remplace PAS find_tables() -- vient en repli uniquement quand son
-résultat est "dégénéré" (une seule colonne détectée alors que la table est
-large), reconstruit alors les colonnes à partir des points de rupture
-récurrents des segments horizontaux (lignes ou rects fins utilisés comme
-filets, cf. test-sans-bordures.pdf où les filets sont des rects de 0.48pt
-de hauteur, pas des objets ligne).
-
-Additif : n'importe rien de nouveau dans extract.py, à appeler
-explicitement depuis la boucle d'extraction des tableaux quand tu es prêt.
-"""
+"""Reconstruct tables detected by pdfplumber when their columns cannot be inferred from internal vertical rules."""
 
 from collections import Counter
 
 
 def table_degenere(table_pdfplumber, largeur_min=200.0):
-    """True si la table détectée par pdfplumber n'a en réalité qu'une
-    seule colonne alors que sa bbox est large -- signe probable d'un
-    tableau sans verticale interne, mal détecté par la stratégie par
-    défaut plutôt qu'un vrai tableau à une colonne (rare au-delà de
-    quelques dizaines de points de large)."""
+    """Return whether a wide detected table has only one column, suggesting that internal separators were missed."""
     rows = table_pdfplumber.extract()
     if not rows:
         return False
@@ -35,10 +16,7 @@ def table_degenere(table_pdfplumber, largeur_min=200.0):
 
 
 def _segments_horizontaux(page_plumb, bbox, tolerance_hauteur=0.6):
-    """Segments 'horizontaux' de la zone bbox, qu'ils soient des objets
-    ligne ou des rects très fins utilisés comme filets (cf.
-    test-sans-bordures.pdf : filets en rects de 0.48pt de hauteur, pas des
-    objets ligne)."""
+    """Find horizontal rules within the table bounds, including thin rectangles used as rules."""
     x0_tab, top_tab, x1_tab, bottom_tab = bbox
     segments = []
     for l in page_plumb.lines:
@@ -51,10 +29,7 @@ def _segments_horizontaux(page_plumb, bbox, tolerance_hauteur=0.6):
 
 
 def _frontieres_colonnes(segments, nb_lignes, seuil_fraction=0.3):
-    """Points de rupture (x0/x1) des segments horizontaux qui reviennent
-    sur une fraction significative des lignes du tableau -- signe d'une
-    vraie frontière de colonne, même sans verticale complète pour la
-    confirmer."""
+    """Find recurring x positions that indicate column boundaries, including tables without vertical rules."""
     points = Counter()
     for x0, x1, _ in segments:
         points[round(x0, 1)] += 1
@@ -64,12 +39,7 @@ def _frontieres_colonnes(segments, nb_lignes, seuil_fraction=0.3):
 
 
 def _frontieres_lignes(segments, bbox):
-    """Positions y des séparateurs de lignes -- définit les bandes de
-    lignes RÉELLES du tableau. Important pour le texte qui wrappe sur
-    plusieurs lignes physiques au sein d'une seule ligne de tableau (ex.
-    "HTTP Authentication-Info...\\nHeader Fields") : sans ça, un simple
-    regroupement par proximité verticale détecterait à tort une ligne de
-    tableau supplémentaire pour chaque retour à la ligne wrappé."""
+    """Find horizontal separators that define actual table rows."""
     x0_tab, top_tab, x1_tab, bottom_tab = bbox
     ys = sorted(set(round(y, 1) for _, _, y in segments))
     if not ys or ys[0] > top_tab + 1:
@@ -80,14 +50,7 @@ def _frontieres_lignes(segments, bbox):
 
 
 def _grille(page_plumb, table_pdfplumber):
-    """Calcule les frontières de lignes et de colonnes d'un tableau
-    dégénéré à partir de ses filets horizontaux -- factorisé hors de
-    reconstruire() pour être réutilisé par cellules_bbox_degenere()
-    (géométrie seule, pas de texte) sans dupliquer la détection.
-
-    Retourne (lignes_y, frontieres_x), ou None si le signal n'est pas
-    assez net pour construire une grille fiable -- même critères
-    qu'avant ce refactor, comportement de reconstruire() inchangé."""
+    """Derive row and column boundaries from horizontal table rules."""
     bbox = table_pdfplumber.bbox
     x0_tab, top_tab, x1_tab, bottom_tab = bbox
 
@@ -113,12 +76,7 @@ def _grille(page_plumb, table_pdfplumber):
 
 
 def reconstruire(page_plumb, table_pdfplumber):
-    """Reconstruit les lignes d'un tableau "dégénéré" (cf. table_degenere)
-    à partir des points de rupture récurrents de ses filets horizontaux.
-    Retourne une liste de lignes (chacune une liste de chaînes), ou None si
-    le signal n'est pas assez net pour reconstruire quoi que ce soit de
-    fiable -- dans ce cas, le résultat original de pdfplumber doit être
-    conservé tel quel plutôt que remplacé par quelque chose de pire."""
+    """Reconstruct rows and cell boxes for a degenerate table using recurring rule intersections."""
     grille = _grille(page_plumb, table_pdfplumber)
     if grille is None:
         return None
@@ -156,15 +114,7 @@ def reconstruire(page_plumb, table_pdfplumber):
 
 
 def extraire_lignes(page_plumb, table_pdfplumber):
-    """Point d'entrée historique, TEXTE SEUL. Conservé pour compatibilité
-    (au cas où un autre appelant l'utiliserait), mais
-    extract/pdfplumber.py utilise désormais extraire_lignes_et_cellules()
-    -- cf. son docstring : deux appels séparés (celui-ci +
-    extraire_cellules_bbox, aujourd'hui supprimée) calculant chacun leur
-    propre grille sur les mêmes entrées se sont avérés diverger en
-    pratique (rows=1, cell_bboxes=0, sur la même table), cause exacte non
-    identifiée. Ce point d'entrée reste correct pour du texte seul, juste
-    plus utilisé pour produire cell_bboxes en parallèle."""
+    """Return reconstructed table text rows using the legacy text-only interface."""
     rows = table_pdfplumber.extract()
     if table_degenere(table_pdfplumber):
         reconstruit = reconstruire(page_plumb, table_pdfplumber)
@@ -174,19 +124,7 @@ def extraire_lignes(page_plumb, table_pdfplumber):
 
 
 def extraire_lignes_et_cellules(page_plumb, table_pdfplumber):
-    """Point d'entrée COMBINÉ : texte (rows) et géométrie (cell_bboxes)
-    calculés ENSEMBLE, à partir d'un seul table_degenere()/_grille() --
-    remplace deux appels séparés dont on a constaté empiriquement qu'ils
-    pouvaient diverger (rows=1 mais cell_bboxes=0 sur la même table,
-    cause exacte non identifiée -- possible non-déterminisme de
-    .extract() rappelé deux fois sur le même objet Table pdfplumber).
-    Plutôt que de chercher plus loin, cet appel unique supprime le risque
-    structurellement : les deux résultats partagent la même grille, donc
-    ne peuvent plus diverger.
-
-    Retourne (rows, cell_bboxes), listes parallèles de même forme
-    (rows[i][j] <-> cell_bboxes[i][j]). C'est CE point d'entrée
-    qu'extract/pdfplumber.py doit utiliser, pas extraire_lignes() seule."""
+    """Return reconstructed table rows and cell geometry from one shared grid calculation."""
     rows_standard = table_pdfplumber.extract()
 
     if table_degenere(table_pdfplumber):

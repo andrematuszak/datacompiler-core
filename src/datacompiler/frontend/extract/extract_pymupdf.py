@@ -1,28 +1,18 @@
-"""
-datacompiler/frontend/extract/pymupdf.py
-Moteur 1 — Extraction des données textuelles et métadonnées via PyMuPDF.
-"""
+"""Use PyMuPDF to extract native text, font information, links, and document metadata."""
 
 from pathlib import Path
 import re
 from typing import Dict, Tuple, Set, Any, List
 import pymupdf
 
-from datacompiler.model.document import BBox, Font, GraphicVector, Page, Word
+from datacompiler.model.document import BBox, Font, GraphicVector, LinkElement, Page, Word
 
 
 _MONTANT_EURO_CMAP = re.compile(r"(?<=\d[.,]\d{2}\s)[\ufffd\u00a4]$")
 
 
 def _reparer_texte_cmap(texte: str) -> str:
-    """Répare un cas CMap observé dans les avis d'impôt.
-
-    Certains PDF encodent le signe euro dans une police Helvetica sans une
-    table Unicode exploitable : PyMuPDF retourne alors U+FFFD ou U+00A4,
-    alors que le glyphe visible est bien « € ». La correction est volontairement bornée
-    à la position monétaire ``123,45 �`` ; tout autre U+FFFD reste visible
-    au diagnostic plutôt que d'être deviné.
-    """
+    """Repair known PDF character-map cases where PyMuPDF cannot map a glyph to Unicode."""
     return _MONTANT_EURO_CMAP.sub("€", texte)
 
 
@@ -37,13 +27,7 @@ def _convertir_couleur(srgb_int: int | None) -> str:
 
 
 def _convertir_couleur_float(rgb: tuple | None) -> str | None:
-    """Convertit un tuple couleur PyMuPDF (r, g, b) en flottants 0-1, tel que
-    retourné par `drawing.get("color")`/`drawing.get("fill")` de
-    `page.get_drawings()`, en hexadécimal -- même format que
-    `_convertir_couleur` (sRGB int), mais source différente : les dessins
-    vectoriels (drawings) exposent leur couleur en float RGB, pas en int
-    sRGB comme les spans de texte. Pas de fusion des deux fonctions : deux
-    formats d'entrée différents, pas de bénéfice à les unifier."""
+    """Convert PyMuPDF RGB color components from 0–1 floats to hexadecimal."""
     if rgb is None:
         return None
     r, g, b = (round(c * 255) for c in rgb)
@@ -51,11 +35,7 @@ def _convertir_couleur_float(rgb: tuple | None) -> str | None:
 
 
 def _extraire_zones_vectorielles(page_pymupdf: pymupdf.Page) -> List[Dict[str, Any]]:
-    """
-    Extrait les zones vectorielles (dessins) de la page qui pourraient correspondre
-    à du texte dessiné géométriquement. Retourne une liste de bbox avec leurs
-    caractéristiques.
-    """
+    """Extract vector-drawing regions that may represent geometrically drawn text."""
     drawings = page_pymupdf.get_drawings()
     zones_vectorielles = []
     
@@ -116,10 +96,7 @@ def _extraire_zones_vectorielles(page_pymupdf: pymupdf.Page) -> List[Dict[str, A
 
 
 def _grouper_zones_vectorielles_proches(zones: List[Dict[str, Any]], tolerance: float = 5.0) -> List[Dict[str, Any]]:
-    """
-    Regroupe les zones vectorielles proches en zones plus larges.
-    Utilise une fusion transitive simple basée sur la proximité des bbox.
-    """
+    """Merge nearby vector regions transitively based on their bounding boxes."""
     if not zones:
         return []
     
@@ -164,9 +141,7 @@ def _grouper_zones_vectorielles_proches(zones: List[Dict[str, Any]], tolerance: 
 
 
 def _mot_dans_zone_vectorielle(word_bbox: BBox, zone_bbox: List[float]) -> bool:
-    """
-    Vérifie si le centre d'un mot est dans une zone vectorielle.
-    """
+    """Return whether a word center falls inside a vector region."""
     if not word_bbox:
         return False
     cx = (word_bbox.x0 + word_bbox.x1) / 2
@@ -176,10 +151,7 @@ def _mot_dans_zone_vectorielle(word_bbox: BBox, zone_bbox: List[float]) -> bool:
 
 
 def _sous_mots_typographiques(word_bbox, texte, spans_typo):
-    """Sépare un token PyMuPDF lorsque ses glyphes traversent plusieurs
-    spans de styles différents (ex. référence en exposant suivie de pointillés).
-    PyMuPDF regroupe parfois ces glyphes en un seul mot et le centre du mot
-    attribue alors à tort la typographie du span le plus long."""
+    """Split a PyMuPDF token when its glyphs cross spans with different typographic styles."""
     if not texte or any(caractere.isspace() for caractere in texte):
         return []
 
@@ -215,7 +187,7 @@ def _sous_mots_typographiques(word_bbox, texte, spans_typo):
 
 
 def extraire_metadonnees(doc_pymupdf: pymupdf.Document, pdf_path: str) -> dict:
-    """Extrait l'ensemble des métadonnées système du fichier PDF."""
+    """Extract system metadata from a PDF file."""
     return {
         "filename": Path(pdf_path).name,
         "source_pdf": str(Path(pdf_path).resolve()),
@@ -239,8 +211,20 @@ def extraire_page_pymupdf(page_pymupdf, page_number, start_word_id):
 
     for lien in page_pymupdf.get_links():
         r = lien.get("from")
-        if r is not None:
-            page_obj.link_rects.append((float(r.x0), float(r.y0), float(r.x1), float(r.y1)))
+        if r is None:
+            continue
+        genre = lien.get("kind")
+        if genre == pymupdf.LINK_URI and lien.get("uri"):
+            kind, uri, cible = "uri", lien["uri"], None
+        elif genre == pymupdf.LINK_GOTO and lien.get("page", -1) >= 0:
+            kind, uri, cible = "goto", None, int(lien["page"]) + 1
+        else:
+            kind, uri, cible = "autre", lien.get("uri"), None
+        page_obj.links.append(LinkElement(
+            id=len(page_obj.links) + 1,
+            bbox=BBox(float(r.x0), float(r.y0), float(r.x1), float(r.y1)),
+            kind=kind, uri=uri, target_page=cible,
+        ))
 
     page_dict = page_pymupdf.get_text("dict")
     words_pymupdf = page_pymupdf.get_text("words")
@@ -393,10 +377,7 @@ def extraire_page_pymupdf(page_pymupdf, page_number, start_word_id):
 
 
 def rendre_zone_image(page_pymupdf: pymupdf.Page, bbox: BBox, dpi: int = 300):
-    """Rend en pixels UNE zone précise de la page (crop), pas la page
-    entière -- pendant de get_pixmap() plein page déjà utilisé côté OCR
-    page-entière. Retourne (image PIL, scale) ; scale nécessaire côté
-    appelant pour reconvertir les coordonnées pixel -> points PDF."""
+    """Render a page crop and return its image, scale, and actual page-space origin."""
     from PIL import Image
     import io
 
@@ -404,4 +385,5 @@ def rendre_zone_image(page_pymupdf: pymupdf.Page, bbox: BBox, dpi: int = 300):
     matrix = pymupdf.Matrix(scale, scale)
     clip = pymupdf.Rect(bbox.x0, bbox.y0, bbox.x1, bbox.y1)
     pix = page_pymupdf.get_pixmap(matrix=matrix, clip=clip, alpha=False)
-    return Image.open(io.BytesIO(pix.tobytes("png"))), scale
+    origin = (pix.x / scale, pix.y / scale)
+    return Image.open(io.BytesIO(pix.tobytes("png"))), scale, origin

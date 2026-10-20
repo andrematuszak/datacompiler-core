@@ -1,6 +1,4 @@
-﻿"""spatial_integrity.py — Ordre de lecture (proxy, sans réorganiser -- contrairement
-à resolve/reading_order.py qui, lui, réordonne réellement), chevauchements
-de texte, coordonnées hors-limites."""
+"""Measure reading-order quality, overlapping text, and out-of-bounds coordinates without changing the page contents."""
 
 
 def score_ordre_lecture(page) -> float:
@@ -28,9 +26,7 @@ def score_ordre_lecture(page) -> float:
 
 
 def _chevauchement(a, b) -> float:
-    """Aire d'intersection normalisée par la plus petite des deux bbox --
-    tolère un chevauchement léger (kerning, antialiasing), signale un
-    recouvrement quasi total."""
+    """Measure intersection relative to the smaller of two boxes."""
     ix0, iy0 = max(a.x0, b.x0), max(a.y0, b.y0)
     ix1, iy1 = min(a.x1, b.x1), min(a.y1, b.y1)
     if ix1 <= ix0 or iy1 <= iy0:
@@ -44,8 +40,7 @@ SEUIL_CHEVAUCHEMENT = 0.5
 
 
 def detecter_chevauchements(page) -> list:
-    """Regroupe par bande y (tolérance 3pt, même logique que reading_order.py)
-    pour éviter une comparaison O(n²) sur toute la page."""
+    """Group words into nearby rows and report overlapping bounding boxes."""
     mots = [w for w in page.native.words if w.bbox]
     bandes = {}
     for w in mots:

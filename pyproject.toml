@@ -22,8 +22,9 @@ nofollow-import-to = [
 
 [project]
 name = "datacompiler"
-version = "0.1.0"
-description = "Pipeline d'extraction, diagnostic, OCR multi-moteurs et compilation/rendu de documents PDF."
+dynamic = ["version"]
+version = "0.2.0"
+description = "Nettoyage et reconstruction géométrique fidèle de fichiers PDF"
 readme = "README.md"
 license = "LicenseRef-DataCompiler-CLUF"
 license-files = ["LICENSE", "LICENSE-EMBEDDED"]
@@ -34,19 +35,10 @@ dependencies = [
     "pymupdf>=1.24",
     "pdfplumber>=0.11",
     "numpy>=1.24.0",
-    "reportlab>=4.0.0",
-    "pytesseract>=0.3.10",
-    "Pillow>=10.0.0",
-    "pdf2image",
+    "Pillow>=10.0",
     "python-docx>=1.1.0",
-    "paddlepaddle>=2.5.0",
-    "paddleocr>=2.7.0",
-    "mistralai>=1.0.0",
-    "transformers==4.49.0",
-    "torch",
-    "timm",
-    "einops",
-    "fonttools"
+    "fonttools",
+    "langdetect>=1.0.9"
 ]
 
 [project.urls]
@@ -55,13 +47,52 @@ Repository = "https://github.com/andrematuszak/datacompiler"
 Documentation = "https://github.com/andrematuszak/datacompiler#readme"
 
 [project.optional-dependencies]
-# Outils de développement et tests uniquement
+# Moteurs OCR (Mistral, PaddleOCR)
+ocr = [
+    "mistralai>=1.0.0",
+    "paddlepaddle",
+    "paddleocr"
+]
+# Experimental Qwen2.5-VL backend
+qwen = [
+    "accelerate>=0.26.0",
+    "transformers==4.49.0",
+    "torch",
+    "timm",
+    "einops"
+]
+# Hosted DeepL text translation (requires a DeepL API key).
+translation = [
+    "deepl>=1.26.0"
+]
+# Local COMETKiwi reference-free quality estimation (large ML dependencies).
+translation-quality = [
+    "unbabel-comet"
+]
+# Export au format Word
+docx = [
+    "python-docx>=1.1.0"
+]
+# Outils de dev et tests
 dev = [
     "pytest>=7.0.0",
-    "pytest-cov>=4.0.0",
-    "black>=23.0.0",
-    "ruff>=0.1.0",
-    "mypy"
+    "pytest-cov",
+    "black",
+    "ruff",
+    "mypy",
+    "jsonschema>=4.20"
+]
+# Groupe pour tout installer en une commande
+all = [
+    "mistralai>=1.0.0",
+    "paddlepaddle",
+    "paddleocr",
+    "python-docx>=1.1.0",
+    "accelerate>=0.26.0",
+    "transformers==4.49.0",
+    "torch",
+    "timm",
+    "einops"
 ]
 
 [project.scripts]
@@ -70,8 +101,15 @@ datacompiler = "datacompiler.pipeline:main"
 [tool.setuptools]
 include-package-data = true
 
+[tool.setuptools.dynamic]
+version = {attr = "datacompiler._version.__version__"}
+
 [tool.setuptools.packages.find]
 where = ["src"]
 
 [tool.setuptools.package-data]
-datacompiler = ["backend/fonts/*.ttf"]
+datacompiler = ["backend/fonts/*.ttf", "backend/fonts/*.txt"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"

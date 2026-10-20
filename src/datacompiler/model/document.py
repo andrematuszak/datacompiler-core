@@ -1,5 +1,4 @@
-"""document.py — Assemblage du modèle : Word (le nœud central, référencé
-depuis native/ocr/resolved), conteneurs de page, Page, Document."""
+"""Assemble the document model: words, page-layer containers, pages, and the complete document."""
 
 import json
 from dataclasses import asdict, dataclass, field
@@ -8,6 +7,8 @@ from typing import Any, Dict, List, Optional, Tuple
 from datacompiler.model.geometry import BBox, Polygon
 from datacompiler.model.font import Font
 from datacompiler.model.metadata import Diagnostic, Metadata
+
+JSON_SCHEMA_VERSION = "1.0"
 
 
 @dataclass
@@ -68,6 +69,11 @@ class Word:
     # (~0,84-0,88 non-gras vs ~1,01-1,54 gras, seuil Otsu a 0,93). None pour
     # tout mot natif (pas de tracé vectoriel a mesurer) ou non mesure.
     stroke_width: Optional[float] = None
+    # Immutable source-space rectangles used to suppress original glyph paths.
+    # Unlike bbox, these must not move when an editor adjusts translated text.
+    source_glyph_bboxes: Tuple[Tuple[float, float, float, float], ...] = ()
+    # Explicit editor override, independent of sampled source-glyph colors.
+    editor_color: Optional[str] = None
 
     @property
     def output_text(self) -> str:
@@ -128,6 +134,17 @@ class GraphicsContainer:
 
 
 @dataclass
+class LinkElement:
+    """Represent a clickable link annotation from a source PDF page."""
+    id: int
+    bbox: Optional[BBox] = None
+    kind: str = "uri"                 # "uri" | "goto" | "autre"
+    uri: Optional[str] = None         # kind == "uri"
+    target_page: Optional[int] = None  # kind == "goto" : numéro de page cible, 1-based
+    word_ids: List[int] = field(default_factory=list)
+
+
+@dataclass
 class OcrBlock:
     bbox: Optional[BBox] = None
     type: str = "text"
@@ -161,10 +178,12 @@ class Page:
     ocr: OcrContainer = field(default_factory=OcrContainer)
     resolved: ResolvedContainer = field(default_factory=ResolvedContainer)
     layout_root: Optional[LayoutBox] = None
-    # Rectangles des liens (annotations /Link) de la page, (x0, y0, x1, y1). Provisoire : sert
-    # à exclure de la détection de texte vectorisé les zones cliquables, qui seront traitées
-    # à part dans l'extraction.
-    link_rects: List[Tuple[float, float, float, float]] = field(default_factory=list)
+    links: List[LinkElement] = field(default_factory=list)
+
+    @property
+    def link_rects(self) -> List[Tuple[float, float, float, float]]:
+        """Expose link rectangles as a read-only, non-serialized view."""
+        return [(l.bbox.x0, l.bbox.y0, l.bbox.x1, l.bbox.y1) for l in self.links if l.bbox]
 
 
 @dataclass
@@ -176,6 +195,7 @@ class Document:
     def to_dict(self) -> Dict[str, Any]:
         data = asdict(self)
         data.pop("diagnostic", None)
+        data["schema_version"] = JSON_SCHEMA_VERSION
         return data
 
     def to_json(self) -> str:
@@ -192,6 +212,13 @@ class Document:
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "Document":
+        version = data.get("schema_version")
+        if version is not None and version != JSON_SCHEMA_VERSION:
+            raise ValueError(
+                f"Unsupported JSON schema version: {version!r} "
+                f"(supported version: {JSON_SCHEMA_VERSION!r})"
+            )
+
         def decision(d):
             if not d:
                 return None
@@ -205,6 +232,9 @@ class Document:
         def word(d):
             d = dict(d)
             d["bbox"] = BBox.from_dict(d.get("bbox"))
+            d["source_glyph_bboxes"] = tuple(
+                tuple(box) for box in d.get("source_glyph_bboxes", ())
+            )
             d["decision"] = decision(d.get("decision"))
             return Word(**{k: v for k, v in d.items() if k in Word.__dataclass_fields__})
 
@@ -226,6 +256,12 @@ class Document:
                 for ligne in d.get("cell_bboxes", [])
             ]
             return TableElement(**{k: v for k, v in d.items() if k in TableElement.__dataclass_fields__})
+
+        def link(d):
+            d = dict(d)
+            d["bbox"] = BBox.from_dict(d.get("bbox"))
+            d["word_ids"] = list(d.get("word_ids", []))
+            return LinkElement(**{k: v for k, v in d.items() if k in LinkElement.__dataclass_fields__})
 
         def layout_box(d):
             if not d:
@@ -269,6 +305,7 @@ class Document:
                 fonts=[font_obj(x) for x in resolved.get("fonts", []) if x]
             )
             page.layout_root = layout_box(raw.get("layout_root"))
+            page.links = [link(x) for x in raw.get("links", [])]
             pages.append(page)
 
         metadata = Metadata(**{k: v for k, v in data.get("metadata", {}).items() if k in Metadata.__dataclass_fields__})

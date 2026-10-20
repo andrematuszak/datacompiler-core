@@ -2,6 +2,7 @@ import os
 import re
 import io
 import logging
+import threading
 
 import pymupdf
 import numpy as np
@@ -9,6 +10,7 @@ from PIL import Image
 
 from datacompiler.model.document import BBox, Word
 from datacompiler.frontend.ocr.base import OcrBackend
+from datacompiler.frontend.ocr.paddle_results import normaliser_resultat_paddle
 
 logger = logging.getLogger(__name__)
 _DEBUG_DIR = os.environ.get("DATACOMPILER_DEBUG_INK_RATIO")
@@ -20,12 +22,7 @@ _SEUIL_DISTANCE_ENCRE = 60
 
 
 def _sauver_debug(crop_img, ratio, texte_debug, extra=""):
-    """Sauvegarde le crop passe a une methode ink_ratio, si
-    DATACOMPILER_DEBUG_INK_RATIO est defini -- diagnostic pur, aucun effet
-    sur le comportement normal. Factorise entre _ratio_encre_connue et
-    _ratio_encre_relatif (session du 26/09/2026 : le dump n'etait cable
-    que dans le repli, jamais declenche puisque _ratio_encre_connue est la
-    methode reellement utilisee sur ce document)."""
+    """Save an optional diagnostic crop when DATACOMPILER_DEBUG_INK_RATIO is set; failures do not affect normal OCR."""
     if not _DEBUG_DIR:
         return
     global _debug_compteur
@@ -35,38 +32,15 @@ def _sauver_debug(crop_img, ratio, texte_debug, extra=""):
         nom = re.sub(r"[^A-Za-z0-9]+", "_", texte_debug or "mot").strip("_")[:40]
         suffixe = f"_{extra}" if extra else ""
         crop_img.save(os.path.join(_DEBUG_DIR, f"{_debug_compteur:04d}_{nom}_ratio{ratio:.4f}{suffixe}.png"))
-    except Exception:
-        pass  # jamais casser l'extraction pour un souci d'ecriture du debug
+    except OSError:
+        # Un dump de diagnostic ne doit pas interrompre l'extraction, mais
+        # l'échec reste visible pour faciliter le diagnostic.
+        logger.debug("Could not save OCR diagnostic crop", exc_info=True)
 
 
 def _ratio_encre_connue(image: Image.Image, x0: float, y0: float, x1: float, y1: float,
                          couleur_encre_rgb: tuple, marge_px: float = 8.0, texte_debug: str = ""):
-    """Densite d'encre d'UN mot, par comparaison a une couleur d'encre
-    CONNUE (lue dans le tracé vectoriel, cf. vector_zones._couleur_encre_zone)
-    plutot qu'a un fond ESTIME depuis la bordure du crop (cf. version
-    precedente _ratio_encre_relatif, conservee ci-dessous en repli).
-
-    CORRECTIF (session du 26/09/2026, test-impots-revenu.pdf) : l'ancienne
-    version supposait toujours un peu de fond blanc disponible en bordure
-    du crop pour estimer `fond`. Faux sur "DIRECTION" (et les 4 autres mots
-    du meme titre) : la zone y est rognee a zero marge par
-    _clipper_marge_sur_natifs (collee a "Impôt sur les revenus de 2020" en
-    dessous), les lettres touchent les bords du crop, et la bordure
-    echantillonnee contient alors une partie des lettres elles-memes --
-    fond estime anormalement sombre, ink_ratio gonfle pour toute la ligne.
-    Connaitre la couleur d'encre a priori evite le probleme par
-    construction (plus besoin de marge blanche du tout).
-
-    Validee empiriquement (meme session) : ecart net (~0,05) entre
-    libelles gras confirmes (~0,19) et le titre non-gras (~0,13), contre
-    un chevauchement quasi total (0,001 d'ecart, "DIRECTION" a 0,2507
-    coince entre "service" a 0,2472 et "rôle" a 0,2517) avec l'ancienne
-    methode -- toujours un proxy geometrique, pas une detection de police,
-    et toujours valide sur ce seul document.
-
-    Retourne None si le crop est trop petit pour etre fiable (mot tronque,
-    artefact de zone) -- meme garde que l'ancienne version.
-    """
+    """Estimate one word’s ink density by comparing crop pixels with the known vector-ink color."""
     gx0, gy0 = max(0, int(x0 - marge_px)), max(0, int(y0 - marge_px))
     gx1, gy1 = min(image.width, int(x1 + marge_px)), min(image.height, int(y1 + marge_px))
     if gx1 - gx0 < 3 or gy1 - gy0 < 3:
@@ -82,17 +56,7 @@ def _ratio_encre_connue(image: Image.Image, x0: float, y0: float, x1: float, y1:
 
 
 def _ratio_encre_relatif(image: Image.Image, x0: float, y0: float, x1: float, y1: float, marge_px: float = 8.0, texte_debug: str = ""):
-    """REPLI seulement -- utilisee quand aucune couleur d'encre connue n'a
-    pu etre resolue pour la zone (cf. vector_zones._couleur_encre_zone
-    retournant None : aucun element graphique trouve en recouvrement).
-    Historiquement la seule version ; remplacee en usage normal par
-    _ratio_encre_connue (cf. docstring ci-dessus pour le defaut identifie
-    sur "DIRECTION"). Fond estime par la couleur mediane des pixels de
-    bordure du crop -- suppose que le mot n'occupe pas toute la bordure,
-    hypothese qui peut echouer dans les memes conditions que "DIRECTION"
-    (crop sans marge). A surveiller si ce repli se declenche souvent en
-    pratique (cf. notes du mot, "couleur_encre=None -- repli bordure").
-    """
+    """Fallback ink-density estimate using the crop border as an estimate of background color."""
     gx0, gy0 = max(0, int(x0 - marge_px)), max(0, int(y0 - marge_px))
     gx1, gy1 = min(image.width, int(x1 + marge_px)), min(image.height, int(y1 + marge_px))
     if gx1 - gx0 < 3 or gy1 - gy0 < 3:
@@ -110,7 +74,8 @@ def _ratio_encre_relatif(image: Image.Image, x0: float, y0: float, x1: float, y1
 
 class PaddleOcrBackend(OcrBackend):
     name = "paddleocr"
-    _engine_instance = None  # Singleton pour le moteur PaddleOCR
+    _engine_instances = {}
+    _engine_lock = threading.Lock()
 
     def __init__(self, lang: str = "fr", dpi: int = 300, **kwargs):
         self.lang = lang
@@ -126,12 +91,15 @@ class PaddleOcrBackend(OcrBackend):
 
     @classmethod
     def _get_engine(cls, lang: str = "fr", **kwargs):
-        """Initialise le moteur PaddleOCR une seule fois."""
-        if cls._engine_instance is None:
+        """Reuse PaddleOCR engines only when language and options match."""
+        cache_key = (lang, tuple(sorted((key, repr(value)) for key, value in kwargs.items())))
+        with cls._engine_lock:
+            if cache_key in cls._engine_instances:
+                return cls._engine_instances[cache_key]
             try:
                 from paddleocr import PaddleOCR
-                logger.info("Initialisation unique du moteur PaddleOCR (langue: %s)...", lang)
-                cls._engine_instance = PaddleOCR(
+                logger.info("Initializing the PaddleOCR engine (language: %s)...", lang)
+                engine = PaddleOCR(
                     lang=lang,
                     use_textline_orientation=False,
                     use_doc_orientation_classify=False,
@@ -139,82 +107,29 @@ class PaddleOcrBackend(OcrBackend):
                     **kwargs
                 )
             except ImportError:
-                logger.error("❌ PaddleOCR non installé. Exécutez : pip install paddlepaddle paddleocr")
-                cls._engine_instance = None
-            except Exception as e:
-                logger.error("❌ Erreur lors de l'initialisation de PaddleOCR : %s", e)
-                cls._engine_instance = None
-
-        return cls._engine_instance
+                logger.error("PaddleOCR is not installed. Install paddlepaddle and paddleocr.")
+                return None
+            except Exception:
+                # Paddle initialization spans optional native/runtime dependencies;
+                # keep the backend unavailable and retain the complete traceback.
+                logger.exception("Could not initialize PaddleOCR")
+                return None
+            cls._engine_instances[cache_key] = engine
+            return engine
 
     def _extraire(self, image: Image.Image) -> list:
-        """Exécute l'OCR sur une image et extrait les boîtes et scores."""
+        """Run OCR on an image and normalize Paddle text boxes and confidence scores."""
         engine = self._get_engine(self.lang, **self.extra_kwargs)
         if engine is None:
-            raise RuntimeError("PaddleOCR n'est pas disponible.")
+            raise RuntimeError("PaddleOCR is unavailable.")
 
         img_np = np.array(image)
         result = engine.ocr(img_np)
-
-        mots = []
-        if not result or not result[0]:
-            return mots
-
-        res = result[0]
-
-        # Format PaddleOCR 3.x (Dictionnaire)
-        if isinstance(res, dict):
-            texts = res.get("rec_texts", [])
-            scores = res.get("rec_scores", [])
-            boxes = res.get("dt_polys", res.get("rec_boxes", []))
-
-            for box, text, score in zip(boxes, texts, scores):
-                x0 = min(p[0] for p in box)
-                y0 = min(p[1] for p in box)
-                x1 = max(p[0] for p in box)
-                y1 = max(p[1] for p in box)
-                mots.append({
-                    "text": text,
-                    "x0": x0,
-                    "y0": y0,
-                    "x1": x1,
-                    "y1": y1,
-                    "confidence": float(score),
-                })
-
-        # Format PaddleOCR 2.x (Liste)
-        elif isinstance(res, list):
-            for line in res:
-                if not line:
-                    continue
-                bbox_points, (text, confidence) = line
-                x0 = min(p[0] for p in bbox_points)
-                y0 = min(p[1] for p in bbox_points)
-                x1 = max(p[0] for p in bbox_points)
-                y1 = max(p[1] for p in bbox_points)
-                mots.append({
-                    "text": text,
-                    "x0": x0,
-                    "y0": y0,
-                    "x1": x1,
-                    "y1": y1,
-                    "confidence": float(confidence),
-                })
-
-        return mots
+        return normaliser_resultat_paddle(result)
 
     def ocraliser_zone(self, image: Image.Image, offset: tuple = (0.0, 0.0), dpi: int = None,
                         couleur_encre: tuple = None, **kwargs) -> list:
-        """OCR ciblé sur une zone vectorielle croppée.
-
-        couleur_encre : RGB (0-255) déjà résolu par
-        vector_zones._couleur_encre_zone à partir du tracé vectoriel réel de
-        la zone. None si aucun élément graphique n'a été trouvé en
-        recouvrement (repli sur l'estimation par bordure de crop, moins
-        fiable -- cf. _ratio_encre_relatif) : cas non rencontré sur
-        test-impots-revenu.pdf mais pas exclu sur un autre document, d'où le
-        repli plutôt qu'un crash ou un ink_ratio=None systématique.
-        """
+        """Run targeted OCR on a vector region and convert detections to page coordinates."""
         dpi = dpi or self.dpi
         scale = dpi / 72.0
         dx, dy = offset
@@ -238,6 +153,7 @@ class PaddleOcrBackend(OcrBackend):
                 resolved_text=m["text"],
                 bbox=BBox(x, y, x + largeur, y + hauteur),
                 confidence=m["confidence"],
+                language=self.lang,
                 source="ocr_vectoriel_paddle",
                 is_vectorized=True,
                 reconstructed=True,
@@ -249,7 +165,7 @@ class PaddleOcrBackend(OcrBackend):
         return mots
 
     def ocraliser(self, doc, pdf_path: str, pages: list = None, **kwargs):
-        """OCR pleine page (requis par la classe abstraite OcrBackend)."""
+        """Run full-page OCR for the requested pages."""
         source = pymupdf.open(pdf_path)
         scale = self.dpi / 72.0
         matrix = pymupdf.Matrix(scale, scale)
@@ -273,6 +189,7 @@ class PaddleOcrBackend(OcrBackend):
                         text=m["text"],
                         bbox=BBox(x, y, x + largeur, y + hauteur),
                         confidence=m["confidence"],
+                        language=self.lang,
                         source="paddleocr",
                     ))
 

@@ -1,30 +1,38 @@
-﻿"""Orchestrateur du moteur : frontend (extraction, diagnostic, OCR),
-compile (arbitrage native/OCR), backend (rendu)."""
+"""Pipeline orchestration for PDF extraction, diagnostics, OCR and rendering."""
 
 import argparse
 import logging
+import tempfile
 from pathlib import Path
 
 from datacompiler.frontend.diagnostic.vector_text import zones_texte_vectorise_probable
 from datacompiler.model.document import Document
 from datacompiler.frontend.extract import extraire
 from datacompiler.frontend.layout import segmenter_page
-from datacompiler.frontend import diagnostiquer, report as diagnostic_report
+from datacompiler.frontend import diagnose_document, display_report
 from datacompiler.frontend.ocr.paddle import PaddleOCRBackend
 from datacompiler.frontend.ocr.vector_zones import recuperer_texte_vectorise
 from datacompiler.compile import resoudre
-from datacompiler.backend import EXTENSIONS, FORMATS
+from datacompiler.backend import EXTENSIONS, FORMATS, _strategy_for_cli_format, resolve_deprecated_strategy
 from datacompiler.backend.faithful_pdf import render_faithful_pdf
 from datacompiler.backend.flow_pdf import render_flow_pdf
 from datacompiler.backend.rebuilt_pdf import render_rebuilt_pdf
+from datacompiler.translation.language import detect_document_language
 
 logger = logging.getLogger(__name__)
+# Messages de progression destinés à l'utilisateur final (deux lignes au total).
+# Tout le reste du journal est réservé au développement.
+progress = logging.getLogger("datacompiler.progress")
 
 
-def executer_pipeline(pdf_path, strategy="overlay", sauver_json=True,
-                      dpi=300, dpi_ocr_vectoriel=300, paddle_lang="fr",
-                      ocr_mode="auto"):
+def executer_pipeline(pdf_path, strategy="rebuilt", sauver_json=False,
+                      dpi=300, dpi_ocr_vectoriel=300, paddle_lang=None,
+                      ocr_mode="auto", render=True):
 
+    """Run extraction, diagnostics, OCR enrichment, and resolution.
+
+    Set ``render=False`` when a caller will edit the resolved document before
+    producing its output. Rendering remains enabled by default for compatibility.
     """
     Exécute le pipeline de compilation de PDF en 6 étapes claires :
       [1/6] Extraction du texte natif
@@ -33,147 +41,271 @@ def executer_pipeline(pdf_path, strategy="overlay", sauver_json=True,
       [4/6] Segmentation
       [5/6] Compilation et résolution
       [6/6] Rendu final
+    if ocr_mode == "force":
+        raise NotImplementedError(
+            "Full-page OCR is not implemented in this release. "
+            "Use ocr_mode='vector' for targeted OCR, or 'skip' to disable OCR."
+        )
+    if ocr_mode not in {"auto", "skip", "vector"}:
+        raise ValueError(f"Unknown OCR mode: {ocr_mode!r}")
 
-    ---
-    Note d'architecture (OCR pleine page) :
-      L'étape d'OCR pleine page globale (anciennement 'ocraliser') a été retirée
-      du flux actif. Contrairement à l'OCR ciblé (qui insère directement les
-      mots vectorisés dans page.native.words pour combler des trous géométriques
-      délimités), l'OCR pleine page passe par un processus d'alignement global
-      (diff de séquence + interpolation de bbox via alignment.py et
-      conflict_resolution.py).
-      
-      Tant que l'algorithme d'alignement n'est pas pleinement validé sur des
-      cas réels sans régression de duplication de mots, l'OCR pleine page
-      est désactivé pour préserver la précision du texte natif.
-    ---
-
-    dpi : DPI du RENDU final (faithful/rasterized) -- indépendant de l'OCR,
-    garder bas pour limiter la taille de fichier.
-    dpi_ocr_vectoriel : DPI dédié à l'OCR ciblé des zones de texte
-    vectorisé (recuperer_texte_vectorise). Découplé de `dpi`, mais laissé
-    à 300 PAR DÉFAUT.
-    paddle_lang : Code langue ISO 639-1 pour PaddleOCR (ex. "fr").
-    """
-    """
-    ocr_mode : 
-      - "auto"   : Fait confiance au diagnostic (pleine page si
-                    recommend_full_ocr, zones ciblées sinon)
-      - "force"  : Force l'OCR pleine page quelle que soit la recommandation
-      - "skip"   : Désactive tout OCR (pleine page et zones vectorielles)
-      - "vector" : Exécute uniquement l'OCR ciblé sur zones vectorielles
-    """
+    strategy = resolve_deprecated_strategy(strategy)
     pdf_path = str(Path(pdf_path).resolve())
-    logger.info("[1/6] Extraction : %s", pdf_path)
+    progress.info("Traitement : %s", Path(pdf_path).name)
+    logger.info("[1/6] Extracting: %s", pdf_path)
     doc = extraire(Document(), pdf_path)
 
-    logger.info("[2/6] Diagnostic...")
-    diagnostiquer(doc)
-    diagnostic_report.afficher(doc)
+    logger.info("[2/6] Running diagnostics...")
+    diagnose_document(doc)
+    # Le rapport de diagnostic est écrit avec print() : on ne l'affiche que
+    # si le journal INFO est actif (usage développeur).
+    if logger.isEnabledFor(logging.INFO):
+        display_report(doc)
 
     logger.debug(
-        "Diagnostic terminé. Recommandation OCR pleine page : %s (désactivée du flux)",
+        "Diagnostics complete. Full-page OCR recommendation: %s (not enabled in this pipeline)",
         getattr(doc.diagnostic, "recommend_full_ocr", False)
     )
 
 
-    logger.info("[3/6] Traitement OCR...")
+    logger.info("[3/6] Processing OCR...")
 
     if ocr_mode == "skip":
-        logger.info("      [OCR] Mode 'skip' : Aucun OCR exécuté.")
+        logger.info("      [OCR] 'skip' mode: OCR is disabled.")
     else:
+        langue_ocr = paddle_lang
+        if langue_ocr is None:
+            try:
+                langue_ocr = detect_document_language(doc)
+            except RuntimeError as exc:
+                logger.warning("Automatic language detection is unavailable: %s", exc)
+            if langue_ocr:
+                logger.info("      [OCR] Detected language: %s", langue_ocr)
+            else:
+                logger.warning(
+                    "Could not determine the PDF language from its native text; "
+                    "targeted OCR is skipped. Set paddle_lang (or --paddle-lang) explicitly."
+                )
         # A) Branche OCR Pleine Page
         do_full_ocr = (ocr_mode == "force") or (
             ocr_mode == "auto" and getattr(doc.diagnostic, "recommend_full_ocr", False)
         )
         if do_full_ocr:
-            logger.info("      [OCR] Pleine page recommandée (recommend_full_ocr=%s, mode=%s), mais moteur global désactivé...",
-                        getattr(doc.diagnostic, "recommend_full_ocr", False), ocr_mode)
-            # ocraliser(doc, pdf_path, backend_name="paddle", lang=paddle_lang)
+            logger.warning(
+                "Full-page OCR was recommended for this PDF, but this release "
+                "does not run it. Continuing with targeted vector OCR only."
+            )
         else:
-            logger.info("      [OCR] Pleine page non nécessaire.")
+            logger.info("      [OCR] Full-page OCR is not required.")
 
         # B) Branche OCR Ciblé (Zones vectorielles)
-        if ocr_mode in ("auto", "vector"):
-            logger.info("      [OCR] Vérification des zones de texte vectorisé...")
-            backend_paddle = PaddleOCRBackend(lang=paddle_lang, dpi=dpi_ocr_vectoriel)
+        if ocr_mode in ("auto", "vector") and langue_ocr:
+            logger.info("      [OCR] Checking vector-text regions...")
+            backend_paddle = PaddleOCRBackend(lang=langue_ocr, dpi=dpi_ocr_vectoriel)
             recuperer_texte_vectorise(
                 doc, pdf_path, backend_paddle,
-                lang=paddle_lang, dpi=dpi_ocr_vectoriel,
+                lang=langue_ocr, dpi=dpi_ocr_vectoriel,
             )
 
 
     segmentation_activee = False
     for page in doc.pages:
-        # Déclenchement ciblé selon les recommandations du diagnostic
+        # Run segmentation only when recommended by page diagnostics.
         if getattr(page.diagnostic, "recommend_segmentation", False):
             segmenter_page(page)
             segmentation_activee = True
 
     if segmentation_activee:
-        logger.info("[4/6] Macro-segmentation exécutée sur les pages complexes.")
+        logger.info("[4/6] Segmented complex pages.")
     else:
-        logger.info("[4/6] Segmentation non nécessaire.")
+        logger.info("[4/6] No segmentation required.")
 
 
-    logger.info("[5/6] Compilation...")
+    logger.info("[5/6] Resolving document content...")
     resoudre(doc)
 
     base = str(Path(pdf_path).with_suffix(""))
-    logger.info("[6/6] Rendu (stratégie : %s)...", strategy)
-    if strategy in ("overlay", "clean_overlay", "rasterized"):
-        fichier_sortie = base + "_propre.pdf"
-        render_faithful_pdf(doc, fichier_sortie, strategy=strategy, dpi=dpi)
-    elif strategy == "flow":
-        fichier_sortie = base + "_flow.pdf"
-        render_flow_pdf(doc, fichier_sortie)
-    elif strategy == "rebuilt":
-        fichier_sortie = base + "_rebuilt.pdf"
-        render_rebuilt_pdf(doc, fichier_sortie, source_pdf=pdf_path, dpi=dpi)
-    elif strategy in FORMATS:
-        fichier_sortie = base + f"_propre.{EXTENSIONS[strategy]}"
-        FORMATS[strategy](doc, fichier_sortie)
+    fichier_sortie = None
+    if render:
+        logger.info("[6/6] Rendering with strategy %s...", strategy)
+        if strategy in ("overlay", "clean_overlay", "rasterized"):
+            fichier_sortie = base + "_propre.pdf"
+            render_faithful_pdf(doc, fichier_sortie, strategy=strategy, dpi=dpi)
+        elif strategy == "flow":
+            fichier_sortie = base + "_flow.pdf"
+            render_flow_pdf(doc, fichier_sortie)
+        elif strategy == "rebuilt":
+            fichier_sortie = base + "_rebuilt.pdf"
+            render_rebuilt_pdf(doc, fichier_sortie, source_pdf=pdf_path, dpi=dpi)
+        elif strategy in FORMATS:
+            fichier_sortie = base + f"_propre.{EXTENSIONS[strategy]}"
+            FORMATS[strategy](doc, fichier_sortie)
+        else:
+            raise ValueError(f"Unknown rendering strategy: {strategy}")
     else:
-        raise ValueError(f"Stratégie inconnue : {strategy}")
+        logger.info("[6/6] Rendering deferred until document editing is complete.")
 
     if sauver_json:
         json_path = base + ".document.json"
         doc.save(json_path)
-        logger.info("      Document JSON : %s", json_path)
-    logger.info("      Écrit : %s", fichier_sortie)
+        logger.info("      Document JSON: %s", json_path)
+    if fichier_sortie:
+        logger.info("      Wrote: %s", fichier_sortie)
+        progress.info("Terminé : %s", fichier_sortie)
     return doc
 
 
+# English entry point for the public API. Keep the French name as a
+# compatibility alias for existing users.
+run_pipeline = executer_pipeline
+
+
+def traduire_document(doc, pdf_path, target_lang, source_lang=None, *, edit=False):
+    """Translate a processed document: XLIFF export, DeepL pre-translation, translated rebuilt PDF.
+
+    Writes ``<name>.<target_lang>.xlf`` (review-ready XLIFF) and ``<name>_<target_lang>_rebuilt.pdf``
+    next to the source PDF, and returns the path of the translated PDF.
+    """
+    from datacompiler.translation import (
+        edit_translation_pdf, export_xliff, import_xliff, render_translated_pdf,
+    )
+    from datacompiler.translation.providers import translate_xliff_file
+
+    base = str(Path(pdf_path).with_suffix(""))
+    xliff_traduit = f"{base}.{target_lang}.xlf"
+    sortie = f"{base}_{target_lang}_rebuilt.pdf"
+    with tempfile.TemporaryDirectory() as dossier:
+        xliff_source = Path(dossier) / "source.xlf"
+        units = export_xliff(doc, xliff_source, target_language=target_lang, source_language=source_lang)
+        translate_xliff_file(xliff_source, xliff_traduit)
+    traduction = import_xliff(xliff_traduit, expected_units=units)
+    if edit:
+        application = edit_translation_pdf(
+            doc, traduction, sortie, expected_units=units,
+        )
+        if application is None:
+            return None
+    else:
+        application = render_translated_pdf(doc, traduction, sortie, expected_units=units)
+    for avertissement in application.layout_warnings:
+        logger.warning("Translated layout: %s", avertissement)
+    return sortie
+
+
+# Format de sortie imposé par chaque stratégie de rendu en ligne de commande.
+_FORMAT_PAR_STRATEGIE = {
+    "overlay": "faithful-pdf",
+    "rasterized": "faithful-pdf",
+    "clean_overlay": "faithful-pdf",  # obsolète : redirigé vers rebuilt
+    "rebuilt": "rebuilt-pdf",
+    "flow": "flow-pdf",
+}
+
+
+def _configurer_journal_client():
+    """Console utilisateur : avertissements et erreurs, plus deux lignes de progression."""
+    logging.basicConfig(level=logging.WARNING, format="%(levelname)s: %(message)s", force=True)
+    progress.setLevel(logging.INFO)
+    progress.propagate = False
+    for ancien in tuple(progress.handlers):
+        if getattr(ancien, "_datacompiler_client_handler", False):
+            progress.removeHandler(ancien)
+            ancien.close()
+
+    gestionnaire = logging.StreamHandler()
+    gestionnaire._datacompiler_client_handler = True
+    gestionnaire.setFormatter(logging.Formatter("%(message)s"))
+    progress.addHandler(gestionnaire)
+
+
 def main():
-    """Entrée CLI."""
-    parser = argparse.ArgumentParser(description="Pipeline de compilation de PDF")
+    """Command-line entry point."""
+    parser = argparse.ArgumentParser(description="PDF extraction and reconstruction pipeline")
     parser.add_argument("pdf")
-    parser.add_argument("--format", choices=["faithful-pdf", "flow-pdf", "rebuilt-pdf", "markdown", "html", "docx"], 
-                        default="faithful-pdf", help="Format de sortie")
-    parser.add_argument("--strategy", choices=["clean_overlay", "flow", "overlay", "rasterized", "rebuilt"], 
-                        default="overlay", help="Stratégie de rendu : overlay (défaut), clean_overlay, rasterized, flow, rebuilt, markdown, html, docx")
-    parser.add_argument("--dpi", type=int, default=300, help="DPI du rendu final (faithful/rasterized)")
-    parser.add_argument("--dpi-ocr-vectoriel", type=int, default=300,
-                        help="DPI dédié à l'OCR ciblé des zones de texte vectorisé (découplé de --dpi)")
-    parser.add_argument("--paddle-lang", default="fr", help="Langue PaddleOCR pour l'OCR ciblé du texte vectorisé (code ISO 639-1, ex. 'fr')")
+    parser.add_argument("--format", choices=["faithful-pdf", "flow-pdf", "rebuilt-pdf", "markdown", "html", "docx"],
+                        default=None,
+                        help="Output format (default: rebuilt-pdf, a new PDF following the resolved reading order). "
+                             "faithful-pdf requires --strategy")
+    parser.add_argument("--strategy", choices=["clean_overlay", "flow", "overlay", "rasterized", "rebuilt"],
+                        default=None,
+                        help="Rendering strategy, required with --format faithful-pdf: overlay (keeps the source PDF "
+                             "and adds hidden text only for corrected or recovered words) or rasterized. "
+                             "clean_overlay is deprecated and runs rebuilt. Alone, --strategy selects the matching format")
+    parser.add_argument("--target-lang", default=None,
+                        help="Also translate the document into this language (e.g. en). Requires "
+                             "DEEPL_AUTH_KEY and datacompiler[translation]; the text is sent to DeepL")
+    parser.add_argument("--source-lang", default=None,
+                        help="Source language for translation (default: detect from the document)")
+    parser.add_argument("--no-translate", action="store_true",
+                        help="Never translate, even if --target-lang is given (useful to test files)")
+    parser.add_argument("--edit-translation", action="store_true",
+                        help="Open the lightweight desktop editor after machine translation; requires --target-lang")
+    parser.add_argument("-editor", "--editor", action="store_true",
+                        help="Open the editor for resolved document text; with --target-lang, edit the translation")
+    parser.add_argument("--dpi", type=int, default=300, help="DPI for final PDF rendering")
+    parser.add_argument("--dpi-ocr-vectoriel", "--vector-ocr-dpi", dest="dpi_ocr_vectoriel", type=int, default=300,
+                        help="DPI for targeted vector OCR, independent of --dpi")
+    parser.add_argument("--paddle-lang", default=None,
+                        help="PaddleOCR language for targeted vector-text OCR (default: detect from PDF text)")
     parser.add_argument("--ocr-mode", choices=["auto", "force", "skip", "vector"], default="auto",
-                        help="Politique OCR : auto, force pleine page, skip ou vectoriel seulement")
-    parser.add_argument("--no-json", action="store_true")
-    parser.add_argument("-v", "--verbose", action="store_true", help="Active l'affichage des logs de niveau DEBUG")
+                        help="OCR policy: automatic, force (unsupported), skip, or vector-only")
     args = parser.parse_args()
 
-    log_level = logging.DEBUG if args.verbose else logging.INFO
-    logging.basicConfig(
-        level=log_level,
-        format="%(asctime)s [%(levelname)s] %(message)s",
-        datefmt="%H:%M:%S"
-    )
+    if args.ocr_mode == "force":
+        parser.error(
+            "--ocr-mode force is not implemented in this release; "
+            "use --ocr-mode vector for targeted OCR"
+        )
+    if args.edit_translation and (not args.target_lang or args.no_translate):
+        parser.error("--edit-translation requires --target-lang and cannot be combined with --no-translate")
 
-    executer_pipeline(
-        args.pdf, strategy=args.strategy, sauver_json=not args.no_json,
+    if args.format is None:
+        args.format = _FORMAT_PAR_STRATEGIE.get(args.strategy, "rebuilt-pdf")
+    if args.format == "faithful-pdf" and args.strategy is None:
+        parser.error("--format faithful-pdf requires --strategy overlay or rasterized")
+    if args.strategy and args.format != _FORMAT_PAR_STRATEGIE[args.strategy]:
+        parser.error(f"--strategy {args.strategy} does not apply to --format {args.format}")
+    if args.editor and args.format != "rebuilt-pdf":
+        parser.error("--editor requires the rebuilt-pdf output format")
+
+    _configurer_journal_client()
+
+    document = executer_pipeline(
+        args.pdf,
+        strategy=_strategy_for_cli_format(args.format, args.strategy),
+        sauver_json=False,
         dpi=args.dpi, dpi_ocr_vectoriel=args.dpi_ocr_vectoriel,
         paddle_lang=args.paddle_lang, ocr_mode=args.ocr_mode,
+        render=not (args.editor or args.edit_translation),
     )
+
+    if args.no_translate:
+        if args.target_lang:
+            progress.info("Traduction ignorée (--no-translate).")
+    if args.target_lang and not args.no_translate:
+        try:
+            sortie = traduire_document(
+                document, args.pdf, args.target_lang, args.source_lang,
+                edit=args.edit_translation or args.editor,
+            )
+        except (RuntimeError, ValueError) as exc:
+            parser.exit(1, f"Translation failed: {exc}\n")
+        if sortie:
+            progress.info("Traduit : %s", sortie)
+        else:
+            progress.info("Éditeur fermé sans enregistrement du PDF.")
+    elif args.editor:
+        from datacompiler.translation import edit_document_pdf
+
+        output_path = str(Path(args.pdf).with_suffix("")) + "_rebuilt.pdf"
+        try:
+            result = edit_document_pdf(document, output_path)
+        except (RuntimeError, ValueError) as exc:
+            parser.exit(1, f"Editor failed: {exc}\n")
+        if result is not None:
+            progress.info("Édité : %s", output_path)
+        else:
+            progress.info("Éditeur fermé sans enregistrement du PDF.")
 
 
 if __name__ == "__main__":

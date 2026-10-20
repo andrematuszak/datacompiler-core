@@ -1,53 +1,4 @@
-"""compiler.py — Arbitrage des sources (natif + OCR) vers une couche de
-sortie indépendante (page.resolved). Package plutôt que module unique : le
-passthrough minimal de l'ancien resolve.py ne suffit plus dès qu'on gère
-l'ordre de lecture, la typographie et les conflits natif/OCR -- chaque
-préoccupation vit dans son propre fichier plutôt que dans une fonction
-fourre-tout.
-
-
-Pipeline par page, dans cet ordre (chaque étape suppose la précédente déjà
-faite) :
-  1. reading_order.ordonner            : ordre de lecture réel (colonnes,
-                                          tableaux exclus) ; copie les mots
-                                          natifs, ne les mute jamais en place.
-  2. typography.normaliser             : ligatures, fusion des césures de
-                                          fin de ligne.
-  3. alignment.aligner                 : diff natif <-> OCR (si OCR dispo).
-  4. conflict_resolution.resoudre_page : texte final par unité alignée.
-
-
-`resoudre(doc)` garde la même signature que l'ancien resolve.py -- le futur
-__init__.py racine peut continuer à faire `from compile import resoudre`
-sans aucun changement.
-
-
----------------------------------------------------------------------------
-INSTRUMENTATION TEMPORAIRE (à retirer une fois le doublon localisé) :
-_snapshot() prend une photo de la liste de mots à un point donné et logue
-le compte total + les doublons détectés selon deux axes différents :
-
-  - doublon "par valeur"   : deux mots (objets Python DIFFÉRENTS) qui ont
-                              exactement le même texte affiché et le même
-                              bbox (arrondi à 0.01pt, pour ignorer le bruit
-                              flottant). Signature d'un mot recréé/recopié
-                              deux fois quelque part.
-  - doublon "par identité" : le MÊME objet Python présent deux fois dans
-                              la liste (id() identique). Signature d'un
-                              append/extend du même mot sans copie -- un
-                              bug de nature différente du précédent, plus
-                              probable si une étape construit sa liste de
-                              sortie en réutilisant des références vers
-                              l'entrée au lieu d'itérer proprement.
-
-Les deux ne s'excluent pas : un doublon par identité EST forcément aussi
-un doublon par valeur (même objet = mêmes attributs), mais l'inverse est
-faux -- deux objets distincts peuvent coïncidemment avoir la même valeur
-sans bug (rare avec un bbox à 2 décimales, mais pas impossible sur un mot
-très court comme "1" ou "-"). D'où l'intérêt de loguer les deux séparément
-plutôt qu'un seul chiffre agrégé.
----------------------------------------------------------------------------
-"""
+"""Resolve native and OCR sources into the independent ``page.resolved`` layer. The per-page pipeline normalizes typography, establishes reading order, aligns sources, resolves conflicts, and runs quality checks."""
 
 
 from collections import Counter
@@ -58,13 +9,13 @@ import logging
 from datacompiler.model.document import Document
 
 
-from . import alignment, conflict_resolution, layout, qa, reading_order, typography
+from . import alignment, conflict_resolution, layout, links, qa, reading_order, typography
 
 logger = logging.getLogger(__name__)
 
 
 def _cle_valeur_mot(mot):
-    """(texte, bbox arrondi) -- clé pour détecter les doublons par valeur."""
+    """Build a duplicate-detection key from a word’s text and rounded bounding box."""
     bbox = getattr(mot, "bbox", None)
     bbox_cle = None
     if bbox is not None:
@@ -95,20 +46,20 @@ def _snapshot(etape, page, mots, max_exemples=6):
     n_mots_touches_identite = sum(doublons_identite.values())
 
     if doublons_valeur or doublons_identite:
-        logger.warning(
-            "[DOUBLON] page %s, étape '%s' : total=%d, "
-            "doublons_valeur=%d mot(s) touché(s) sur %d groupe(s), "
-            "doublons_identite=%d mot(s) touché(s) sur %d objet(s)",
+        logger.debug(
+            "[DUPLICATE] page %s, stage '%s': total=%d, "
+            "value_duplicates=%d affected word(s) across %d group(s), "
+            "identity_duplicates=%d affected word(s) across %d object(s)",
             n_page, etape, total,
             n_mots_touches_valeur, len(doublons_valeur),
             n_mots_touches_identite, len(doublons_identite),
         )
         for i, ((texte, bbox_cle), cnt) in enumerate(doublons_valeur.items()):
             if i >= max_exemples:
-                logger.warning("  ... (%d groupe(s) supplémentaire(s) non affiché(s))",
+                logger.debug("  ... (%d additional group(s) omitted)",
                                 len(doublons_valeur) - max_exemples)
                 break
-            logger.warning("  valeur x%d : texte=%r bbox=%s", cnt, texte, bbox_cle)
+            logger.debug("  value x%d: text=%r bbox=%s", cnt, texte, bbox_cle)
 
     return mots
 
@@ -146,10 +97,10 @@ def _resoudre_page(page):
 
 
 def resoudre(doc: Document) -> Document:
-    """Remplit page.resolved pour chaque page. Ne mute jamais page.native ni
-    page.ocr (cf. reading_order.ordonner, qui copie dès le premier maillon)."""
+    """Populate ``page.resolved`` without mutating the native or OCR layers."""
     for page in doc.pages:
         page.resolved.words = _resoudre_page(page)
         page.resolved.images = deepcopy(page.graphics.images)
         page.resolved.tables = deepcopy(page.graphics.tables)
+        links.associer_liens(page)
     return doc

@@ -1,6 +1,13 @@
-﻿"""compile/ — Arbitrage natif/OCR (cf. compiler.py pour le détail des
-étapes). Façade fine pour garder `from compile import resoudre` stable
-indépendamment de l'organisation interne du package."""
+"""Compilation API, loaded only when its public resolver is requested."""
+
+from importlib import import_module
+
+__all__ = ["resolve_document", "resoudre"]
 
 
-from .compiler import resoudre
+def __getattr__(name):
+    if name not in {"resolve_document", "resoudre"}:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    value = getattr(import_module("datacompiler.compile.compiler"), "resoudre")
+    globals()[name] = value
+    return value
