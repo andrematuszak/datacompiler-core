@@ -23,7 +23,6 @@ nofollow-import-to = [
 [project]
 name = "datacompiler"
 dynamic = ["version"]
-version = "0.2.0"
 description = "Nettoyage et reconstruction géométrique fidèle de fichiers PDF"
 readme = "README.md"
 license = "LicenseRef-DataCompiler-CLUF"
