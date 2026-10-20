@@ -1,6 +1,6 @@
 # DataCompiler
 
-This README documents the DataCompiler 0.2.0 source release.
+This README documents the DataCompiler 0.2.0 release.
 
 DataCompiler extracts and resolves PDF text, then creates a reconstructed PDF
 that follows the resolved reading order. It can also prepare translations for
@@ -8,14 +8,31 @@ review and open a desktop editor to correct text and layout.
 
 ## Requirements
 
-- Python **3.11 or later** (tested with Python 3.12 on macOS).
+- Source installation requires Python **3.11 or later**.
+- The published 0.2.0 wheel supports **CPython 3.12 on macOS 26 or later
+  (Apple Silicon / arm64)** only.
 - Tkinter and a graphical desktop session are required only for the editors.
 - An Internet connection may be required on the first PaddleOCR run to download
   its models, and when using DeepL or Matecat services.
 
 ## Installation
 
-From the repository root, create and activate a virtual environment:
+### Published wheel
+
+The v0.2.0 release provides a wheel for CPython 3.12 on macOS 26 or later
+(Apple Silicon / arm64). Install it with:
+
+```bash
+python3.12 -m pip install "https://github.com/andrematuszak/datacompiler-core/releases/download/v0.2.0/datacompiler-0.2.0-cp312-cp312-macosx_26_0_arm64.whl"
+```
+
+This wheel is not compatible with other Python versions, operating systems, or
+macOS architectures.
+
+### Install from source
+
+For other supported Python environments, install from a source checkout.
+Create and activate a virtual environment from the repository root:
 
 ```bash
 python3 -m venv .venv                  # macOS / Linux
