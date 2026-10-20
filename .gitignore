@@ -1,9 +1,9 @@
 # --- Virtual environments ---
 venv/
 .venv/
+.venv-release/
 env/
 ENV/
-venv-deepseek/
 .env/
 .env
 
