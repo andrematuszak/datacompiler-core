@@ -1,65 +1,58 @@
-Contrat de Licence d'Utilisateur Final (CLUF)
+End-User License Agreement (EULA)
 DataCompiler — Copyright (c) 2026 One-Man Lab
 
-En installant, copiant ou utilisant le logiciel « DataCompiler »
-(le « Logiciel »), vous acceptez les termes du présent contrat.
-Si vous n'acceptez pas ces termes, n'installez pas et ne
-utilisez pas le Logiciel.
+This is an unofficial English translation of the French license text, provided
+for convenience. The French original controls in the event of any discrepancy.
 
-1. OBJET
-   One-Man Lab (le « Concédant ») concède à l'utilisateur
-   (le « Licencié ») une licence limitée, non exclusive,
-   non transférable et révocable d'utilisation du Logiciel
-   dans le cadre de son activité personnelle ou professionnelle.
+By installing, copying, or using the "DataCompiler" software (the "Software"),
+you agree to the terms of this agreement. If you do not agree to these terms,
+do not install or use the Software.
 
-2. PROPRIÉTÉ INTELLECTUELLE
-   Le Logiciel, son code source, sa documentation, ses polices
-   embarquées et tous les éléments associés sont la propriété
-   exclusive du Concédant. Le Licencié n'acquiert aucun droit
-   de propriété sur le Logiciel.
+1. SCOPE
+   One-Man Lab (the "Licensor") grants the user (the "Licensee") a limited,
+   non-exclusive, non-transferable, and revocable license to use the Software
+   for personal or professional purposes.
+
+2. INTELLECTUAL PROPERTY
+   The Software, its source code, documentation, embedded fonts, and all
+   associated elements are the exclusive property of the Licensor. The
+   Licensee acquires no ownership rights in the Software.
 
 3. RESTRICTIONS
-   Le Licencié ne peut :
-   a) reproduire, copier ou dupliquer le Logiciel ;
-   b) modifier, adapter, traduire ou créer des œuvres dérivées ;
-   c) décompiler, désassembler ou procéder à l'ingénierie
-      inverse du Logiciel (sauf exception légale non dérogable) ;
-   d) redistribuer, louer, prêter, sous-licencier ou transférer
-      le Logiciel à un tiers ;
-   e) supprimer ou altérer les mentions de droit d'auteur ;
-   f) utiliser le Logiciel à des fins illicites.
+   The Licensee may not:
+   a) reproduce, copy, or duplicate the Software;
+   b) modify, adapt, translate, or create derivative works;
+   c) decompile, disassemble, or reverse engineer the Software, except where
+      mandatory law does not permit this restriction;
+   d) redistribute, rent, lend, sublicense, or transfer the Software to a third
+      party;
+   e) remove or alter copyright notices;
+   f) use the Software for unlawful purposes.
 
-4. DONNÉES
-   Le Licencié reste propriétaire des données qu'il soumet au
-   Logiciel. Le Concédant ne collecte aucune donnée personnelle
-   via le Logiciel.
+4. DATA
+   The Licensee retains ownership of data submitted to the Software. The
+   Licensor does not collect personal data through the Software.
 
-5. AUCUNE GARANTIE
-   Le Logiciel est fourni « EN L'ÉTAT », sans garantie
-   d'aucune sorte, qu'elle soit expresse ou implicite,
-   y compris mais sans s'y limiter :
-   - aucune garantie de qualité marchande ;
-   - aucune garantie d'aptitude à un usage particulier ;
-   - aucune garantie d'absence de défaut ou d'erreur.
+5. NO WARRANTY
+   The Software is provided "AS IS", without warranties of any kind, express or
+   implied, including but not limited to:
+   - any warranty of merchantability;
+   - any warranty of fitness for a particular purpose;
+   - any warranty that the Software is free of defects or errors.
 
-6. LIMITATION DE RESPONSABILITÉ
-   En aucun cas le Concédant ne pourra être tenu responsable
-   de tout dommage direct, indirect, incidentel, spécial ou
-   consécutif résultant de l'utilisation ou de
-   l'impossibilité d'utiliser le Logiciel, y compris la perte
-   de données ou de bénéfices.
+6. LIMITATION OF LIABILITY
+   In no event shall the Licensor be liable for any direct, indirect,
+   incidental, special, or consequential damages arising from the use of, or
+   inability to use, the Software, including loss of data or profits.
 
-7. RÉSILIATION
-   Le présent contrat prend fin automatiquement en cas de
-   non-respect de ses termes. Le Concédant peut également
-   résilier la licence à tout moment, sans préavis.
+7. TERMINATION
+   This agreement terminates automatically if its terms are breached. The
+   Licensor may also terminate the license at any time without prior notice.
 
-8. DROIT APPLICABLE
-   Le présent contrat est régi par le droit français.
-   Tout litige relèvera de la compétence exclusive des
-   tribunaux de Paris.
+8. GOVERNING LAW
+   This agreement is governed by French law. Any dispute shall be subject to
+   the exclusive jurisdiction of the courts of Paris.
 
-9. MODIFICATIONS
-   Le Concédant se réserve le droit de modifier les termes
-   du présent contrat à tout moment. Les modifications
-   prennent effet à compter de leur publication.   
+9. AMENDMENTS
+   The Licensor reserves the right to amend this agreement at any time.
+   Amendments take effect upon publication.

@@ -1,155 +1,159 @@
 # DataCompiler
 
-DataCompiler extrait et résout le texte des PDF, puis produit un PDF reconstruit
-suivant l'ordre de lecture. Il peut aussi préparer une traduction à relire et
-ouvrir un éditeur de bureau pour corriger le texte et sa mise en page.
+This README documents the DataCompiler 0.2.0 source release.
 
-## Prérequis
+DataCompiler extracts and resolves PDF text, then creates a reconstructed PDF
+that follows the resolved reading order. It can also prepare translations for
+review and open a desktop editor to correct text and layout.
 
-- Python **3.11 ou supérieur** (testé avec Python 3.12 sur macOS).
-- Tkinter et une session graphique uniquement pour utiliser l'un des éditeurs.
-- Une connexion Internet peut être nécessaire au premier démarrage de PaddleOCR
-  (téléchargement de modèles), ainsi que pour les services DeepL et Matecat.
+## Requirements
+
+- Python **3.11 or later** (tested with Python 3.12 on macOS).
+- Tkinter and a graphical desktop session are required only for the editors.
+- An Internet connection may be required on the first PaddleOCR run to download
+  its models, and when using DeepL or Matecat services.
 
 ## Installation
 
-Depuis la racine du dépôt, crée et active un environnement virtuel :
+From the repository root, create and activate a virtual environment:
 
 ```bash
-python3 -m venv .venv                      # macOS / Linux
-source .venv/bin/activate                 # macOS / Linux
-# Windows PowerShell : py -3.11 -m venv .venv
-# puis : .venv\Scripts\Activate.ps1
+python3 -m venv .venv                  # macOS / Linux
+source .venv/bin/activate
+# Windows PowerShell: py -3.11 -m venv .venv
+# then: .venv\Scripts\Activate.ps1
 ```
 
-Installe DataCompiler et ses dépendances de base :
+Install DataCompiler and its base dependencies:
 
 ```bash
 python -m pip install -e .
 ```
 
-PaddlePaddle et PaddleOCR sont des dépendances de base requises pour le parcours
-reconstruit documenté. Leur installation ajoute un moteur natif conséquent ; le
-premier traitement OCR peut aussi télécharger des modèles et nécessite une
-connexion Internet. `pyproject.toml` garde le client Mistral dans un extra
-distinct, facultatif. Les extras supplémentaires sont :
+PaddlePaddle and PaddleOCR are required base dependencies for the documented
+reconstruction workflow. They add a substantial native runtime; the first OCR
+run may also download model files. The Mistral client is available separately
+as an optional extra. Other optional extras are:
 
 ```bash
-python -m pip install -e ".[translation]"            # traduction DeepL
-python -m pip install -e ".[translation,translation-quality]"  # DeepL + COMETKiwi
-python -m pip install -e ".[mistral]"                 # client OCR Mistral facultatif
-python -m pip install -e ".[dev]"                    # tests et outils de développement
+python -m pip install -e ".[translation]"                      # DeepL translation
+python -m pip install -e ".[translation,translation-quality]"   # DeepL + COMETKiwi
+python -m pip install -e ".[mistral]"                           # Optional Mistral OCR client
+python -m pip install -e ".[dev]"                               # Tests and development tools
 ```
 
-Les dépendances principales comprennent `langdetect` ; la détection de langue
-ne nécessite donc pas d'extra `language`. Le premier lancement de PaddleOCR
-peut télécharger ses modèles. L'OCR pleine page n'est pas implémenté dans cette
-version.
+`langdetect` is a base dependency, so language detection does not require a
+separate `language` extra. Full-page OCR is not implemented in this version.
 
-## Utilisation en ligne de commande
+## Command-line usage
 
-Après l'installation, la commande `datacompiler` est disponible dans
-l'environnement virtuel :
+After installation, the `datacompiler` command is available in the virtual
+environment:
 
 ```bash
-datacompiler chemin/vers/document.pdf
+datacompiler path/to/document.pdf
 ```
 
-Le parcours recommandé est la reconstruction : la commande crée
-`document_rebuilt.pdf`, un nouveau PDF suivant l'ordre de lecture résolu. Le
-texte reconstruit est visible et sélectionnable ; les images et dessins non
-textuels sont conservés. `rebuilt` est la stratégie par défaut et peut être
-indiquée explicitement :
+The recommended workflow is reconstruction. By default, the command creates
+`document_rebuilt.pdf`, a new PDF following the resolved reading order. Its
+reconstructed text is visible and selectable; images and non-text drawings are
+preserved. You can select the default explicitly:
 
 ```bash
 datacompiler document.pdf --strategy rebuilt
 ```
 
+Other CLI output formats and strategies are available. For example,
+`--format faithful-pdf` requires `--strategy overlay` or `--strategy
+rasterized`; `--format flow-pdf` creates a flow-layout PDF. The `clean_overlay`
+strategy is deprecated and redirects to `rebuilt` with a warning.
+
 ### OCR
 
-Le pipeline s'appuie sur PaddleOCR pour l'OCR ciblé des zones vectorielles. En
-mode par défaut `--ocr-mode auto`, la langue est déterminée à partir du texte natif quand c'est
-possible. Pour un PDF dont le texte natif ne permet pas cette détection,
-indique la langue PaddleOCR explicitement :
+The pipeline uses PaddleOCR for targeted OCR of vector-text regions. In the
+default `--ocr-mode auto`, it determines the language from native PDF text
+when possible. If the PDF's native text does not provide a language, specify
+the PaddleOCR language:
 
 ```bash
 datacompiler document.pdf --paddle-lang en
 ```
 
-`--ocr-mode vector` limite le traitement à l'OCR ciblé ; `--ocr-mode skip`
-désactive l'OCR et ne correspond donc pas au parcours recommandé. Les scans
-sans texte natif exploitable ne bénéficient pas d'un OCR pleine page dans cette
-version. L'option `--ocr-mode force` n'est pas implémentée.
+`--ocr-mode vector` enables only targeted vector-text OCR; `--ocr-mode skip`
+disables OCR and is not the recommended workflow. Scanned documents without
+usable native text do not receive full-page OCR in this version.
+`--ocr-mode force` is not implemented.
 
-### Traduction automatique et éditeurs
+### Machine translation and editing
 
-La traduction CLI utilise DeepL. Installe l'extra `translation` et définis
-`DEEPL_AUTH_KEY` dans l'environnement : le texte des segments est envoyé à
-DeepL. La langue source est détectée par défaut ; tu peux la préciser.
+CLI translation uses DeepL. Install the `translation` extra and set
+`DEEPL_AUTH_KEY` in the environment; segment text is sent to DeepL. The source
+language is detected by default, or you can specify it:
 
 ```bash
-export DEEPL_AUTH_KEY="..."  # macOS / Linux ; définir la variable d'environnement sous Windows
+export DEEPL_AUTH_KEY="..."  # Set an environment variable on Windows.
 datacompiler document.pdf --target-lang en
 datacompiler document.pdf --target-lang en --source-lang fr
 ```
 
-La commande produit `document.en.xlf` (XLIFF à relire) et
-`document_en_rebuilt.pdf`. `--no-translate` empêche l'appel à DeepL même si
-`--target-lang` est indiqué.
+The command creates `document.en.xlf` (XLIFF for review) and
+`document_en_rebuilt.pdf`. `--no-translate` prevents a DeepL request even when
+`--target-lang` is present.
 
-Les deux options d'édition couvrent des parcours différents :
+The CLI offers two editing paths:
 
 ```bash
-# Éditer le texte résolu, sans lancer de traduction
+# Edit resolved text without translating.
 datacompiler document.pdf --editor
 
-# Traduire, puis ouvrir l'éditeur de traduction
+# Translate, then open the translation editor.
 datacompiler document.pdf --target-lang en --edit-translation
 ```
 
-`--edit-translation` exige `--target-lang` et ne peut pas être associé à
-`--no-translate`. `--editor` ouvre l'éditeur générique sans cible de traduction ;
-avec `--target-lang`, il ouvre l'éditeur de traduction, sauf si
-`--no-translate` désactive la traduction. L'option `--editor` exige la sortie
-PDF reconstruite. Les deux éditeurs nécessitent Tkinter et une session graphique.
+`--edit-translation` requires `--target-lang` and cannot be combined with
+`--no-translate`. `--editor` opens the generic resolved-text editor when no
+target language is specified; with `--target-lang`, it opens the translation
+editor unless `--no-translate` disables translation. `--editor` requires the
+rebuilt PDF output format. Both editors require Tkinter and a graphical desktop
+session.
 
-Dans l'éditeur, sélectionne un bloc pour modifier son texte, sa taille, son
-gras/italique, son exposant ou indice, sa couleur, sa position et ses dimensions.
-Le sélecteur de couleur natif règle la couleur du texte ; « Couleur source »
-annule ce choix. La couleur personnalisée est indépendante de l'échantillonnage
-des tracés glyphiques et est conservée dans le fichier de corrections.
+In the editor, select a block to change its text, size, bold/italic style,
+superscript or subscript, color, position, and dimensions. The native color
+picker sets text color; **Source color** clears the override. Custom text color
+is independent of sampled glyph-path colors and is saved in the layout
+sidecar. The current editor button is labeled **Couleur source**.
 
-Tu peux aussi ajouter un bloc texte, supprimer un bloc ou le restaurer, et
-scinder le bloc sélectionné en deux blocs dont le texte est modifiable. Pour
-fusionner ou aligner plusieurs blocs, sélectionne-les dans la liste avec
-Ctrl/Cmd+clic ou Maj+clic. La fusion exige que les blocs soient sur la même
-page. L'alignement utilise le dernier bloc sélectionné comme référence et permet
-d'aligner les bords gauche, droit, haut ou bas, ou les centres horizontal et
-vertical ; il conserve les tailles et l'ordre de lecture. Les nouveaux blocs
-ajoutés par le bouton apparaissent sur la première page.
+You can add a text block, delete or restore a block, and split the selected
+block into two editable blocks. To merge or align multiple blocks, select them
+in the list with Ctrl/Cmd-click or Shift-click. Merging requires all selected
+blocks to belong to the same page. Alignment uses the last-selected block as
+the reference and supports left, right, top, bottom, horizontal-center, and
+vertical-center anchors; it preserves block sizes and reading order. A newly
+added text block is placed on the first page.
 
-L'enregistrement produit le PDF et un fichier `.layout.json` associé. Ce
-sidecar versionné conserve les corrections par identifiant stable de segment
-(ou de mot résolu dans l'éditeur générique) et est rechargé automatiquement aux
-ouvertures suivantes. Les tracés des glyphes vectoriels remplacés sont exclus
-du rendu pour éviter de superposer l'ancien texte au nouveau ; les éléments
-graphiques non textuels restent conservés.
+Saving writes the PDF and an associated `.layout.json` sidecar. This
+versioned sidecar preserves corrections using stable segment IDs (or resolved
+word IDs in the generic editor) and is automatically reapplied the next time
+the editor opens. Vector glyph paths replaced by text are excluded from the
+rebuilt output to prevent the old glyphs from appearing underneath; unrelated
+graphics remain preserved.
 
-## Utilisation comme bibliothèque
+## Python API
 
-`executer_pipeline` traite le document et écrit le PDF reconstruit par défaut :
+`executer_pipeline` processes the document and writes a reconstructed PDF by
+default:
 
 ```python
 from datacompiler import executer_pipeline
 
 document = executer_pipeline("document.pdf", strategy="rebuilt")
-print(f"Pages traitées : {len(document.pages)}")
+print(f"Pages processed: {len(document.pages)}")
 ```
 
-Pour éditer le texte résolu sans traduction, utilise `edit_document_pdf`.
-Pour un flux traduit, exporte les unités XLIFF, importe le XLIFF relu et choisis
-`render_translated_pdf` pour le rendu direct ou `edit_translation_pdf` pour le
-rendu avec édition de mise en page :
+To edit resolved text without translating, use `edit_document_pdf`. For a
+translation workflow, export XLIFF units, import the reviewed XLIFF, and use
+`render_translated_pdf` for a direct render or `edit_translation_pdf` to review
+and adjust the translated layout:
 
 ```python
 from datacompiler.translation import (
@@ -160,7 +164,7 @@ units = export_xliff(
     document, "document-fr-en.xlf",
     source_language="fr", target_language="en",
 )
-# Traduire / relire le XLIFF dans un outil compatible, puis :
+# Translate/review the XLIFF in a compatible tool, then:
 translation = import_xliff(
     "document-fr-en-reviewed.xlf", expected_units=units,
 )
@@ -168,12 +172,12 @@ application = render_translated_pdf(
     document, translation, "document-en-rebuilt.pdf",
     expected_units=units,
 )
-print("Segments traduits :", len(application.translated_units))
+print("Translated segments:", len(application.translated_units))
 ```
 
-Pour ouvrir l'éditeur sur le texte résolu sans traduction, appelle
-`edit_document_pdf(document, "document-rebuilt.pdf")`. Pour éditer le rendu
-traduit au lieu du rendu direct, remplace `render_translated_pdf` par :
+To open the editor on resolved text without translation, call
+`edit_document_pdf(document, "document-rebuilt.pdf")`. To edit the translated
+output instead of rendering it directly, replace `render_translated_pdf` with:
 
 ```python
 from datacompiler.translation import edit_translation_pdf
@@ -184,37 +188,25 @@ application = edit_translation_pdf(
 )
 ```
 
-L'export est au format XLIFF 1.2. Une ligne qui traverse plusieurs cellules
-d'un tableau détecté est séparée par cellule. Les identifiants de page, de mots
-et de bloc sont conservés dans une note DataCompiler ; l'import valide les
-identifiants et ne remplace pas le texte source du document.
+XLIFF export uses version 1.2. A line crossing multiple detected table cells
+is split by cell. Page, word, and block IDs are preserved in a DataCompiler
+note; import validates those IDs and does not replace the document's source
+text.
 
-`render_translated_pdf` conserve les segments traduits dans leurs boîtes
-d'origine, sans recomposition ni retour à la ligne. Il n'effectue pas de
-réduction automatique de taille pour faire tenir le texte. Les segments sans
-traduction conservent leur texte source. Les commentaires PDF sont désactivés
-par défaut ; `render_translated_pdf(..., include_comments=True)` les ajoute avec
-le texte source et traduit, le moteur, l'estimation de qualité et les besoins
-de relecture. Une estimation COMETKiwi est non calibrée : ce n'est pas une
-probabilité que la traduction soit exacte.
+`render_translated_pdf` keeps translated segments in their original boxes,
+without reflow or line wrapping. It does not automatically reduce the font size
+to fit text. Segments without a translation retain their source text. PDF
+comments are off by default; pass `include_comments=True` to
+`render_translated_pdf` to include the source and translated text, engine,
+quality estimate, and review notes. COMETKiwi estimates are uncalibrated and
+are not probabilities that a translation is correct.
 
-### Différences avec la release publique 0.1.0
+### Matecat review
 
-La release publique `andrematuszak/datacompiler` v0.1.0 est une wheel
-précompilée pour macOS 12+ Apple Silicon et Python 3.12. Son README présente
-`overlay` comme stratégie par défaut et indique que `--format` est ignoré.
-Cette branche source documente le parcours `rebuilt`, déclare Python 3.11 ou
-plus et son CLI traite `--format`. La contrainte macOS/Python 3.12 concerne la
-wheel publiée ; suis son README pour cette installation. Pour le code source de
-cette branche, suis les étapes ci-dessus. Les autres stratégies peuvent rester
-disponibles dans le CLI, mais ne sont pas le parcours recommandé ni documenté
-ici.
-
-### Relecture dans Matecat
-
-DataCompiler peut soumettre le XLIFF à Matecat et importer le XLIFF après
-relecture. Le PDF original n'est pas envoyé, mais le texte des segments l'est.
-La session de relecture s'effectue dans l'interface Web Matecat.
+DataCompiler can submit an XLIFF file to Matecat and import it after human
+review. The source PDF is not uploaded, but segment text is sent to the
+configured Matecat server. The review session takes place in Matecat's web
+interface.
 
 ```python
 from datacompiler.translation import (
@@ -222,19 +214,19 @@ from datacompiler.translation import (
     render_translated_pdf,
 )
 
-client = MatecatClient()  # lit MATECAT_API_KEY et MATECAT_BASE_URL
+client = MatecatClient()  # Reads MATECAT_API_KEY and MATECAT_BASE_URL.
 project, units = submit_document_to_matecat(
     document, client, "document-fr-en.xlf",
     source_language="fr-FR", target_language="en-US",
-    project_name="Document à relire",
+    project_name="Document for review",
 )
-print("Projet créé :", project.project_id)
+print("Project created:", project.project_id)
 if project.editor_url:
-    print("Éditeur :", project.editor_url)
+    print("Editor:", project.editor_url)
 elif project.project_id and project.project_password:
     print(client.get_project_urls(project.project_id, project.project_password))
 
-# Après la relecture dans Matecat :
+# After review in Matecat:
 translation = import_matecat_xliff(
     client, project, "document-fr-en-reviewed.xlf", expected_units=units,
 )
@@ -243,59 +235,57 @@ render_translated_pdf(
 )
 ```
 
-Configure `MATECAT_API_KEY` avec la clé API attendue par Matecat.
-`MATECAT_BASE_URL` vaut par défaut `https://www.matecat.com` et peut pointer
-vers une autre instance. Les clés doivent rester dans l'environnement, pas dans
-le dépôt. L'intégration utilise les API publiques Matecat pour créer le projet,
-en récupérer les informations et exporter le XLIFF. Les identifiants et le
-texte source sont validés à l'import pour éviter de rattacher une traduction
-au mauvais segment.
+Set `MATECAT_API_KEY` to the API key required by Matecat.
+`MATECAT_BASE_URL` defaults to `https://www.matecat.com` and can point to
+another instance. Keep credentials in the environment, not in the repository.
+The integration uses Matecat's public APIs to create a project, retrieve its
+details, and export the XLIFF. IDs and source text are validated on import to
+avoid associating translations with the wrong segments.
 
-### Qualité des traductions
+### Translation quality
 
-L'extra `translation-quality` ajoute COMETKiwi, un estimateur local sans
-référence de traduction. Il peut annoter les segments sous le seuil de 0,65 par
-défaut dans le XLIFF et les marquer à relire. Le modèle est volumineux et son
-téléchargement peut nécessiter l'acceptation de sa licence sur Hugging Face.
+The `translation-quality` extra adds COMETKiwi, a local reference-free quality
+estimator. It can annotate XLIFF segments below the default 0.65 threshold and
+mark them for review. The model is large, and downloading it may require
+accepting its license on Hugging Face.
 
 ```python
 from datacompiler.translation import (
     CometKiwiQualityEstimator, translate_xliff_file,
 )
 
-quality = CometKiwiQualityEstimator()  # téléchargement du modèle requis
+quality = CometKiwiQualityEstimator()  # Downloads the model.
 translation = translate_xliff_file(
     "document-fr-en.xlf", "document-fr-en-machine.xlf",
-    context="Formulaire fiscal français ; conserver les références légales.",
-    # glossary="ID_DE_GLOSSAIRE",  # facultatif
+    context="French tax form; preserve legal references.",
+    # glossary="GLOSSARY_ID",  # Optional.
     quality_estimator=quality,
 )
 ```
 
-### Détection de langue
+### Language detection
 
-La détection utilise le texte natif du PDF avant l'OCR ciblé et fournit une
-langue à PaddleOCR lorsqu'elle est disponible. Elle est également accessible
-par `detect_document_languages(document)` pour annoter les lignes résolues et
-`detect_language(text)` pour un texte ponctuel. Les textes trop courts ou
-incertains peuvent ne donner lieu à aucune détection.
+Language detection uses native PDF text before targeted OCR and supplies a
+language to PaddleOCR when available. It is also available through
+`detect_document_languages(document)` to annotate resolved lines and
+`detect_language(text)` for a single text sample. Very short or uncertain text
+may not produce a language detection result.
 
 ## Tests
 
-Installe les outils de développement puis lance les tests :
+Install development tools and run the test suite:
 
 ```bash
 python -m pip install -e ".[dev]"
 python -m pytest
 ```
 
-Pour afficher la couverture :
+To display coverage:
 
 ```bash
 python -m pytest --cov=datacompiler --cov-report=term-missing
 ```
 
-Pour les images bitmap, `ImageElement.contains_text` reste à `null` (inconnu) :
-la sonde OCR d'images basée sur Tesseract a été retirée. Cette valeur n'est pas
-convertie en `false`, afin de ne pas présenter une absence d'analyse comme un
-résultat négatif.
+For bitmap images, `ImageElement.contains_text` remains `null` (unknown):
+the Tesseract-based image OCR probe was removed. The value is not changed to
+`false`, so that an unperformed analysis is not presented as a negative result.

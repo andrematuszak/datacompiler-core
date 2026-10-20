@@ -1,31 +1,81 @@
 # Changelog
 
-Toutes les modifications notables apportées au projet **DataCompiler** seront consignées dans ce fichier.
+All notable changes to **DataCompiler** are documented in this file.
 
-Le format est basé sur [Keep a Changelog](https://keepachangelog.com/fr/1.0.0/) et ce projet respecte le [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [0.2.0] - 2026-10-20
+
+### Added
+
+- A lightweight desktop editor for resolved source text and translated
+  segments, with text and layout editing, typography controls, and a native
+  text-color picker.
+- Text-block creation, deletion/restoration, splitting, and same-page merging
+  in the editor. Multi-selection alignment supports explicit geometric anchors.
+- Versioned `.layout.json` sidecars that persist edits using stable segment or
+  word IDs.
+- XLIFF 1.2 import/export for translation review, with validation of segment
+  identifiers and preservation of page, word, and block references.
+- Optional integrations for DeepL machine translation, Matecat human review,
+  and COMETKiwi reference-free quality estimation.
+- Language detection for resolved lines and PaddleOCR language selection.
+
+### Changed
+
+- Rebuilt PDF output is the recommended workflow and default CLI output.
+  PaddlePaddle and PaddleOCR are now base dependencies for this workflow;
+  Mistral OCR remains optional.
+- Rebuilt output replaces recognized vector glyphs with visible selectable
+  text while preserving unrelated images and graphics. Editor glyph masks
+  prevent old vector text from being duplicated beneath edited text.
+- The CLI supports output-format selection; `faithful-pdf` requires an explicit
+  `overlay` or `rasterized` strategy. `clean_overlay` is deprecated and
+  redirects to `rebuilt`.
+- Translation editing retains changes to text, geometry, typography, and color
+  in a sidecar for later renders. Translated PDF output preserves source boxes
+  without automatically reflowing or shrinking translated text.
+
+### Fixed
+
+- Preserved editor segment order and deletion state across sidecar reloads.
+- Corrected vector-glyph rendering issues that could make source glyphs
+  reappear or duplicate edited text.
+- Improved link extraction and reconstruction, and resolved PDF pipeline
+  regression issues.
 
 ## [0.1.0] - 2026-10-07
 
-### ✨ Added (Fonctionnalités initiales)
-- **Pipeline de compilation PDF en 6 étapes** :
-  1. **Extraction** hybride parallèle (PyMuPDF + pdfplumber).
-  2. **Diagnostic** automatique de la qualité du texte et de l'intégrité visuelle.
-  3. **OCR Page entière** (intégration de l'API Mistral — désactivé dans le flux actif, voir « Limitations connues »).
-  4. **OCR Ciblé** pour zones vectorisées avec PaddleOCR.
-  5. **Arbitrage & Compilation** (reconstruction de la mise en page et résolution des conflits).
-  6. **Moteurs de rendu** multi-formats (PDF Fidèle, Flow, Reconstruit, Markdown, HTML, DOCX).
-- **Interface CLI** : Commande `datacompiler` disponible en ligne de commande.
-- **Documentation et Exemples** : Guide d'installation (macOS), Quickstart (CLI et Python) dans le `README.md` et script `examples/basic_usage.py`.
-- `examples/basic_usage.py` : génère un PDF d'exemple (ou accepte un chemin en argument) au lieu de dépendre d'un document de test.
-- Tests dépendant du PDF de référence : ignorés (skip) si le fichier est absent.
-- Polices embarquées : suppression des variantes `.woff`/`.woff2` et des polices Marianne, non utilisées par le code ; ajout de `backend/fonts/README.md` (licences).
-- `.gitignore` : sorties générées, caches d'outils et dossier `private/`.
-- Python requis : 3.11+ (testé en 3.12).
-- `pytest` déplacé des dépendances obligatoires vers l'extra `[dev]`.
+### Added
 
-### ⚠️ Limitations connues
-- L'OCR pleine page (Mistral) est désactivé : l'alignement global OCR ↔ natif n'est pas encore validé.
-- L'option CLI `--format` est acceptée mais ignorée ; utiliser `--strategy`.
-- Un seul format de sortie par exécution ; les fichiers sont écrits à côté du PDF source.
+- A six-stage PDF compilation pipeline:
+  1. Hybrid parallel extraction with PyMuPDF and pdfplumber.
+  2. Automatic diagnostics of text quality and visual integrity.
+  3. Mistral full-page OCR integration (disabled in the active pipeline; see
+     Known limitations).
+  4. Targeted PaddleOCR for vectorized text regions.
+  5. Layout reconstruction and conflict resolution.
+  6. Multiple output backends: faithful PDF, flow PDF, rebuilt PDF, Markdown,
+     HTML, and DOCX.
+- A command-line interface through the `datacompiler` command.
+- Installation guidance and CLI/Python quick starts in the README, plus an
+  `examples/basic_usage.py` script.
+- `examples/basic_usage.py` can generate a sample PDF or accept an input path,
+  instead of depending on a repository test document.
+- Reference-PDF tests are skipped when the fixture is unavailable.
+- Removal of unused `.woff`/`.woff2` and Marianne font variants, and addition
+  of `backend/fonts/README.md` with font licensing information.
+- Generated outputs, tool caches, and the `private/` directory in `.gitignore`.
+- Python 3.11+ support (tested with Python 3.12).
+- A `[dev]` extra for pytest instead of making it a base dependency.
 
+### Known limitations
+
+- Full-page Mistral OCR is disabled because global OCR-to-native-text alignment
+  has not yet been validated.
+- In the v0.1.0 CLI, `--format` is accepted but ignored; use `--strategy`.
+- Only one output format is produced per run, next to the source PDF.
+
+[0.2.0]: https://github.com/andrematuszak/datacompiler-core/releases/tag/v0.2.0
 [0.1.0]: https://github.com/andrematuszak/datacompiler/releases/tag/v0.1.0
