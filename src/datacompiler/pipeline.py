@@ -33,7 +33,6 @@ def executer_pipeline(pdf_path, strategy="rebuilt", sauver_json=False,
 
     Set ``render=False`` when a caller will edit the resolved document before
     producing its output. Rendering remains enabled by default for compatibility.
-    """
     Exécute le pipeline de compilation de PDF en 6 étapes claires :
       [1/6] Extraction du texte natif
       [2/6] Diagnostic de page
@@ -41,6 +40,7 @@ def executer_pipeline(pdf_path, strategy="rebuilt", sauver_json=False,
       [4/6] Segmentation
       [5/6] Compilation et résolution
       [6/6] Rendu final
+    """
     if ocr_mode == "force":
         raise NotImplementedError(
             "Full-page OCR is not implemented in this release. "
