@@ -1,21 +1,22 @@
-# Interface publique de DataCompiler 0.1.0 (stub de typage).
-# Ce fichier décrit l'API utilisable ; il ne contient aucune implémentation.
+"""Public type declarations for DataCompiler."""
+
 from os import PathLike
-from typing import Any, Dict, List, Literal, Optional, Union
+from typing import Any, Callable, Dict, List, Literal, Optional, Tuple, Union
 
-__version__: str
+__version__: Literal["0.2.0"]
+__all__: List[str]
 
-# Stratégies de rendu acceptées par executer_pipeline().
-# Note : en ligne de commande, --strategy n'accepte pour l'instant que
-# overlay, clean_overlay, rasterized, flow et rebuilt.
+# Rendering strategies accepted by executer_pipeline().
 Strategy = Literal[
     "overlay", "clean_overlay", "rasterized", "flow", "rebuilt",
-    "markdown", "html", "docx",
+    "markdown", "html", "docx", "faithful-pdf",
 ]
+# "force" is recognized but raises NotImplementedError; full-page OCR is not
+# implemented in this release.
 OcrMode = Literal["auto", "force", "skip", "vector"]
 
-# Extension du fichier produit pour chaque stratégie ("pdf", "md", "html", "docx").
 EXTENSIONS: Dict[str, str]
+FORMATS: Dict[str, Callable[..., Any]]
 
 class Metadata:
     filename: str
@@ -48,6 +49,72 @@ class Diagnostic:
     overlapping_text_detected: bool
     out_of_bounds_detected: bool
     empty_pages: List[int]
+    confiance_suffisante: Optional[bool]
+    symboles_suspects: Dict[str, int]
+    mots_suspects_ngrammes: List[Any]
+    categorie: Optional[str]
+    vectorized_text_detected: bool
+    has_images_with_text: Optional[bool]
+    recommend_segmentation: bool
+    segmentation_reasons: List[str]
+
+class BBox:
+    x0: float
+    y0: float
+    x1: float
+    y1: float
+
+class Polygon:
+    points: List[Tuple[float, float]]
+
+class Font:
+    name: str
+    sizes: List[float]
+    is_bold: bool
+    is_italic: bool
+    is_serif: bool
+    is_monospace: bool
+    is_condensed: bool
+    generic_family: str
+
+class Decision:
+    regle: str
+    detail: str
+
+class Flag:
+    type: str
+    detail: str
+    severity: str
+
+class Word:
+    id: int
+    text: str
+    bbox: Optional[BBox]
+    block: int
+    line: int
+    word: int
+    font: str
+    font_size: float
+    bold: bool
+    italic: bool
+    color: str
+    rotation: float
+    confidence: Optional[float]
+    language: Optional[str]
+    source: Optional[str]
+    resolved_text: Optional[str]
+    reconstructed: bool
+    is_corrected: bool
+    replacement: Optional[str]
+    decision: Optional[Decision]
+    notes: List[str]
+    is_vectorized: bool
+    flags: List[Flag]
+    ink_ratio: Optional[float]
+    stroke_width: Optional[float]
+    source_glyph_bboxes: Tuple[Tuple[float, float, float, float], ...]
+    editor_color: Optional[str]
+    output_text: str
 
 class Page:
     number: int
@@ -55,6 +122,78 @@ class Page:
     height: float
     rotation: float
     diagnostic: Diagnostic
+    native: "NativeContainer"
+    graphics: "GraphicsContainer"
+    ocr: "OcrContainer"
+    resolved: "ResolvedContainer"
+    layout_root: Optional["LayoutBox"]
+    links: List["LinkElement"]
+    link_rects: List[Tuple[float, float, float, float]]
+
+class LayoutBox:
+    bbox: Optional[BBox]
+    type: str
+    reading_order: int
+    word_ids: List[int]
+    children: List["LayoutBox"]
+    metadata: Dict[str, Any]
+
+class NativeContainer:
+    words: List[Word]
+    fonts: List[Font]
+
+class ImageElement:
+    id: int
+    bbox: Optional[BBox]
+    width: Optional[int]
+    height: Optional[int]
+    source: str
+    keep_original: bool
+    contains_text: Optional[bool]
+
+class TableElement:
+    id: int
+    bbox: Optional[BBox]
+    source: str
+    rows: List[List[Optional[str]]]
+    cell_bboxes: List[List[Optional[BBox]]]
+    keep_original: bool
+
+class GraphicVector:
+    bbox: Optional[BBox]
+    keep_original: bool
+    color: Optional[str]
+
+class GraphicsContainer:
+    images: List[ImageElement]
+    tables: List[TableElement]
+    lines: List[GraphicVector]
+    rects: List[GraphicVector]
+    curves: List[GraphicVector]
+
+class LinkElement:
+    id: int
+    bbox: Optional[BBox]
+    kind: str
+    uri: Optional[str]
+    target_page: Optional[int]
+    word_ids: List[int]
+
+class OcrBlock:
+    bbox: Optional[BBox]
+    type: str
+    content: str
+
+class OcrContainer:
+    engine: Optional[str]
+    words: List[Word]
+    blocks: List[OcrBlock]
+
+class ResolvedContainer:
+    words: List[Word]
+    images: List[ImageElement]
+    tables: List[TableElement]
+    fonts: List[Font]
 
 class Document:
     metadata: Metadata
@@ -68,14 +207,40 @@ class Document:
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "Document": ...
 
+def extract_document(doc_obj: Document, pdf_path: Union[str, PathLike[str]]) -> Document: ...
+def diagnose_document(doc: Document) -> Document: ...
+def run_ocr(
+    doc: Document,
+    pdf_path: Union[str, PathLike[str]],
+    backend_name: str = "paddle",
+    pages: Optional[List[int]] = None,
+    **kwargs: Any,
+) -> Document: ...
+def resolve_document(doc: Document) -> Document: ...
+def display_report(doc: Document) -> None: ...
+
+def extraire(doc_obj: Document, pdf_path: Union[str, PathLike[str]]) -> Document: ...
+def diagnostiquer(doc: Document) -> Document: ...
+def ocraliser(
+    doc: Document,
+    pdf_path: Union[str, PathLike[str]],
+    backend_name: str = "paddle",
+    pages: Optional[List[int]] = None,
+    **kwargs: Any,
+) -> Document: ...
+def resoudre(doc: Document) -> Document: ...
+
 def executer_pipeline(
     pdf_path: Union[str, "PathLike[str]"],
-    strategy: Strategy = "overlay",
-    sauver_json: bool = True,
+    strategy: Strategy = "rebuilt",
+    sauver_json: bool = False,
     dpi: int = 300,
     dpi_ocr_vectoriel: int = 300,
-    paddle_lang: str = "fr",
+    paddle_lang: Optional[str] = None,
     ocr_mode: OcrMode = "auto",
+    render: bool = True,
 ) -> Document: ...
+
+run_pipeline = executer_pipeline
 
 def main() -> None: ...
