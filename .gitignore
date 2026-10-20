@@ -1,4 +1,4 @@
-# --- Environnements virtuels ---
+# --- Virtual environments ---
 venv/
 .venv/
 env/
@@ -7,7 +7,7 @@ venv-deepseek/
 .env/
 .env
 
-# --- Python & Caches ---
+# --- Python & caches ---
 *.pyc
 __pycache__/
 *.py[cod]
@@ -15,7 +15,7 @@ __pycache__/
 *.so
 .pytest_cache/
 
-# --- Fichiers système (macOS / Windows / IDEs) ---
+# --- System files (macOS / Windows / IDEs) ---
 .DS_Store
 .DS_Store?
 ._*
@@ -27,7 +27,7 @@ Thumbs.db
 .idea/
 resultats/
 
-# --- Build, Packaging & Distribution ---
+# --- Build, packaging & distribution ---
 build/
 develop-eggs/
 dist/
@@ -38,20 +38,19 @@ eggs/
 *.egg
 *.build/
 
-# --- Fichiers de sorties temporaires & Logs ---
+# --- Temporary output files & logs ---
 *.log
 *.output.pdf
 *.xlf
+*.layout.json
 *_rebuilt.pdf
 *_cleaned.pdf
 *_propre.pdf
 *_propre.json
-*document.json
+*.document.json
 *repomap.json
-*.json
-!docs/schemas/*.json
 
-# --- Sensible & Secrets ---
+# --- Sensitive files & secrets ---
 anciens/
 apps/
 experiments/
@@ -62,9 +61,8 @@ work-trees/
 .continue.ctx
 CONTINUE_SETUP.md
 
-# --- Sorties générées (exemples, CLI, tests) ---
+# --- Generated outputs (examples, CLI, tests) ---
 output/
-*.document.json
 *_flow.pdf
 *_flow-*.pdf
 *_propre-*.pdf
@@ -74,12 +72,12 @@ tests/fixtures/**/*_propre*
 tests/fixtures/**/*_flow*
 tests/fixtures/**/*_rebuilt*
 
-# --- Outils de dev / couverture ---
+# --- Development tools / coverage ---
 .coverage
 htmlcov/
 .ruff_cache/
 .mypy_cache/
 
-# --- Documents personnels : ne jamais committer de vrais documents ---
-# Placez vos PDF privés dans un dossier ignoré, ex. private/
+# --- Personal documents: never commit real documents ---
+# Place private PDFs in an ignored directory, e.g. private/
 private/
