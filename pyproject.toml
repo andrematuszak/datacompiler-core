@@ -44,8 +44,8 @@ dependencies = [
 
 [project.urls]
 Homepage = "https://data-compiler.com"
-Repository = "https://github.com/andrematuszak/datacompiler"
-Documentation = "https://github.com/andrematuszak/datacompiler#readme"
+Repository = "https://github.com/andrematuszak/datacompiler-core"
+Documentation = "https://github.com/andrematuszak/datacompiler-core#readme"
 
 [project.optional-dependencies]
 # Client OCR Mistral facultatif ; le pipeline par défaut utilise PaddleOCR.
