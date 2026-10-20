@@ -29,17 +29,18 @@ def executer_pipeline(pdf_path, strategy="rebuilt", sauver_json=False,
                       dpi=300, dpi_ocr_vectoriel=300, paddle_lang=None,
                       ocr_mode="auto", render=True):
 
-    """Run extraction, diagnostics, OCR enrichment, and resolution.
+    """Run the PDF pipeline in six stages.
 
     Set ``render=False`` when a caller will edit the resolved document before
     producing its output. Rendering remains enabled by default for compatibility.
     Exécute le pipeline de compilation de PDF en 6 étapes claires :
-      [1/6] Extraction du texte natif
-      [2/6] Diagnostic de page
-      [3/6] Enrichissement OCR
-      [4/6] Segmentation
-      [5/6] Compilation et résolution
-      [6/6] Rendu final
+    The six stages are:
+    1. Native-text extraction.
+    2. Page diagnostics.
+    3. OCR enrichment.
+    4. Segmentation.
+    5. Content compilation and resolution.
+    6. Final rendering (or deferred rendering when ``render=False``).
     """
     if ocr_mode == "force":
         raise NotImplementedError(
