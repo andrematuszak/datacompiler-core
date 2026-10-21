@@ -60,7 +60,8 @@ python -m pip install -e ".[dev]"                               # Tests and deve
 ```
 
 `langdetect` is a base dependency, so language detection does not require a
-separate `language` extra. Full-page OCR is not implemented in this version.
+separate `language` extra. Full-page Mistral OCR requires the optional
+`mistral` extra and `MISTRAL_API_KEY`.
 
 ## Command-line usage
 
@@ -87,19 +88,28 @@ strategy is deprecated and redirects to `rebuilt` with a warning.
 
 ### OCR
 
-The pipeline uses PaddleOCR for targeted OCR of vector-text regions. In the
-default `--ocr-mode auto`, it determines the language from native PDF text
-when possible. If the PDF's native text does not provide a language, specify
-the PaddleOCR language:
+The default `--ocr-mode auto` routes each page independently. Healthy native
+text is preserved, mixed native text and vectorized glyphs use targeted
+PaddleOCR, and full-page image scans without native text or tables use Mistral
+OCR. The initial handwriting signal is a heuristic for this simple scan
+category; it is not a general handwriting classifier. OCR routes are logged
+as page categories and strategies without printing the detailed diagnostic
+signals.
+
+For targeted PaddleOCR, the language is detected from each page's native text
+when possible. If it cannot be detected, specify the PaddleOCR language:
 
 ```bash
 datacompiler document.pdf --paddle-lang en
 ```
 
 `--ocr-mode vector` enables only targeted vector-text OCR; `--ocr-mode skip`
-disables OCR and is not the recommended workflow. Scanned documents without
-usable native text do not receive full-page OCR in this version.
-`--ocr-mode force` is not implemented.
+disables OCR and is not the recommended workflow. Mistral OCR output retains
+the original Markdown block and any structured blocks, table geometry, and
+confidence data returned by the API. Language detection for scan pages runs
+after OCR and is recorded as post-OCR provenance. `--ocr-mode force` remains
+unsupported; automatic page-level routing may still select full-page Mistral
+OCR.
 
 ### Machine translation and editing
 

@@ -78,8 +78,8 @@ def _trouver_mots_concernes(resolved_words, cible_tokens):
 
 def test_word_count_consistency():
     fixture_dir = Path(__file__).parent / "fixtures"
-    pdf_propre = fixture_dir / "impots-revenu" / "impots-revenu_rebuilt.pdf"
-    json_doc = fixture_dir / "impots-revenu" / "impots-revenu.document.json"
+    pdf_propre = fixture_dir / "tax-notice_rebuilt.pdf"
+    json_doc = fixture_dir / "tax-notice.document.json"
 
     if not pdf_propre.exists() or not json_doc.exists():
         pytest.skip("Fichiers de sortie manquants. Lancez d'abord le pipeline.")

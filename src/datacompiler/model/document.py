@@ -149,6 +149,8 @@ class OcrBlock:
     bbox: Optional[BBox] = None
     type: str = "text"
     content: str = ""
+    confidence: Optional[float] = None
+    metadata: Dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -196,7 +198,6 @@ class Document:
 
     def to_dict(self) -> Dict[str, Any]:
         data = asdict(self)
-        data.pop("diagnostic", None)
         data["schema_version"] = JSON_SCHEMA_VERSION
         return data
 
@@ -310,7 +311,16 @@ class Document:
             page.ocr = OcrContainer(
                 engine=ocr.get("engine"),
                 words=[word(x) for x in ocr.get("words", [])],
-                blocks=[OcrBlock(BBox.from_dict(x.get("bbox")), x.get("type", "text"), x.get("content", "")) for x in ocr.get("blocks", [])]
+                blocks=[
+                    OcrBlock(
+                        bbox=BBox.from_dict(x.get("bbox")),
+                        type=x.get("type", "text"),
+                        content=x.get("content", ""),
+                        confidence=x.get("confidence"),
+                        metadata=dict(x.get("metadata", {})),
+                    )
+                    for x in ocr.get("blocks", [])
+                ],
             )
             page.resolved = ResolvedContainer(
                 words=[word(x) for x in resolved.get("words", [])],

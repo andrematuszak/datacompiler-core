@@ -14,7 +14,7 @@ from datacompiler.frontend.ocr.vector_zones import recuperer_texte_vectorise
 from datacompiler.model.document import Document, Word
 from datacompiler.model.geometry import BBox
 
-PDF = Path(__file__).parent / "fixtures" / "impots-revenu" / "impots-revenu.pdf"
+PDF = Path(__file__).parent / "fixtures" / "tax-notice.pdf"
 
 
 class _FauxBackend:

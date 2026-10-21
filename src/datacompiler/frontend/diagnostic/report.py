@@ -72,12 +72,10 @@ def display_report(doc: Document) -> None:
 
 def display_routing_summary(doc: Document) -> None:
     """Print the concise page-level routing log used during normal runs."""
-    for page in doc.pages:
-        routing = page.routing
-        category = routing.category or "unrouted"
-        strategy = routing.strategy or "unrouted"
-        print(f"Page {page.number}: Category: {category}")
-        print(f"         Strategy: {strategy}")
+    from datacompiler.frontend.routing import format_page_routes
+
+    for summary in format_page_routes(doc.pages):
+        print(summary)
 
 
 

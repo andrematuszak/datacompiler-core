@@ -2,16 +2,12 @@
 
 from __future__ import annotations
 
+from datacompiler.model.metadata import LanguageInfo
 from datacompiler.compile.layout import grouper_par_ligne
 
 
-def detect_language(text: str) -> str | None:
-    """Return a two-letter language code, or ``None`` for empty/uncertain text.
-
-    Detection is optional so the core package remains lightweight. Install the
-    ``language`` extra to enable it. The function deliberately returns no
-    guess for very short text, where language identification is unreliable.
-    """
+def detect_language_info(text: str, source: str = "native_text") -> LanguageInfo | None:
+    """Return a language code, confidence, and provenance for reliable text."""
     normalized = " ".join((text or "").split())
     if len(normalized) < 30 or len(normalized.split()) < 5:
         return None
@@ -23,7 +19,6 @@ def detect_language(text: str) -> str | None:
             "datacompiler[language]."
         ) from exc
 
-    # langdetect uses randomized feature ordering; pin it for repeatable output.
     DetectorFactory.seed = 0
     try:
         candidates = detect_langs(normalized)
@@ -31,7 +26,38 @@ def detect_language(text: str) -> str | None:
         return None
     if not candidates or candidates[0].prob < 0.70:
         return None
-    return candidates[0].lang
+    return LanguageInfo(
+        code=candidates[0].lang,
+        confidence=float(candidates[0].prob),
+        source=source,
+    )
+
+
+def detect_language(text: str) -> str | None:
+    """Return a two-letter language code, or ``None`` for empty/uncertain text.
+
+    Detection is optional so the core package remains lightweight. Install the
+    ``language`` extra to enable it. The function deliberately returns no
+    guess for very short text, where language identification is unreliable.
+    """
+    result = detect_language_info(text)
+    return result.code if result else None
+
+
+def _page_text(page, source: str) -> str:
+    words = page.native.words if source == "native_text" else page.ocr.words
+    return " ".join((word.output_text or word.text or "") for word in words)
+
+
+def detect_page_language(page, source: str = "native_text") -> LanguageInfo | None:
+    """Detect and annotate one page from its native or post-OCR text layer."""
+    result = detect_language_info(_page_text(page, source), source=source)
+    if result:
+        page.language = result
+        words = page.native.words if source == "native_text" else page.ocr.words
+        for word in words:
+            word.language = result.code
+    return result
 
 
 def detect_document_languages(document) -> dict[str, str]:

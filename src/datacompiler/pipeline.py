@@ -9,20 +9,27 @@ from datacompiler.frontend.diagnostic.vector_text import zones_texte_vectorise_p
 from datacompiler.model.document import Document
 from datacompiler.frontend.extract import extraire
 from datacompiler.frontend.layout import segmenter_page
-from datacompiler.frontend import diagnose_document, display_routing_summary
-from datacompiler.frontend.routing import route_document
+from datacompiler.frontend import diagnose_document
 from datacompiler.frontend.ocr.paddle import PaddleOCRBackend
+from datacompiler.frontend.ocr.mistral import MistralBackend
 from datacompiler.frontend.ocr.vector_zones import recuperer_texte_vectorise
+from datacompiler.frontend.routing import (
+    FALLBACK_OR_MANUAL_REVIEW,
+    FULL_PAGE_MISTRAL_OCR,
+    TARGETED_PADDLE_OCR,
+    format_page_routes,
+    route_page,
+)
+from datacompiler.model.metadata import LanguageInfo
 from datacompiler.compile import resoudre
 from datacompiler.backend import EXTENSIONS, FORMATS, _strategy_for_cli_format, resolve_deprecated_strategy
 from datacompiler.backend.faithful_pdf import render_faithful_pdf
 from datacompiler.backend.flow_pdf import render_flow_pdf
 from datacompiler.backend.rebuilt_pdf import render_rebuilt_pdf
-from datacompiler.translation.language import detect_document_language
+from datacompiler.translation.language import detect_page_language
 
 logger = logging.getLogger(__name__)
-# Messages de progression destinés à l'utilisateur final (deux lignes au total).
-# Tout le reste du journal est réservé au développement.
+# Page-level OCR routes are user-facing summaries; detailed diagnostics remain developer-only.
 progress = logging.getLogger("datacompiler.progress")
 
 
@@ -45,8 +52,9 @@ def executer_pipeline(pdf_path, strategy="rebuilt", sauver_json=False,
     """
     if ocr_mode == "force":
         raise NotImplementedError(
-            "Full-page OCR is not implemented in this release. "
-            "Use ocr_mode='vector' for targeted OCR, or 'skip' to disable OCR."
+            "Forced full-page OCR is not implemented. "
+            "Automatic per-page routing may use Mistral; use ocr_mode='vector' "
+            "for targeted OCR, or 'skip' to disable OCR."
         )
     if ocr_mode not in {"auto", "skip", "vector"}:
         raise ValueError(f"Unknown OCR mode: {ocr_mode!r}")
@@ -59,55 +67,96 @@ def executer_pipeline(pdf_path, strategy="rebuilt", sauver_json=False,
 
     logger.info("[2/6] Running diagnostics...")
     diagnose_document(doc)
-    route_document(doc)
-    if logger.isEnabledFor(logging.INFO):
-        display_routing_summary(doc)
+    for page in doc.pages:
+        page.routing = route_page(page, ocr_mode=ocr_mode)
 
     logger.debug(
-        "Diagnostics complete. Full-page OCR recommendation: %s (not enabled in this pipeline)",
+        "Diagnostics complete. Full-page OCR recommendation: %s",
         getattr(doc.diagnostic, "recommend_full_ocr", False)
     )
 
 
     logger.info("[3/6] Processing OCR...")
 
+    paddle_pages_by_language = {}
+    mistral_pages = []
     if ocr_mode == "skip":
         logger.info("      [OCR] 'skip' mode: OCR is disabled.")
     else:
-        langue_ocr = paddle_lang
-        if langue_ocr is None:
-            try:
-                langue_ocr = detect_document_language(doc)
-            except RuntimeError as exc:
-                logger.warning("Automatic language detection is unavailable: %s", exc)
-            if langue_ocr:
-                logger.info("      [OCR] Detected language: %s", langue_ocr)
-            else:
-                logger.warning(
-                    "Could not determine the PDF language from its native text; "
-                    "targeted OCR is skipped. Set paddle_lang (or --paddle-lang) explicitly."
+        for page in doc.pages:
+            if paddle_lang:
+                page.language = LanguageInfo(
+                    code=paddle_lang,
+                    confidence=1.0,
+                    source="user_override",
                 )
-        # A) Branche OCR Pleine Page
-        do_full_ocr = (ocr_mode == "force") or (
-            ocr_mode == "auto" and getattr(doc.diagnostic, "recommend_full_ocr", False)
-        )
-        if do_full_ocr:
-            logger.warning(
-                "Full-page OCR was recommended for this PDF, but this release "
-                "does not run it. Continuing with targeted vector OCR only."
-            )
-        else:
-            logger.info("      [OCR] Full-page OCR is not required.")
+                for word in page.native.words:
+                    word.language = paddle_lang
+            elif page.native.words:
+                try:
+                    detect_page_language(page, source="native_text")
+                except RuntimeError as exc:
+                    logger.warning("Automatic language detection is unavailable: %s", exc)
 
-        # B) Branche OCR Ciblé (Zones vectorielles)
-        if ocr_mode in ("auto", "vector") and langue_ocr:
-            logger.info("      [OCR] Checking vector-text regions...")
-            backend_paddle = PaddleOCRBackend(lang=langue_ocr, dpi=dpi_ocr_vectoriel)
+        paddle_pages = [
+            page for page in doc.pages
+            if page.routing and page.routing.strategy == TARGETED_PADDLE_OCR
+        ]
+        mistral_pages = [
+            page for page in doc.pages
+            if page.routing and page.routing.strategy == FULL_PAGE_MISTRAL_OCR
+        ]
+
+        for page in paddle_pages:
+            language = paddle_lang or page.language.code
+            if not language:
+                page.routing.category = "needs_review"
+                page.routing.strategy = FALLBACK_OR_MANUAL_REVIEW
+                page.routing.backend = None
+                page.routing.reasons.append("native text language could not be detected for PaddleOCR")
+                logger.warning(
+                    "Page %s: targeted OCR skipped because its language could not be determined; "
+                    "set paddle_lang explicitly.",
+                    page.number,
+                )
+                continue
+            if paddle_lang:
+                page.language = LanguageInfo(
+                    code=paddle_lang,
+                    confidence=1.0,
+                    source="user_override",
+                )
+            paddle_pages_by_language.setdefault(language, []).append(page.number)
+
+    for route_summary in format_page_routes(doc.pages):
+        progress.info(route_summary)
+
+    if ocr_mode != "skip":
+        for language, page_numbers in paddle_pages_by_language.items():
+            logger.info(
+                "Running targeted PaddleOCR on page(s) %s using language %s.",
+                ", ".join(str(number) for number in page_numbers),
+                language,
+            )
+            backend_paddle = PaddleOCRBackend(lang=language, dpi=dpi_ocr_vectoriel)
             recuperer_texte_vectorise(
-                doc, pdf_path, backend_paddle,
-                lang=langue_ocr, dpi=dpi_ocr_vectoriel,
+                doc,
+                pdf_path,
+                backend_paddle,
+                lang=language,
+                dpi=dpi_ocr_vectoriel,
+                pages=page_numbers,
             )
 
+        if mistral_pages:
+            page_numbers = [page.number for page in mistral_pages]
+            MistralBackend().ocraliser(doc, pdf_path, pages=page_numbers)
+            for page in mistral_pages:
+                if page.ocr.words:
+                    try:
+                        detect_page_language(page, source="post_ocr")
+                    except RuntimeError as exc:
+                        logger.warning("Post-OCR language detection is unavailable: %s", exc)
 
     segmentation_activee = False
     for page in doc.pages:
@@ -191,6 +240,18 @@ def traduire_document(doc, pdf_path, target_lang, source_lang=None, *, edit=Fals
     for avertissement in application.layout_warnings:
         logger.warning("Translated layout: %s", avertissement)
     return sortie
+
+
+def _document_source_language(doc):
+    """Return the most common confidently detected page language, if available."""
+    languages = [
+        page.language.code
+        for page in getattr(doc, "pages", [])
+        if getattr(page, "language", None) is not None and page.language.code
+    ]
+    if not languages:
+        return None
+    return max(sorted(set(languages)), key=languages.count)
 
 
 # Format de sortie imposé par chaque stratégie de rendu en ligne de commande.
@@ -284,9 +345,21 @@ def main():
         if args.target_lang:
             progress.info("Traduction ignorée (--no-translate).")
     if args.target_lang and not args.no_translate:
+        if args.source_lang:
+            for page in getattr(document, "pages", []):
+                page.language = LanguageInfo(
+                    code=args.source_lang,
+                    confidence=1.0,
+                    source="user_override",
+                )
+                for word in page.native.words + page.ocr.words:
+                    word.language = args.source_lang
         try:
             sortie = traduire_document(
-                document, args.pdf, args.target_lang, args.source_lang,
+                document,
+                args.pdf,
+                args.target_lang,
+                args.source_lang or _document_source_language(document),
                 edit=args.edit_translation or args.editor,
             )
         except (RuntimeError, ValueError) as exc:

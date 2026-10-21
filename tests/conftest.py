@@ -20,7 +20,7 @@ def fixture_dir():
 @pytest.fixture(scope="session")
 def sample_pdf(fixture_dir):
     """Chemin vers le fichier PDF de test."""
-    pdf_path = fixture_dir / "impots-revenu/impots-revenu.pdf"
+    pdf_path = fixture_dir / "tax-notice.pdf"
     if not pdf_path.exists():
         pytest.fail(f"Le fichier de test {pdf_path} est introuvable.")
     return pdf_path

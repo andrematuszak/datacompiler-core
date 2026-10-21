@@ -69,4 +69,3 @@ class Diagnostic:
     handwritten_likely: Optional[bool] = None
     recommend_segmentation: bool = False
     segmentation_reasons: List[str] = field(default_factory=list)
-

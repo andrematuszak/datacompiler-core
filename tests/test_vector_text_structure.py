@@ -14,7 +14,7 @@ from datacompiler.frontend.diagnostic import vector_text
 from datacompiler.frontend.diagnostic.vector_text import zones_texte_vectorise_probable
 from datacompiler.frontend.extract.extract_pymupdf import extraire_page_pymupdf
 
-PDF = Path(__file__).parent / "fixtures" / "impots-revenu" / "impots-revenu.pdf"
+PDF = Path(__file__).parent / "fixtures" / "tax-notice.pdf"
 
 
 @pytest.fixture(scope="module")
