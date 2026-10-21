@@ -183,6 +183,8 @@ class Page:
     resolved: ResolvedContainer = field(default_factory=ResolvedContainer)
     layout_root: Optional[LayoutBox] = None
     links: List[LinkElement] = field(default_factory=list)
+    routing: Optional[OcrRouting] = None
+    language: Optional[LanguageInfo] = None
 
     @property
     def link_rects(self) -> List[Tuple[float, float, float, float]]:
