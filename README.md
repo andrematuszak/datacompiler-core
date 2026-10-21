@@ -93,7 +93,7 @@ when possible. If the PDF's native text does not provide a language, specify
 the PaddleOCR language:
 
 ```bash
-datacompiler document.pdf --paddle-lang en
+datacompiler document.pdf --paddle-lang en-us
 ```
 
 `--ocr-mode vector` enables only targeted vector-text OCR; `--ocr-mode skip`
@@ -109,8 +109,8 @@ language is detected by default, or you can specify it:
 
 ```bash
 export DEEPL_AUTH_KEY="..."  # Set an environment variable on Windows.
-datacompiler document.pdf --target-lang en
-datacompiler document.pdf --target-lang en --source-lang fr
+datacompiler document.pdf --target-lang en-us
+datacompiler document.pdf --target-lang en-us --source-lang fr
 ```
 
 The command creates `document.en.xlf` (XLIFF for review) and
