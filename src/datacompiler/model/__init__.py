@@ -5,7 +5,7 @@ continue d'écrire `from model import Document, Word, BBox, ...` sans avoir
 
 from datacompiler.model.geometry import BBox, Polygon
 from datacompiler.model.font import Font  # Ajouter ici d'éventuelles nouvelles classes (ex: FontFamily)
-from datacompiler.model.metadata import Metadata, Diagnostic
+from datacompiler.model.metadata import LanguageInfo, Metadata, Diagnostic, RoutingDecision
 from datacompiler.model.document import (
     Document, Page, Word, Decision, Flag,
     NativeContainer, GraphicsContainer, OcrContainer, ResolvedContainer,
@@ -13,7 +13,7 @@ from datacompiler.model.document import (
 )
 
 __all__ = [
-    "BBox", "Polygon", "Font", "Metadata", "Diagnostic", "Document", "Page",
+    "BBox", "Polygon", "Font", "LanguageInfo", "Metadata", "Diagnostic", "RoutingDecision", "Document", "Page",
     "Word", "Decision", "Flag", "NativeContainer", "GraphicsContainer",
     "OcrContainer", "ResolvedContainer", "ImageElement", "TableElement",
     "GraphicVector", "OcrBlock",

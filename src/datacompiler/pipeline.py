@@ -9,7 +9,8 @@ from datacompiler.frontend.diagnostic.vector_text import zones_texte_vectorise_p
 from datacompiler.model.document import Document
 from datacompiler.frontend.extract import extraire
 from datacompiler.frontend.layout import segmenter_page
-from datacompiler.frontend import diagnose_document, display_report
+from datacompiler.frontend import diagnose_document, display_routing_summary
+from datacompiler.frontend.routing import route_document
 from datacompiler.frontend.ocr.paddle import PaddleOCRBackend
 from datacompiler.frontend.ocr.vector_zones import recuperer_texte_vectorise
 from datacompiler.compile import resoudre
@@ -58,10 +59,9 @@ def executer_pipeline(pdf_path, strategy="rebuilt", sauver_json=False,
 
     logger.info("[2/6] Running diagnostics...")
     diagnose_document(doc)
-    # Le rapport de diagnostic est écrit avec print() : on ne l'affiche que
-    # si le journal INFO est actif (usage développeur).
+    route_document(doc)
     if logger.isEnabledFor(logging.INFO):
-        display_report(doc)
+        display_routing_summary(doc)
 
     logger.debug(
         "Diagnostics complete. Full-page OCR recommendation: %s (not enabled in this pipeline)",

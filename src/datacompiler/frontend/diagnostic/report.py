@@ -70,6 +70,16 @@ def display_report(doc: Document) -> None:
     print("=" * 64 + "\n")
 
 
+def display_routing_summary(doc: Document) -> None:
+    """Print the concise page-level routing log used during normal runs."""
+    for page in doc.pages:
+        routing = page.routing
+        category = routing.category or "unrouted"
+        strategy = routing.strategy or "unrouted"
+        print(f"Page {page.number}: Category: {category}")
+        print(f"         Strategy: {strategy}")
+
+
 
 # Backward-compatible aliases for callers using the original French API.
 _oui_non = _yes_no

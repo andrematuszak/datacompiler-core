@@ -18,6 +18,25 @@ class Metadata:
 
 
 @dataclass
+class RoutingDecision:
+    """The OCR strategy selected from diagnostic evidence for one page."""
+
+    category: Optional[str] = None
+    strategy: Optional[str] = None
+    backend: Optional[str] = None
+    reasons: List[str] = field(default_factory=list)
+
+
+@dataclass
+class LanguageInfo:
+    """Language evidence kept separately from OCR routing."""
+
+    code: Optional[str] = None
+    confidence: Optional[float] = None
+    source: Optional[str] = None
+
+
+@dataclass
 class Diagnostic:
     has_native_text: bool = False
     has_images: bool = False
@@ -47,7 +66,7 @@ class Diagnostic:
     categorie: Optional[str] = None
     vectorized_text_detected: bool = False
     has_images_with_text: Optional[bool] = None
+    handwritten_likely: Optional[bool] = None
     recommend_segmentation: bool = False
     segmentation_reasons: List[str] = field(default_factory=list)
-
 

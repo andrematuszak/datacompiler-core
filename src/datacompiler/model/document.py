@@ -6,7 +6,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from datacompiler.model.geometry import BBox, Polygon
 from datacompiler.model.font import Font
-from datacompiler.model.metadata import Diagnostic, Metadata
+from datacompiler.model.metadata import Diagnostic, LanguageInfo, Metadata, RoutingDecision
 
 JSON_SCHEMA_VERSION = "1.0"
 
@@ -173,6 +173,8 @@ class Page:
     height: float
     rotation: float = 0.0
     diagnostic: Diagnostic = field(default_factory=Diagnostic)
+    routing: RoutingDecision = field(default_factory=RoutingDecision)
+    language: LanguageInfo = field(default_factory=LanguageInfo)
     native: NativeContainer = field(default_factory=NativeContainer)
     graphics: GraphicsContainer = field(default_factory=GraphicsContainer)
     ocr: OcrContainer = field(default_factory=OcrContainer)
@@ -243,6 +245,16 @@ class Document:
                 return Diagnostic()
             return Diagnostic(**{k: v for k, v in d.items() if k in Diagnostic.__dataclass_fields__})
 
+        def routing(d):
+            if not d:
+                return RoutingDecision()
+            return RoutingDecision(**{k: v for k, v in d.items() if k in RoutingDecision.__dataclass_fields__})
+
+        def language(d):
+            if not d:
+                return LanguageInfo()
+            return LanguageInfo(**{k: v for k, v in d.items() if k in LanguageInfo.__dataclass_fields__})
+
         def image(d):
             d = dict(d)
             d["bbox"] = BBox.from_dict(d.get("bbox"))
@@ -283,6 +295,8 @@ class Document:
             resolved = raw.get("resolved", {})
             page = Page(number=raw["number"], width=raw["width"], height=raw["height"], rotation=raw.get("rotation", 0.0))
             page.diagnostic = page_diagnostic(raw.get("diagnostic", {}))
+            page.routing = routing(raw.get("routing", {}))
+            page.language = language(raw.get("language", {}))
             
             # Utilisation du helper sécurisé font_obj
             page.native = NativeContainer(

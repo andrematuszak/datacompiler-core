@@ -10,6 +10,7 @@ __all__ = [
     "diagnostiquer",
     "report",
     "display_report",
+    "display_routing_summary",
     "ocraliser",
     "segmenter_page",
 ]
@@ -22,6 +23,7 @@ _EXPORTS = {
     "diagnostiquer": ("datacompiler.frontend.diagnostic", "diagnostiquer"),
     "report": ("datacompiler.frontend.diagnostic.report", None),
     "display_report": ("datacompiler.frontend.diagnostic.report", "display_report"),
+    "display_routing_summary": ("datacompiler.frontend.diagnostic.report", "display_routing_summary"),
     "ocraliser": ("datacompiler.frontend.ocr", "ocraliser"),
     "segmenter_page": ("datacompiler.frontend.layout", "segmenter_page"),
 }
