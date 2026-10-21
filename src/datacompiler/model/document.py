@@ -149,6 +149,23 @@ class OcrBlock:
     bbox: Optional[BBox] = None
     type: str = "text"
     content: str = ""
+    confidence: Optional[float] = None
+    metadata: Dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class OcrRouting:
+    category: str
+    strategy: str
+    backend: Optional[str] = None
+    reasons: List[str] = field(default_factory=list)
+
+
+@dataclass
+class LanguageInfo:
+    language: str
+    confidence: Optional[float] = None
+    provenance: str = "native_text"
 
 
 @dataclass
@@ -179,6 +196,8 @@ class Page:
     resolved: ResolvedContainer = field(default_factory=ResolvedContainer)
     layout_root: Optional[LayoutBox] = None
     links: List[LinkElement] = field(default_factory=list)
+    routing: Optional[OcrRouting] = None
+    language: Optional[LanguageInfo] = None
 
     @property
     def link_rects(self) -> List[Tuple[float, float, float, float]]:
@@ -194,7 +213,6 @@ class Document:
 
     def to_dict(self) -> Dict[str, Any]:
         data = asdict(self)
-        data.pop("diagnostic", None)
         data["schema_version"] = JSON_SCHEMA_VERSION
         return data
 
@@ -243,6 +261,16 @@ class Document:
                 return Diagnostic()
             return Diagnostic(**{k: v for k, v in d.items() if k in Diagnostic.__dataclass_fields__})
 
+        def routing(d):
+            if not d:
+                return None
+            return OcrRouting(**{k: v for k, v in d.items() if k in OcrRouting.__dataclass_fields__})
+
+        def language_info(d):
+            if not d:
+                return None
+            return LanguageInfo(**{k: v for k, v in d.items() if k in LanguageInfo.__dataclass_fields__})
+
         def image(d):
             d = dict(d)
             d["bbox"] = BBox.from_dict(d.get("bbox"))
@@ -283,6 +311,8 @@ class Document:
             resolved = raw.get("resolved", {})
             page = Page(number=raw["number"], width=raw["width"], height=raw["height"], rotation=raw.get("rotation", 0.0))
             page.diagnostic = page_diagnostic(raw.get("diagnostic", {}))
+            page.routing = routing(raw.get("routing"))
+            page.language = language_info(raw.get("language"))
             
             # Utilisation du helper sécurisé font_obj
             page.native = NativeContainer(
@@ -296,7 +326,16 @@ class Document:
             page.ocr = OcrContainer(
                 engine=ocr.get("engine"),
                 words=[word(x) for x in ocr.get("words", [])],
-                blocks=[OcrBlock(BBox.from_dict(x.get("bbox")), x.get("type", "text"), x.get("content", "")) for x in ocr.get("blocks", [])]
+                blocks=[
+                    OcrBlock(
+                        bbox=BBox.from_dict(x.get("bbox")),
+                        type=x.get("type", "text"),
+                        content=x.get("content", ""),
+                        confidence=x.get("confidence"),
+                        metadata=dict(x.get("metadata", {})),
+                    )
+                    for x in ocr.get("blocks", [])
+                ],
             )
             page.resolved = ResolvedContainer(
                 words=[word(x) for x in resolved.get("words", [])],

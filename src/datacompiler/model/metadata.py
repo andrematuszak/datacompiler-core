@@ -47,7 +47,7 @@ class Diagnostic:
     categorie: Optional[str] = None
     vectorized_text_detected: bool = False
     has_images_with_text: Optional[bool] = None
+    handwritten_likely: Optional[bool] = None
     recommend_segmentation: bool = False
     segmentation_reasons: List[str] = field(default_factory=list)
-
 

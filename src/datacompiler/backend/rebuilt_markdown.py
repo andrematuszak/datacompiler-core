@@ -9,6 +9,23 @@ def render_markdown(doc: Document) -> str:
 
     for page in doc.pages:
         morceaux.append(f"\n## Page {page.number}\n")
+        mistral_markdown = next(
+            (
+                block.content
+                for block in page.ocr.blocks
+                if block.type == "markdown" and block.content
+            ),
+            None,
+        )
+        if (
+            mistral_markdown
+            and page.routing
+            and page.routing.strategy == "full_page_mistral_ocr"
+        ):
+            morceaux.append(mistral_markdown)
+            morceaux.append("")
+            continue
+
         mots = page.resolved.words
         if mots:
             lignes = grouper_par_ligne(mots)

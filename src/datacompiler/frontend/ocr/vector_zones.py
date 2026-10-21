@@ -467,7 +467,14 @@ def _barre_oblique_entre_nombres(zone: BBox, mots_natifs) -> Word | None:
     )
 
 
-def recuperer_texte_vectorise(doc: Document, pdf_path: str, backends, lang: str = "fra", dpi: int = 300) -> Document:
+def recuperer_texte_vectorise(
+    doc: Document,
+    pdf_path: str,
+    backends,
+    lang: str = "fra",
+    dpi: int = 300,
+    pages: list[int] | None = None,
+) -> Document:
     """Run targeted OCR on detected vector-text regions and add recovered words to the document."""
     if not isinstance(backends, dict):
         if hasattr(backends, "ocraliser_zone"):
@@ -482,6 +489,8 @@ def recuperer_texte_vectorise(doc: Document, pdf_path: str, backends, lang: str 
     source = pymupdf.open(pdf_path)
     try:
         for i, page in enumerate(doc.pages):
+            if pages is not None and page.number not in pages:
+                continue
             zones = zones_texte_vectorise_probable(page)
             if not zones:
                 continue

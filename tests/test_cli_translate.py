@@ -3,6 +3,7 @@
 import os
 import subprocess
 import sys
+from types import SimpleNamespace
 
 import pytest
 
@@ -43,6 +44,21 @@ def test_target_lang_triggers_translation(monkeypatch, espions):
     assert espions == ([
         (("document-factice", "x.pdf", "en", "fr"), {"edit": False}),
     ], [])
+
+
+def test_target_lang_uses_detected_page_language_when_source_is_not_overridden(
+    monkeypatch, espions
+):
+    document = SimpleNamespace(
+        pages=[
+            SimpleNamespace(language=SimpleNamespace(language="pl"))
+        ]
+    )
+    monkeypatch.setattr(pipeline, "executer_pipeline", lambda *a, **k: document)
+
+    _lancer(monkeypatch, "--target-lang", "en")
+
+    assert espions[0][0][0][3] == "pl"
 
 
 def test_no_translate_wins_over_target_lang(monkeypatch, espions):

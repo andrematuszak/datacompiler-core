@@ -4,7 +4,7 @@ de l'objet Document DÉJÀ EXTRAIT. Ne rouvre jamais le PDF."""
 from datacompiler.model.document import Document
 from datacompiler.model.metadata import Diagnostic
 
-from .categorize import SEUIL_QUALITE_CORROMPU, categoriser, evaluer_segmentation_page
+from .categorize import SEUIL_QUALITE_CORROMPU, evaluer_segmentation_page
 from . import blind_spots, container, spatial_integrity, text_integrity, vector_text, visual_integrity
 
 __all__ = ["diagnostiquer"]
@@ -26,6 +26,13 @@ def _diagnostiquer_page(page) -> Diagnostic:
     texte_vectorise = vector_text.texte_vectorise_detecte(page)
     images_avec_texte = visual_integrity.images_avec_texte(page)
     pleine_page = couverture >= visual_integrity.SEUIL_COUVERTURE_PLEINE_PAGE
+    if images_avec_texte is None and pleine_page and not has_native:
+        images_avec_texte = True
+    handwritten_likely = bool(
+        pleine_page and not has_native and images_avec_texte and not page.graphics.tables
+    )
+    if handwritten_likely:
+        notes.append("Handwriting is likely for a full-page text scan without tables")
     ocr_integre = pleine_page and has_native
 
     if ocr_integre:
@@ -116,8 +123,8 @@ def _diagnostiquer_page(page) -> Diagnostic:
     diag.notes = notes
     diag.vectorized_text_detected = texte_vectorise
     diag.has_images_with_text = images_avec_texte
+    diag.handwritten_likely = handwritten_likely
     evaluer_segmentation_page(page, diag)
-    diag.categorie = categoriser(diag.has_native_text, diag.embedded_ocr_detected, diag.native_text_quality, diag.native_text_coverage)
     return diag
 
 
@@ -242,5 +249,4 @@ def diagnostiquer(doc: Document) -> Document:
     doc.diagnostic.vectorized_text_detected = any(page.diagnostic.vectorized_text_detected for page in doc.pages)
     statuts_images_texte = [page.diagnostic.has_images_with_text for page in doc.pages if page.diagnostic.has_images_with_text is not None]
     doc.diagnostic.has_images_with_text = any(statuts_images_texte) if statuts_images_texte else None
-    doc.diagnostic.categorie = categoriser(doc.diagnostic.has_native_text, doc.diagnostic.embedded_ocr_detected, doc.diagnostic.native_text_quality, doc.diagnostic.native_text_coverage)
     return doc
