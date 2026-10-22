@@ -11,11 +11,11 @@ from datacompiler.frontend.extract import extraire
 from datacompiler.frontend.layout import segmenter_page
 from datacompiler.frontend import diagnose_document
 from datacompiler.frontend.ocr.paddle import PaddleOCRBackend
-from datacompiler.frontend.ocr.mistral import MistralBackend
+from datacompiler.frontend.ocr.nvidia import NvidiaBackend
 from datacompiler.frontend.ocr.vector_zones import recuperer_texte_vectorise
 from datacompiler.frontend.routing import (
     FALLBACK_OR_MANUAL_REVIEW,
-    FULL_PAGE_MISTRAL_OCR,
+    FULL_PAGE_NVIDIA_OCR,
     TARGETED_PADDLE_OCR,
     format_page_routes,
     route_page,
@@ -53,7 +53,7 @@ def executer_pipeline(pdf_path, strategy="rebuilt", sauver_json=False,
     if ocr_mode == "force":
         raise NotImplementedError(
             "Forced full-page OCR is not implemented. "
-            "Automatic per-page routing may use Mistral; use ocr_mode='vector' "
+            "Automatic per-page routing may use NVIDIA through OpenRouter; use ocr_mode='vector' "
             "for targeted OCR, or 'skip' to disable OCR."
         )
     if ocr_mode not in {"auto", "skip", "vector"}:
@@ -79,7 +79,7 @@ def executer_pipeline(pdf_path, strategy="rebuilt", sauver_json=False,
     logger.info("[3/6] Processing OCR...")
 
     paddle_pages_by_language = {}
-    mistral_pages = []
+    nvidia_pages = []
     if ocr_mode == "skip":
         logger.info("      [OCR] 'skip' mode: OCR is disabled.")
     else:
@@ -102,9 +102,9 @@ def executer_pipeline(pdf_path, strategy="rebuilt", sauver_json=False,
             page for page in doc.pages
             if page.routing and page.routing.strategy == TARGETED_PADDLE_OCR
         ]
-        mistral_pages = [
+        nvidia_pages = [
             page for page in doc.pages
-            if page.routing and page.routing.strategy == FULL_PAGE_MISTRAL_OCR
+            if page.routing and page.routing.strategy == FULL_PAGE_NVIDIA_OCR
         ]
 
         for page in paddle_pages:
@@ -148,10 +148,10 @@ def executer_pipeline(pdf_path, strategy="rebuilt", sauver_json=False,
                 pages=page_numbers,
             )
 
-        if mistral_pages:
-            page_numbers = [page.number for page in mistral_pages]
-            MistralBackend().ocraliser(doc, pdf_path, pages=page_numbers)
-            for page in mistral_pages:
+        if nvidia_pages:
+            page_numbers = [page.number for page in nvidia_pages]
+            NvidiaBackend().ocraliser(doc, pdf_path, pages=page_numbers)
+            for page in nvidia_pages:
                 if page.ocr.words:
                     try:
                         detect_page_language(page, source="post_ocr")

@@ -6,7 +6,7 @@ import sys
 from datacompiler.backend.rebuilt_markdown import render_markdown
 from datacompiler.frontend.ocr.mistral import MistralBackend
 from datacompiler.frontend.routing import (
-    FULL_PAGE_MISTRAL_OCR,
+    FULL_PAGE_NVIDIA_OCR,
     MIXED_NATIVE_AND_GLYPHS,
     NATIVE_TEXT,
     PRESERVE_NATIVE,
@@ -30,14 +30,14 @@ def _page(number=1, **diagnostic_values):
     )
 
 
-def test_full_page_scan_routes_to_mistral():
+def test_full_page_scan_routes_to_nvidia():
     page = _page(has_full_page_images=True)
 
     decision = route_page(page)
 
     assert decision.category == "full_page_scan"
-    assert decision.strategy == FULL_PAGE_MISTRAL_OCR
-    assert decision.backend == "mistral"
+    assert decision.strategy == FULL_PAGE_NVIDIA_OCR
+    assert decision.backend == "nvidia"
 
 
 def test_handwritten_scan_uses_the_specific_category():
@@ -83,7 +83,7 @@ def test_routing_is_attached_independently_per_page():
     document = route_document(Document(pages=[native_page, scan_page]))
 
     assert document.pages[0].routing.strategy == PRESERVE_NATIVE
-    assert document.pages[1].routing.strategy == FULL_PAGE_MISTRAL_OCR
+    assert document.pages[1].routing.strategy == FULL_PAGE_NVIDIA_OCR
 
 
 def test_route_summaries_combine_adjacent_identical_page_decisions():
@@ -100,8 +100,8 @@ def test_document_json_round_trip_keeps_routing_language_and_diagnostics():
     page = _page(1, has_full_page_images=True)
     page.routing = RoutingDecision(
         category="full_page_scan_handwriting_likely",
-        strategy=FULL_PAGE_MISTRAL_OCR,
-        backend="mistral",
+        strategy=FULL_PAGE_NVIDIA_OCR,
+        backend="nvidia",
     )
     page.language = LanguageInfo("pl", 0.97, "post_ocr")
     page.ocr.blocks.append(
@@ -121,7 +121,7 @@ def test_document_json_round_trip_keeps_routing_language_and_diagnostics():
     restored = restored_document.pages[0]
 
     assert restored_document.diagnostic.has_full_page_images is True
-    assert restored.routing.backend == "mistral"
+    assert restored.routing.backend == "nvidia"
     assert restored.language.source == "post_ocr"
     assert restored.ocr.blocks[0].content == "# Example text"
     assert restored.ocr.blocks[0].metadata["dimensions"]["width"] == 100
@@ -144,12 +144,12 @@ def test_post_ocr_language_detection_records_confidence_and_provenance(monkeypat
     assert page.ocr.words[0].language == "en"
 
 
-def test_markdown_rendering_preserves_mistral_semantic_output():
+def test_markdown_rendering_preserves_full_page_semantic_output():
     page = _page(1)
     page.routing = RoutingDecision(
         category="full_page_scan_handwriting_likely",
-        strategy=FULL_PAGE_MISTRAL_OCR,
-        backend="mistral",
+        strategy=FULL_PAGE_NVIDIA_OCR,
+        backend="nvidia",
     )
     page.ocr.blocks.append(
         OcrBlock(type="markdown", content="## Heading\n\n- First item")

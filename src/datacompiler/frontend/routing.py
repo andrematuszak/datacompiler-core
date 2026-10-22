@@ -11,7 +11,7 @@ NEEDS_REVIEW = "needs_review"
 
 PRESERVE_NATIVE = "preserve_native"
 TARGETED_PADDLE_OCR = "targeted_paddle_ocr"
-FULL_PAGE_MISTRAL_OCR = "full_page_mistral_ocr"
+FULL_PAGE_NVIDIA_OCR = "full_page_nvidia_ocr"
 FALLBACK_OR_MANUAL_REVIEW = "fallback_or_manual_review"
 SKIP_OCR = "skip_ocr"
 
@@ -27,8 +27,8 @@ def _automatic_route(page: Page) -> RoutingDecision:
         )
         return RoutingDecision(
             category=category,
-            strategy=FULL_PAGE_MISTRAL_OCR,
-            backend="mistral",
+            strategy=FULL_PAGE_NVIDIA_OCR,
+            backend="nvidia",
             reasons=["full_page_image", "no_native_text"],
         )
 

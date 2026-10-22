@@ -13,7 +13,7 @@ review and open a desktop editor to correct text and layout.
   (Apple Silicon / arm64)** only.
 - Tkinter and a graphical desktop session are required only for the editors.
 - An Internet connection may be required on the first PaddleOCR run to download
-  its models, and when using DeepL or Matecat services.
+  its models, and when using OpenRouter, DeepL, or Matecat services.
 
 ## Installation
 
@@ -56,12 +56,13 @@ as an optional extra. Other optional extras are:
 python -m pip install -e ".[translation]"                      # DeepL translation
 python -m pip install -e ".[translation,translation-quality]"   # DeepL + COMETKiwi
 python -m pip install -e ".[mistral]"                           # Optional Mistral OCR client
+python -m pip install -e ".[openai]"                            # OpenRouter NVIDIA OCR client
 python -m pip install -e ".[dev]"                               # Tests and development tools
 ```
 
 `langdetect` is a base dependency, so language detection does not require a
-separate `language` extra. Full-page Mistral OCR requires the optional
-`mistral` extra and `MISTRAL_API_KEY`.
+separate `language` extra. Full-page NVIDIA OCR requires the optional
+`openai` extra and `OPENROUTER_API_KEY`.
 
 ## Command-line usage
 
@@ -90,11 +91,14 @@ strategy is deprecated and redirects to `rebuilt` with a warning.
 
 The default `--ocr-mode auto` routes each page independently. Healthy native
 text is preserved, mixed native text and vectorized glyphs use targeted
-PaddleOCR, and full-page image scans without native text or tables use Mistral
-OCR. The initial handwriting signal is a heuristic for this simple scan
-category; it is not a general handwriting classifier. OCR routes are logged
-as page categories and strategies without printing the detailed diagnostic
-signals.
+PaddleOCR, and full-page image scans without native text use
+`nvidia/nemotron-3.5-super-vl:free` through OpenRouter. The model receives each rendered
+page separately and transcribes it in its original language; language
+detection then runs on the OCR text. Set `OPENROUTER_API_KEY` in the
+environment and install the `openai` extra to use this route. The initial
+handwriting signal is a heuristic for this simple scan category; it is not a
+general handwriting classifier. OCR routes are logged as page categories and
+strategies without printing the detailed diagnostic signals.
 
 For targeted PaddleOCR, the language is detected from each page's native text
 when possible. If it cannot be detected, specify the PaddleOCR language:
@@ -104,12 +108,11 @@ datacompiler document.pdf --paddle-lang en-us
 ```
 
 `--ocr-mode vector` enables only targeted vector-text OCR; `--ocr-mode skip`
-disables OCR and is not the recommended workflow. Mistral OCR output retains
-the original Markdown block and any structured blocks, table geometry, and
-confidence data returned by the API. Language detection for scan pages runs
-after OCR and is recorded as post-OCR provenance. `--ocr-mode force` remains
-unsupported; automatic page-level routing may still select full-page Mistral
-OCR.
+disables OCR and is not the recommended workflow. NVIDIA OCR preserves the
+model's page transcription as Markdown; it does not infer word coordinates or
+table geometry. Language detection for scan pages runs after OCR and is
+recorded as post-OCR provenance. `--ocr-mode force` remains unsupported;
+automatic page-level routing selects NVIDIA OCR for full-page scans.
 
 ### Machine translation and editing
 

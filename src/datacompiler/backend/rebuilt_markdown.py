@@ -9,7 +9,7 @@ def render_markdown(doc: Document) -> str:
 
     for page in doc.pages:
         morceaux.append(f"\n## Page {page.number}\n")
-        mistral_markdown = next(
+        full_page_markdown = next(
             (
                 block.content
                 for block in page.ocr.blocks
@@ -18,11 +18,12 @@ def render_markdown(doc: Document) -> str:
             None,
         )
         if (
-            mistral_markdown
+            full_page_markdown
             and page.routing
-            and page.routing.strategy == "full_page_mistral_ocr"
+            and page.routing.strategy
+            in {"full_page_mistral_ocr", "full_page_nvidia_ocr"}
         ):
-            morceaux.append(mistral_markdown)
+            morceaux.append(full_page_markdown)
             morceaux.append("")
             continue
 

@@ -14,6 +14,7 @@ __all__ = ["OcrBackend", "BACKENDS", "get_backend", "ocraliser"]
 _BACKEND_MODULES = {
     "paddle": (".paddle", "PaddleOCRBackend"),
     "mistral": (".mistral", "MistralBackend"),
+    "nvidia": (".nvidia", "NvidiaBackend"),
 }
 
 

@@ -20,7 +20,7 @@ def test_force_ocr_mode_fails_clearly_until_full_page_ocr_is_supported():
         raise AssertionError("force OCR must not silently continue without full-page OCR")
 
 
-def test_auto_mode_routes_full_page_scans_to_mistral(monkeypatch):
+def test_auto_mode_routes_full_page_scans_to_nvidia(monkeypatch):
     from datacompiler.model.document import Diagnostic, Document, Page
 
     page = Page(
@@ -35,15 +35,15 @@ def test_auto_mode_routes_full_page_scans_to_mistral(monkeypatch):
         ),
     )
     document = Document(pages=[page])
-    mistral_calls = []
+    nvidia_calls = []
 
-    class FakeMistral:
+    class FakeNvidia:
         def ocraliser(self, _document, _path, pages=None):
-            mistral_calls.append(pages)
+            nvidia_calls.append(pages)
 
     monkeypatch.setattr(pipeline, "extraire", lambda *_args: document)
     monkeypatch.setattr(pipeline, "diagnose_document", lambda _document: None)
-    monkeypatch.setattr(pipeline, "MistralBackend", FakeMistral)
+    monkeypatch.setattr(pipeline, "NvidiaBackend", FakeNvidia)
     monkeypatch.setattr(pipeline, "recuperer_texte_vectorise", lambda *_args, **_kwargs: document)
     monkeypatch.setattr(pipeline, "resoudre", lambda _document: document)
     monkeypatch.setattr(pipeline, "render_flow_pdf", lambda *_args, **_kwargs: "out.pdf")
@@ -51,8 +51,8 @@ def test_auto_mode_routes_full_page_scans_to_mistral(monkeypatch):
     result = pipeline.executer_pipeline("unused.pdf", strategy="flow", ocr_mode="auto")
 
     assert result is document
-    assert mistral_calls == [[1]]
-    assert page.routing.strategy == "full_page_mistral_ocr"
+    assert nvidia_calls == [[1]]
+    assert page.routing.strategy == "full_page_nvidia_ocr"
 
 
 def test_mixed_document_routes_each_page_to_its_own_ocr_strategy(monkeypatch):
@@ -83,16 +83,16 @@ def test_mixed_document_routes_each_page_to_its_own_ocr_strategy(monkeypatch):
     )
     document = Document(pages=[native_page, scan_page])
     paddle_calls = []
-    mistral_calls = []
+    nvidia_calls = []
 
-    class FakeMistral:
+    class FakeNvidia:
         def ocraliser(self, _document, _path, pages=None):
-            mistral_calls.append(pages)
+            nvidia_calls.append(pages)
 
     monkeypatch.setattr(pipeline, "extraire", lambda *_args: document)
     monkeypatch.setattr(pipeline, "diagnose_document", lambda _document: None)
     monkeypatch.setattr(pipeline, "PaddleOCRBackend", lambda **_kwargs: object())
-    monkeypatch.setattr(pipeline, "MistralBackend", FakeMistral)
+    monkeypatch.setattr(pipeline, "NvidiaBackend", FakeNvidia)
     monkeypatch.setattr(
         pipeline,
         "recuperer_texte_vectorise",
@@ -110,9 +110,9 @@ def test_mixed_document_routes_each_page_to_its_own_ocr_strategy(monkeypatch):
 
     assert result is document
     assert paddle_calls == [[1]]
-    assert mistral_calls == [[2]]
+    assert nvidia_calls == [[2]]
     assert native_page.routing.strategy == "targeted_paddle_ocr"
-    assert scan_page.routing.strategy == "full_page_mistral_ocr"
+    assert scan_page.routing.strategy == "full_page_nvidia_ocr"
     assert native_page.language.source == "user_override"
 
 
