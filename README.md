@@ -150,6 +150,10 @@ PDF is written only after all reviewed pages are validated. `--editor` requires
 the rebuilt PDF output format. The generic and translation editors require
 Tkinter and a graphical desktop session.
 
+Without `--editor`, the CLI stays non-interactive and writes its normal output
+immediately; use `datacompiler document.pdf --editor` when you want the process
+to wait for transcription review before producing the rebuilt PDF.
+
 In the editor, select a block to change its text, size, bold/italic style,
 superscript or subscript, color, position, and dimensions. The native color
 picker sets text color; **Source color** clears the override. Custom text color

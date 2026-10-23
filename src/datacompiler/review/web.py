@@ -17,7 +17,7 @@ import pymupdf
 from datacompiler.model.document import (
     Divergence, OcrCandidate, PageReview, ReviewDecision, ReviewProposal,
 )
-from datacompiler.review.divergence import decide, refresh_state
+from datacompiler.review.divergence import change_reference_candidate, decide, refresh_state
 
 logger = logging.getLogger(__name__)
 
@@ -58,6 +58,8 @@ def _restore_review(page, data):
         divergences=divergences,
         validated_text=raw.get("validated_text"),
         draft_text=raw.get("draft_text"),
+        draft_is_manual=raw.get("draft_is_manual", False),
+        draft_candidate_id=raw.get("draft_candidate_id"),
     )
 
 
@@ -112,15 +114,15 @@ def save_review_session(document, path):
 
 _HTML = r'''<!doctype html><html lang="fr"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Revue de transcription</title><style>
-*{box-sizing:border-box}body{margin:0;font:15px system-ui,sans-serif;color:#20242a;background:#f3f4f6}header{padding:12px 20px;background:#182331;color:white;display:flex;gap:18px;align-items:center}header h1{font-size:17px;margin:0}select,button{font:inherit;padding:7px 10px;border:1px solid #c4cbd3;border-radius:6px;background:white;cursor:pointer}main{height:calc(100vh - 105px);display:grid;grid-template-columns:minmax(320px,1fr) minmax(400px,1fr);gap:14px;padding:14px}.scan,.work{background:white;border:1px solid #d9dee5;border-radius:8px;overflow:auto}.scan{display:flex;align-items:flex-start;justify-content:center;background:#dfe3e8}.scan img{max-width:100%;height:auto}.work{padding:16px;display:flex;flex-direction:column;gap:12px}.work textarea{width:100%;flex:1;min-height:200px;resize:none;border:1px solid #b9c2cc;border-radius:6px;padding:12px;font:16px/1.55 ui-monospace,monospace}.candidates,.diffs{border-top:1px solid #e3e7eb;padding-top:10px}.candidates button{margin:4px}.diff{padding:9px;background:#f6f7f8;margin:6px 0;border-radius:6px}.diff button{margin:4px}.footer{height:48px;padding:5px 18px;display:flex;align-items:center;justify-content:space-between}.status{color:#576271}.primary{background:#1769aa;color:white;border-color:#1769aa}@media(max-width:850px){main{height:auto;grid-template-columns:1fr}.scan{max-height:50vh}.work{height:65vh}}
-</style><header><h1>Revue de transcription</h1><label>Page <select id="pages"></select></label><span id="models"></span></header><main><section class="scan"><img id="scan" alt="Scan original"></section><section class="work"><div id="title"></div><div class="candidates" id="candidates"></div><div class="diffs" id="diffs"></div><textarea id="text" aria-label="Transcription à valider"></textarea></section></main><footer class="footer"><span class="status" id="status"></span><span><button id="save">Enregistrer</button> <button id="quit">Enregistrer et quitter</button> <button class="primary" id="finish">Valider la transcription</button></span></footer>
+*{box-sizing:border-box}body{margin:0;font:15px system-ui,sans-serif;color:#20242a;background:#f3f4f6}header{padding:12px 20px;background:#182331;color:white;display:flex;gap:18px;align-items:center}header h1{font-size:17px;margin:0}select,button{font:inherit;padding:7px 10px;border:1px solid #c4cbd3;border-radius:6px;background:white;cursor:pointer}main{height:calc(100vh - 105px);display:grid;grid-template-columns:minmax(320px,1fr) minmax(400px,1fr);gap:14px;padding:14px}.scan,.work{background:white;border:1px solid #d9dee5;border-radius:8px;overflow:auto}.scan{display:flex;align-items:flex-start;justify-content:center;background:#dfe3e8}.scan img{max-width:100%;height:auto}.work{padding:16px;display:flex;flex-direction:column;gap:12px}.work textarea{width:100%;flex:1;min-height:200px;resize:none;border:1px solid #b9c2cc;border-radius:6px;padding:12px;font:16px/1.55 ui-monospace,monospace}.candidates,.diffs{border-top:1px solid #e3e7eb;padding-top:10px}.candidates button{margin:4px}.diff{padding:9px;background:#f6f7f8;margin:6px 0;border-radius:6px}.diff button{margin:4px}.selected{background:#246bce!important;color:white!important;border-color:#1c57a6!important}.footer{height:48px;padding:5px 18px;display:flex;align-items:center;justify-content:space-between}.status{color:#576271}.primary{background:#1769aa;color:white;border-color:#1769aa}@media(max-width:850px){main{height:auto;grid-template-columns:1fr}.scan{max-height:50vh}.work{height:65vh}}
+</style><header><h1>Revue de transcription</h1><label>Page <select id="pages"></select></label><span id="models"></span></header><main><section class="scan"><img id="scan" alt="Scan original"></section><section class="work"><div id="title"></div><div class="candidates" id="candidates"></div><div class="diffs" id="diffs"></div><textarea id="text" aria-label="Transcription à valider"></textarea></section></main><footer class="footer"><span class="status" id="status"></span><span><button id="quit">Enregistrer et quitter</button> <button class="primary" id="finish">Valider la page</button></span></footer>
 <script>
-const token=location.pathname.split('/').filter(Boolean).pop();let data,pageno,decisions={};const $=id=>document.getElementById(id);
+const token=location.pathname.split('/').filter(Boolean).pop();let data,pageno,decisions={},manual=false,draftCandidateId=null,saveTimer;const $=id=>document.getElementById(id);
 async function init(){data=await(await fetch('/'+token+'/api')).json();const pages=Object.keys(data.pages);$('pages').innerHTML=pages.map(n=>`<option value="${n}"> ${n}</option>`).join('');$('pages').onchange=()=>show($('pages').value);show(pages[0]);}
-function show(n){pageno=n;const p=data.pages[n];decisions={};$('scan').src='/'+token+'/scan/'+n+'.png';$('title').textContent=`Page ${n} · ${p.review.state==='validated'?'validée':'à vérifier'}`;$('models').textContent=p.candidates.map(c=>c.model).join(' · ');$('text').value=p.review.draft_text??p.review.validated_text??p.candidates[0]?.text??'';$('candidates').innerHTML='<b>Lectures des modèles :</b> '+p.candidates.map((c,i)=>`<button data-cand="${i}">${String.fromCharCode(65+i)} · ${esc(c.model)}</button>`).join('');document.querySelectorAll('[data-cand]').forEach(b=>b.onclick=()=>{$('text').value=p.candidates[+b.dataset.cand].text});$('diffs').innerHTML=p.review.divergences.length?'<b>Passages en désaccord</b>'+p.review.divergences.map((d,i)=>`<div class="diff"><small>${esc(d.context_before)} <b>→</b> ${esc(d.context_after)}</small><br>${d.proposals.map((q,j)=>`<button data-d="${i}" data-p="${j}">${String.fromCharCode(65+j)} : ${esc(q.text||'∅')}</button>`).join('')}<input data-custom="${i}" placeholder="Correction personnelle"><button data-own="${i}">Saisir</button><button data-pending="${i}">En suspens</button></div>`).join(''):'';document.querySelectorAll('[data-p]').forEach(b=>b.onclick=()=>{decisions[p.review.divergences[b.dataset.d].id]={choice:p.review.divergences[b.dataset.d].proposals[b.dataset.p].candidate_ids[0]};save(false)});document.querySelectorAll('[data-own]').forEach(b=>b.onclick=()=>{decisions[p.review.divergences[b.dataset.own].id]={choice:'custom',text:document.querySelector(`[data-custom="${b.dataset.own}"]`).value};save(false)});document.querySelectorAll('[data-pending]').forEach(b=>b.onclick=()=>{decisions[p.review.divergences[b.dataset.pending].id]={choice:'pending'};save(false)});$('status').textContent=`${p.candidates.length} candidat(s) · ${p.review.divergences.length} désaccord(s)`;}
+function show(n){pageno=n;const p=data.pages[n];decisions={};manual=!!p.review.draft_is_manual;draftCandidateId=p.review.draft_candidate_id||null;$('scan').src='/'+token+'/scan/'+n+'.png';$('title').textContent=`Page ${n} · ${p.review.state==='validated'?'validée':'à vérifier'}`;$('models').textContent=p.candidates.map(c=>c.model).join(' · ');$('text').value=p.review.draft_text??p.review.validated_text??p.candidates[0]?.text??'';$('candidates').innerHTML='<b>Transcription de base (mise en forme incluse) :</b> '+p.candidates.map((c,i)=>`<button class="${p.review.reference_candidate_id===c.id?'selected':''}" title="Utiliser cette lecture comme base de transcription et garder sa mise en forme" data-cand="${i}">${String.fromCharCode(65+i)} · ${esc(c.model)}</button>`).join('');document.querySelectorAll('[data-cand]').forEach(b=>b.onclick=()=>{draftCandidateId=p.candidates[+b.dataset.cand].id;manual=false;$('text').value=p.candidates[+b.dataset.cand].text;save(false,true)});$('diffs').innerHTML=p.review.divergences.length?'<b>Passages en désaccord</b>'+p.review.divergences.map((d,i)=>`<div class="diff"><small>${esc(d.context_before)} <b>→</b> ${esc(d.context_after)}</small><br>${d.proposals.map((q,j)=>{const letters=q.candidate_ids.map(id=>String.fromCharCode(65+p.candidates.findIndex(c=>c.id===id))).join(',');const selected=d.decision&&q.candidate_ids.includes(d.decision.choice);return `<button class="${selected?'selected':''}" data-d="${i}" data-p="${j}">${letters} : ${esc(q.text||'∅')}</button>`}).join('')}<input data-custom="${i}" value="${d.decision?.choice==='custom'?esc(d.decision.text):''}" placeholder="Correction personnelle"><button class="${d.decision?.choice==='custom'?'selected':''}" data-own="${i}">Saisir</button><button class="${d.decision?.choice==='pending'?'selected':''}" data-pending="${i}">En suspens</button></div>`).join(''):'';document.querySelectorAll('[data-p]').forEach(b=>b.onclick=()=>{decisions[p.review.divergences[b.dataset.d].id]={choice:p.review.divergences[b.dataset.d].proposals[b.dataset.p].candidate_ids[0]};save(false)});document.querySelectorAll('[data-own]').forEach(b=>b.onclick=()=>{decisions[p.review.divergences[b.dataset.own].id]={choice:'custom',text:document.querySelector(`[data-custom="${b.dataset.own}"]`).value};save(false)});document.querySelectorAll('[data-pending]').forEach(b=>b.onclick=()=>{decisions[p.review.divergences[b.dataset.pending].id]={choice:'pending'};save(false)});$('text').oninput=()=>{manual=true;draftCandidateId=null;clearTimeout(saveTimer);saveTimer=setTimeout(()=>save(false,false),700)};const others=Object.entries(data.pages).filter(([page])=>page!==String(n));$('finish').textContent=others.every(([,v])=>v.review.state==='validated')?'Valider et générer le PDF':'Valider cette page';$('status').textContent=`${p.candidates.length} candidat(s) · ${p.review.divergences.length} désaccord(s) · sauvegarde automatique`}
 function esc(s){return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
-async function save(finalize){const r=await fetch('/'+token+'/api',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({page:pageno,text:$('text').value,decisions,finalize})});const result=await r.json();$('status').textContent=result.message;if(result.pages){data.pages=result.pages;show(pageno)}if(result.complete){$('status').textContent='Toutes les pages sont validées.';await fetch('/'+token+'/api',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({quit:true})})}}
-$('save').onclick=()=>save(false);$('finish').onclick=()=>save(true);$('quit').onclick=async()=>{await save(false);await fetch('/'+token+'/api',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({quit:true})});};init();
+async function save(finalize,refresh=true){const r=await fetch('/'+token+'/api',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({page:pageno,text:$('text').value,decisions,finalize,manual,draft_candidate_id:draftCandidateId,reference_candidate_id:draftCandidateId})});const result=await r.json();$('status').textContent=result.message;if(result.pages){data.pages=result.pages;if(refresh)show(pageno)}if(result.complete){$('status').textContent='Toutes les pages sont validées.';await fetch('/'+token+'/api',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({quit:true})})}}
+$('finish').onclick=()=>{clearTimeout(saveTimer);save(true)};$('quit').onclick=async()=>{clearTimeout(saveTimer);await save(false,false);await fetch('/'+token+'/api',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({quit:true})});};init();
 </script></html>'''
 
 
@@ -186,18 +188,26 @@ def open_review(document, pdf_path, session_path):
                     threading.Thread(target=self.server.shutdown, daemon=True).start()
                     return
                 page = next(p for p in review_pages if p.number == int(payload["page"]))
+                requested_reference = payload.get("reference_candidate_id")
+                if requested_reference and requested_reference != page.review.reference_candidate_id:
+                    page.review = change_reference_candidate(
+                        page.review, page.ocr.candidates, requested_reference,
+                    )
+                    page.review.draft_candidate_id = requested_reference
                 for divergence in page.review.divergences:
                     action = payload.get("decisions", {}).get(divergence.id)
                     if action:
                         decide(divergence, action["choice"], action.get("text"))
                 text = str(payload.get("text", ""))
                 previous_draft = page.review.draft_text
+                is_manual = bool(payload.get("manual", page.review.draft_is_manual))
+                page.review.draft_is_manual = is_manual
+                page.review.draft_candidate_id = payload.get("draft_candidate_id")
                 if payload.get("finalize"):
-                    if len(page.ocr.candidates) > 1 and text == previous_draft:
+                    if len(page.ocr.candidates) > 1 and not is_manual and text == previous_draft:
                         refresh_state(page.review, page.ocr.candidates)
                         if page.review.validated_text is not None:
                             text = page.review.validated_text
-                    page.review.divergences = []
                     page.review.validated_text = text
                     page.review.draft_text = text
                     page.review.state = "validated"
@@ -205,7 +215,7 @@ def open_review(document, pdf_path, session_path):
                     page.review.draft_text = text
                     if len(page.ocr.candidates) > 1:
                         refresh_state(page.review, page.ocr.candidates)
-                        if page.review.validated_text is not None and text == previous_draft:
+                        if page.review.validated_text is not None and not is_manual and text == previous_draft:
                             page.review.draft_text = page.review.validated_text
                 save_review_session(document, session_path)
                 complete = all(p.review.state == "validated" for p in review_pages)

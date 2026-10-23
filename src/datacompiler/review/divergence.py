@@ -196,6 +196,56 @@ def build_review(candidates: list[OcrCandidate], reference_id: Optional[str] = N
     return review
 
 
+def change_reference_candidate(
+    review: PageReview, candidates: list[OcrCandidate], reference_id: str,
+) -> PageReview:
+    """Change the transcription layout base while carrying across matching decisions."""
+    if reference_id == review.reference_candidate_id:
+        return review
+    if not any(candidate.id == reference_id for candidate in candidates):
+        raise ValueError(f"Unknown review candidate: {reference_id!r}")
+    updated = build_review(candidates, reference_id)
+    prior = [item for item in review.divergences if item.decision is not None]
+    for divergence in updated.divergences:
+        new_context = (divergence.context_before + " | " + divergence.context_after).split()
+        matches = sorted(
+            prior,
+            key=lambda item: SequenceMatcher(
+                None,
+                (item.context_before + " | " + item.context_after).split(),
+                new_context,
+                autojunk=False,
+            ).ratio(),
+            reverse=True,
+        )
+        if not matches:
+            continue
+        old = matches[0]
+        score = SequenceMatcher(
+            None,
+            (old.context_before + " | " + old.context_after).split(),
+            new_context,
+            autojunk=False,
+        ).ratio()
+        if score < 0.4:
+            continue
+        decision = old.decision
+        if decision.choice == "pending":
+            decide(divergence, "pending")
+        elif decision.choice == "custom":
+            decide(divergence, "custom", decision.text, decision.reason)
+        else:
+            proposal = next(
+                (item for item in divergence.proposals if item.text == decision.text),
+                None,
+            )
+            if proposal:
+                decide(divergence, proposal.candidate_ids[0], reason=decision.reason)
+    refresh_state(updated, candidates)
+    updated.draft_text = next(candidate.text for candidate in candidates if candidate.id == reference_id)
+    return updated
+
+
 def refresh_state(review: PageReview, candidates: list[OcrCandidate]) -> None:
     """Re-derive state and validated text after any decision change."""
     text = compose_text(review, candidates)

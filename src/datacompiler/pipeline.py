@@ -396,6 +396,7 @@ def main():
             from datacompiler.review.web import open_review, save_review_session
 
             save_review_session(document, review_path)
+            progress.info("Revue ouverte dans le navigateur local. Le PDF rebuilt sera généré après validation.")
             try:
                 complete = open_review(document, args.pdf, review_path)
             except (RuntimeError, ValueError, OSError) as exc:

@@ -230,6 +230,8 @@ class PageReview:
     divergences: List[Divergence] = field(default_factory=list)
     validated_text: Optional[str] = None
     draft_text: Optional[str] = None
+    draft_is_manual: bool = False
+    draft_candidate_id: Optional[str] = None
 
 
 @dataclass
