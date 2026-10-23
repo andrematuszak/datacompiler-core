@@ -10,6 +10,7 @@ from datacompiler.model.document import (
     Document, Page, Word, Decision, Flag,
     NativeContainer, GraphicsContainer, OcrContainer, ResolvedContainer,
     ImageElement, TableElement, GraphicVector, OcrBlock,
+    OcrCandidate, ReviewProposal, ReviewDecision, Divergence, PageReview,
 )
 
 __all__ = [
@@ -17,4 +18,5 @@ __all__ = [
     "Word", "Decision", "Flag", "NativeContainer", "GraphicsContainer",
     "OcrContainer", "ResolvedContainer", "ImageElement", "TableElement",
     "GraphicVector", "OcrBlock",
+    "OcrCandidate", "ReviewProposal", "ReviewDecision", "Divergence", "PageReview",
 ]

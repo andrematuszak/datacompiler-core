@@ -63,7 +63,7 @@ qwen = [
     "einops"
 ]
 
-# OpenRouter offers free access to 3 models: nvidia/nemotron-3.5-super-vl:free, google/gemma-4-31b-it:free, minimax/minimax-m3.1-flash:free
+# OpenRouter offers free access to 3 models: nvidia/nemotron-3.5-super-vl:free
 openai = [
     "openai"
 ]

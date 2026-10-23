@@ -11,11 +11,12 @@ from datacompiler.frontend.extract import extraire
 from datacompiler.frontend.layout import segmenter_page
 from datacompiler.frontend import diagnose_document
 from datacompiler.frontend.ocr.paddle import PaddleOCRBackend
-from datacompiler.frontend.ocr.nvidia import NvidiaBackend
+from datacompiler.frontend.ocr.vlm import ocraliser_pages as ocraliser_vlm_pages
 from datacompiler.frontend.ocr.vector_zones import recuperer_texte_vectorise
 from datacompiler.frontend.routing import (
     FALLBACK_OR_MANUAL_REVIEW,
-    FULL_PAGE_NVIDIA_OCR,
+    FULL_PAGE_SCAN_HANDWRITING_LIKELY,
+    FULL_PAGE_VLM_OCR,
     TARGETED_PADDLE_OCR,
     format_page_routes,
     route_page,
@@ -53,7 +54,7 @@ def executer_pipeline(pdf_path, strategy="rebuilt", sauver_json=False,
     if ocr_mode == "force":
         raise NotImplementedError(
             "Forced full-page OCR is not implemented. "
-            "Automatic per-page routing may use NVIDIA through OpenRouter; use ocr_mode='vector' "
+            "Automatic per-page routing may use vision-language models through OpenRouter; use ocr_mode='vector' "
             "for targeted OCR, or 'skip' to disable OCR."
         )
     if ocr_mode not in {"auto", "skip", "vector"}:
@@ -79,7 +80,7 @@ def executer_pipeline(pdf_path, strategy="rebuilt", sauver_json=False,
     logger.info("[3/6] Processing OCR...")
 
     paddle_pages_by_language = {}
-    nvidia_pages = []
+    vlm_pages = []
     if ocr_mode == "skip":
         logger.info("      [OCR] 'skip' mode: OCR is disabled.")
     else:
@@ -102,9 +103,9 @@ def executer_pipeline(pdf_path, strategy="rebuilt", sauver_json=False,
             page for page in doc.pages
             if page.routing and page.routing.strategy == TARGETED_PADDLE_OCR
         ]
-        nvidia_pages = [
+        vlm_pages = [
             page for page in doc.pages
-            if page.routing and page.routing.strategy == FULL_PAGE_NVIDIA_OCR
+            if page.routing and page.routing.strategy == FULL_PAGE_VLM_OCR
         ]
 
         for page in paddle_pages:
@@ -148,10 +149,19 @@ def executer_pipeline(pdf_path, strategy="rebuilt", sauver_json=False,
                 pages=page_numbers,
             )
 
-        if nvidia_pages:
-            page_numbers = [page.number for page in nvidia_pages]
-            NvidiaBackend().ocraliser(doc, pdf_path, pages=page_numbers)
-            for page in nvidia_pages:
+        if vlm_pages:
+            page_numbers = [page.number for page in vlm_pages]
+            ocraliser_vlm_pages(
+                doc,
+                pdf_path,
+                pages=page_numbers,
+                handwriting_pages=[
+                    page.number
+                    for page in vlm_pages
+                    if page.routing.category == FULL_PAGE_SCAN_HANDWRITING_LIKELY
+                ],
+            )
+            for page in vlm_pages:
                 if page.ocr.words:
                     try:
                         detect_page_language(page, source="post_ocr")

@@ -154,10 +154,26 @@ class OcrBlock:
 
 
 @dataclass
+class OcrCandidate:
+    """One full-page transcription from one model, kept verbatim for review."""
+    id: str
+    model: str
+    text: str
+    # Only filled when the provider really returns it (e.g. aggregated token
+    # logprobs); never self-reported by the model. ``confidence_kind`` says how
+    # the value was computed so uncalibrated scores are not compared blindly.
+    confidence: Optional[float] = None
+    confidence_kind: Optional[str] = None
+    raw_sha256: Optional[str] = None  # hash of the cached raw API response
+    metadata: Dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
 class OcrContainer:
     engine: Optional[str] = None
     words: List[Word] = field(default_factory=list)
     blocks: List[OcrBlock] = field(default_factory=list)
+    candidates: List[OcrCandidate] = field(default_factory=list)
 
 
 @dataclass
@@ -166,6 +182,53 @@ class ResolvedContainer:
     images: List[ImageElement] = field(default_factory=list)
     tables: List[TableElement] = field(default_factory=list)
     fonts: List[Font] = field(default_factory=list)  # Polices résolues pour le rendu
+
+
+@dataclass
+class ReviewProposal:
+    """One distinct reading of a disputed passage and the candidates giving it."""
+    text: str
+    candidate_ids: List[str] = field(default_factory=list)
+
+
+@dataclass
+class ReviewDecision:
+    by: str  # "auto" | "human" -- automatic and human decisions stay distinguishable
+    choice: str  # a candidate id, "custom" or "pending"
+    text: str = ""
+    reason: str = ""
+    timestamp: Optional[str] = None
+
+
+@dataclass
+class Divergence:
+    """A passage on which candidate transcriptions disagree.
+
+    ``ref_start``/``ref_end`` are token indices in the reference candidate.
+    """
+    id: str
+    kind: str  # "substitution" | "omission"
+    ref_start: int
+    ref_end: int
+    context_before: str = ""
+    context_after: str = ""
+    proposals: List[ReviewProposal] = field(default_factory=list)
+    decision: Optional[ReviewDecision] = None
+
+    @property
+    def status(self) -> str:
+        """Derived, not serialized: open | auto | resolved."""
+        if self.decision is None or self.decision.choice == "pending":
+            return "open"
+        return "auto" if self.decision.by == "auto" else "resolved"
+
+
+@dataclass
+class PageReview:
+    state: str = "none"  # "none" | "in_review" | "validated"
+    reference_candidate_id: Optional[str] = None
+    divergences: List[Divergence] = field(default_factory=list)
+    validated_text: Optional[str] = None
 
 
 @dataclass
@@ -183,6 +246,7 @@ class Page:
     resolved: ResolvedContainer = field(default_factory=ResolvedContainer)
     layout_root: Optional[LayoutBox] = None
     links: List[LinkElement] = field(default_factory=list)
+    review: PageReview = field(default_factory=PageReview)
 
     @property
     def link_rects(self) -> List[Tuple[float, float, float, float]]:
@@ -276,6 +340,30 @@ class Document:
             d["word_ids"] = list(d.get("word_ids", []))
             return LinkElement(**{k: v for k, v in d.items() if k in LinkElement.__dataclass_fields__})
 
+        def candidate(d):
+            return OcrCandidate(**{k: v for k, v in d.items() if k in OcrCandidate.__dataclass_fields__})
+
+        def review_decision(d):
+            if not d:
+                return None
+            return ReviewDecision(**{k: v for k, v in d.items() if k in ReviewDecision.__dataclass_fields__})
+
+        def divergence(d):
+            d = dict(d)
+            d["proposals"] = [
+                ReviewProposal(**{k: v for k, v in p.items() if k in ReviewProposal.__dataclass_fields__})
+                for p in d.get("proposals", [])
+            ]
+            d["decision"] = review_decision(d.get("decision"))
+            return Divergence(**{k: v for k, v in d.items() if k in Divergence.__dataclass_fields__})
+
+        def page_review(d):
+            if not d:
+                return PageReview()
+            d = dict(d)
+            d["divergences"] = [divergence(x) for x in d.get("divergences", [])]
+            return PageReview(**{k: v for k, v in d.items() if k in PageReview.__dataclass_fields__})
+
         def layout_box(d):
             if not d:
                 return None
@@ -321,6 +409,7 @@ class Document:
                     )
                     for x in ocr.get("blocks", [])
                 ],
+                candidates=[candidate(x) for x in ocr.get("candidates", [])],
             )
             page.resolved = ResolvedContainer(
                 words=[word(x) for x in resolved.get("words", [])],
@@ -330,6 +419,7 @@ class Document:
             )
             page.layout_root = layout_box(raw.get("layout_root"))
             page.links = [link(x) for x in raw.get("links", [])]
+            page.review = page_review(raw.get("review"))
             pages.append(page)
 
         metadata = Metadata(**{k: v for k, v in data.get("metadata", {}).items() if k in Metadata.__dataclass_fields__})
