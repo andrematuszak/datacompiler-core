@@ -43,6 +43,7 @@ eggs/
 *.output.pdf
 *.xlf
 *.layout.json
+*.review.json
 *_rebuilt.pdf
 *_cleaned.pdf
 *_propre.pdf
