@@ -415,7 +415,7 @@ def main():
                             for divergence in page.review.divergences:
                                 divergence.decision = None
             save_review_session(document, review_path)
-            progress.info("Éditeur de transcription ouvert. Tracez une boîte pour chaque ligne du scan.")
+            progress.info("Éditeur de transcription ouvert. Les boîtes de lignes sont estimées depuis le scan et modifiables.")
             try:
                 result = edit_document_pdf(
                     document, output_path, corrections_path=layout_path,

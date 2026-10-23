@@ -77,7 +77,7 @@ def _prepare_generic_words(document):
 
 
 def prepare_vlm_editor_words(document):
-    """Use the Dots transcript as line-level editable text for full-page VLM scans."""
+    """Prepare one editable line per transcript line and estimate its scan box."""
     for page in document.pages:
         candidates = page.ocr.candidates
         if not candidates:
@@ -116,7 +116,100 @@ def prepare_vlm_editor_words(document):
             word._vlm_prefix = raw_line[:len(raw_line) - len(raw_line.lstrip())]
             word._vlm_suffix = raw_line[len(raw_line.rstrip()):]
             line_words.append(word)
+        _estimate_vlm_line_boxes(document, page, line_words)
         page.resolved.words = line_words
+
+
+def _estimate_vlm_line_boxes(document, page, words):
+    """Estimate line rectangles from dark-ink row projections on the source scan.
+
+    VLM transcripts do not contain geometry. This creates editable starting
+    rectangles from the scan's ink distribution; users can move/resize them or
+    draw a missing rectangle in the editor.
+    """
+    if not words or not document.metadata.source_pdf:
+        return
+    import numpy as np
+
+    with pymupdf.open(document.metadata.source_pdf) as pdf:
+        source_page = pdf[page.number - 1]
+        scale = 0.8
+        pix = source_page.get_pixmap(matrix=pymupdf.Matrix(scale, scale), alpha=False)
+        image = np.frombuffer(pix.samples, dtype=np.uint8).reshape(pix.height, pix.width, pix.n)
+        rgb = image[:, :, :3].astype(np.int16)
+        # Exclude colored notebook rules and the dark photo border while
+        # retaining dark pen/pencil strokes inside the page.
+        ink = (rgb.max(axis=2) < 80) & ((rgb.max(axis=2) - rgb.min(axis=2)) < 55)
+        ink[:, :int(pix.width * .08)] = False
+        ink[:, int(pix.width * .92):] = False
+        ink[:int(pix.height * .04), :] = False
+        ink[int(pix.height * .96):, :] = False
+        projection = ink.sum(axis=1).astype(float)
+        if len(projection) >= 7:
+            projection = np.convolve(projection, np.ones(5) / 5, mode="same")
+        threshold = max(5.0, pix.width * 0.01)
+        active = projection >= threshold
+        runs = []
+        start = None
+        last = None
+        for y, is_active in enumerate(active):
+            if is_active:
+                if start is None:
+                    start = y
+                last = y
+            elif start is not None and y - last > 4:
+                if last - start >= 2:
+                    runs.append((start, last))
+                start = last = None
+        if start is not None and last - start >= 2:
+            runs.append((start, last))
+
+        # Reject page/photo edges, long rules and broad background bands.
+        rows = []
+        for y0, y1 in runs:
+            if y0 < pix.height * .06 or y1 - y0 > pix.height * 0.065:
+                continue
+            ys = slice(max(0, y0 - 2), min(pix.height, y1 + 3))
+            xs = np.flatnonzero(ink[ys, :].any(axis=0))
+            if len(xs) < 3:
+                continue
+            x0, x1 = int(xs[0]), int(xs[-1])
+            if x1 - x0 > pix.width * 0.88:
+                continue
+            rows.append((y0, y1, x0, x1))
+
+        # Map OCR lines to detected ink rows in reading order. If projection
+        # misses a faint line, interpolate between its nearest detected rows.
+        if rows:
+            centers = np.array([(row[0] + row[1]) / 2 for row in rows], dtype=float)
+            if len(centers) != len(words):
+                centers = np.interp(
+                    np.linspace(0, max(0, len(centers) - 1), len(words)),
+                    np.arange(len(centers)), centers,
+                )
+            row_indices = np.linspace(0, len(rows) - 1, len(words))
+        else:
+            centers = np.linspace(pix.height * .1, pix.height * .9, len(words))
+            row_indices = np.zeros(len(words))
+
+        for index, word in enumerate(words):
+            cy = float(centers[index])
+            if rows:
+                row = rows[int(round(row_indices[index]))]
+                band = ink[max(0, int(cy) - 12):min(pix.height, int(cy) + 13), :]
+                xs = np.flatnonzero(band.any(axis=0))
+                x0, x1 = (int(xs[0]), int(xs[-1])) if len(xs) >= 3 else (row[2], row[3])
+                y0, y1 = row[0], row[1]
+            else:
+                x0, x1 = int(pix.width * .08), int(pix.width * .92)
+                y0, y1 = int(cy - 10), int(cy + 10)
+            # Coordinates are stored in PDF points; add a little breathing room.
+            word.bbox = BBox(
+                max(0, x0 / scale - 3), max(0, y0 / scale - 3),
+                min(source_page.rect.width, x1 / scale + 3),
+                min(source_page.rect.height, y1 / scale + 3),
+            )
+            word.font_size = max(6.0, (word.bbox.y1 - word.bbox.y0) * .72)
 
 
 def _replace_word_with_blocks(page, editor_words, original, replacements):
@@ -484,7 +577,7 @@ class TranslationEditor(tk.Tk if tk is not None else object):
         self.mode = getattr(application, "editor_mode", "translation")
         self.words = (
             _prepare_generic_words(self.document)
-            if self.mode == "generic"
+            if self.mode in {"generic", "vlm"}
             else _translation_words(application)
         )
         self.by_id = {getattr(word, "_translation_unit_id", str(word.id)): word for word in self.words}
@@ -539,7 +632,7 @@ class TranslationEditor(tk.Tk if tk is not None else object):
             footer, text="Enregistrer le PDF et les corrections", command=self._save,
         ).pack(fill=tk.X)
         self.status = tk.StringVar(value=(
-            "Sélectionnez une ligne, tracez sa boîte sur le scan, puis ajustez-la si besoin."
+            "Vérifiez les boîtes estimées depuis le scan et corrigez celles qui sont mal placées."
             if self.mode == "vlm"
             else "Glissez un segment pour déplacer un bloc ; tirez son coin inférieur droit pour le redimensionner."
         ))
@@ -551,7 +644,7 @@ class TranslationEditor(tk.Tk if tk is not None else object):
         ttk.Label(
             content,
             text=(
-                "Sélectionnez une ligne pour modifier son texte, puis tracez sa boîte sur le scan."
+                "Les boîtes sont estimées depuis les traits du scan. Vérifiez-les et corrigez les lignes mal placées."
                 if self.mode == "vlm"
                 else "Ctrl/Cmd+clic ou Maj+clic pour sélectionner plusieurs blocs."
             ),
@@ -576,7 +669,10 @@ class TranslationEditor(tk.Tk if tk is not None else object):
             ttk.Button(content, text="Ajouter un bloc texte", command=self._add_text).pack(fill=tk.X)
         if self.mode == "vlm":
             ttk.Button(
-                content, text="Tracer la boîte de la ligne sélectionnée",
+                content, text="Ajouter une ligne manquante", command=self._add_text,
+            ).pack(fill=tk.X)
+            ttk.Button(
+                content, text="Tracer / refaire la boîte sélectionnée",
                 command=self._start_box_creation,
             ).pack(fill=tk.X, pady=(4, 0))
         if self.mode != "vlm":
