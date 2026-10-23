@@ -141,11 +141,14 @@ datacompiler document.pdf --target-lang en --edit-translation
 ```
 
 `--edit-translation` requires `--target-lang` and cannot be combined with
-`--no-translate`. `--editor` opens the generic resolved-text editor when no
-target language is specified; with `--target-lang`, it opens the translation
-editor unless `--no-translate` disables translation. `--editor` requires the
-rebuilt PDF output format. Both editors require Tkinter and a graphical desktop
-session.
+`--no-translate`. `--editor` opens the generic resolved-text editor for pages
+without VLM review. If a page has a VLM transcription or is already in review,
+it opens a local browser review with the scan and candidate readings. Choices
+and draft text are saved beside the source as `<name>.review.json`; rerunning
+the same command resumes the session without calling the VLMs again. A rebuilt
+PDF is written only after all reviewed pages are validated. `--editor` requires
+the rebuilt PDF output format. The generic and translation editors require
+Tkinter and a graphical desktop session.
 
 In the editor, select a block to change its text, size, bold/italic style,
 superscript or subscript, color, position, and dimensions. The native color

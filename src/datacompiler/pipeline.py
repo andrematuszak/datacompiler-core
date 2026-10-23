@@ -36,7 +36,7 @@ progress = logging.getLogger("datacompiler.progress")
 
 def executer_pipeline(pdf_path, strategy="rebuilt", sauver_json=False,
                       dpi=300, dpi_ocr_vectoriel=300, paddle_lang=None,
-                      ocr_mode="auto", render=True):
+                      ocr_mode="auto", render=True, review_session_path=None):
 
     """Run the PDF pipeline in six stages.
 
@@ -107,6 +107,11 @@ def executer_pipeline(pdf_path, strategy="rebuilt", sauver_json=False,
             page for page in doc.pages
             if page.routing and page.routing.strategy == FULL_PAGE_VLM_OCR
         ]
+        cached_vlm_pages = set()
+        if review_session_path:
+            from datacompiler.review.web import load_review_session
+            cached_vlm_pages = load_review_session(doc, review_session_path)
+            vlm_pages = [page for page in vlm_pages if page.number not in cached_vlm_pages]
 
         for page in paddle_pages:
             language = paddle_lang or page.language.code
@@ -349,6 +354,7 @@ def main():
         dpi=args.dpi, dpi_ocr_vectoriel=args.dpi_ocr_vectoriel,
         paddle_lang=args.paddle_lang, ocr_mode=args.ocr_mode,
         render=not (args.editor or args.edit_translation),
+        review_session_path=(str(Path(args.pdf).with_suffix(".review.json")) if args.editor else None),
     )
 
     if args.no_translate:
@@ -379,17 +385,42 @@ def main():
         else:
             progress.info("Éditeur fermé sans enregistrement du PDF.")
     elif args.editor:
-        from datacompiler.translation import edit_document_pdf
-
         output_path = str(Path(args.pdf).with_suffix("")) + "_rebuilt.pdf"
-        try:
-            result = edit_document_pdf(document, output_path)
-        except (RuntimeError, ValueError) as exc:
-            parser.exit(1, f"Editor failed: {exc}\n")
-        if result is not None:
-            progress.info("Édité : %s", output_path)
+        review_path = Path(args.pdf).with_suffix(".review.json")
+        review_pages = [
+            page for page in document.pages
+            if page.ocr.candidates or page.review.state == "in_review"
+        ]
+        if review_pages:
+            from datacompiler.frontend.ocr.vlm import fill_provisional_ocr
+            from datacompiler.review.web import open_review, save_review_session
+
+            save_review_session(document, review_path)
+            try:
+                complete = open_review(document, args.pdf, review_path)
+            except (RuntimeError, ValueError, OSError) as exc:
+                parser.exit(1, f"Review editor failed: {exc}\n")
+            if complete:
+                for page in review_pages:
+                    text = page.review.validated_text or page.review.draft_text or ""
+                    engine = page.ocr.candidates[0].model if page.ocr.candidates else (page.ocr.engine or "manual-review")
+                    fill_provisional_ocr(page, text, engine=engine)
+                resoudre(document)
+                render_rebuilt_pdf(document, output_path, source_pdf=args.pdf, dpi=args.dpi)
+                progress.info("Revue validée : %s", output_path)
+            else:
+                progress.info("Document laissé en revue. Session : %s", review_path)
         else:
-            progress.info("Éditeur fermé sans enregistrement du PDF.")
+            from datacompiler.translation import edit_document_pdf
+
+            try:
+                result = edit_document_pdf(document, output_path)
+            except (RuntimeError, ValueError) as exc:
+                parser.exit(1, f"Editor failed: {exc}\n")
+            if result is not None:
+                progress.info("Édité : %s", output_path)
+            else:
+                progress.info("Éditeur fermé sans enregistrement du PDF.")
 
 
 if __name__ == "__main__":

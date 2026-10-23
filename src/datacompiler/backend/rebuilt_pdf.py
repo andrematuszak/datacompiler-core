@@ -632,6 +632,20 @@ def render_rebuilt_pdf(doc: Document, output_path: str, source_pdf: str = None,
                     opacity=1.0, morph=morph
                 )
 
+            # Full-page VLM transcriptions have no word coordinates. Once a
+            # human validates them, keep the scan visually unchanged and add
+            # the approved text as an invisible searchable text layer.
+            if model_page.review.state == "validated" and not any(w.bbox for w in ordinary_words):
+                transcript = next((
+                    block.content for block in model_page.ocr.blocks
+                    if block.metadata.get("source") == "openrouter" and block.content.strip()
+                ), "")
+                if transcript:
+                    dst_page.insert_textbox(
+                        dst_page.rect + (2, 2, -2, -2), transcript,
+                        fontname="helv", fontsize=7, render_mode=3, overlay=True,
+                    )
+
             for translated_word in translated_blocks:
                 if getattr(translated_word, "_translation_deleted", False):
                     continue

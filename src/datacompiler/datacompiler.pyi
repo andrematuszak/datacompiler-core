@@ -239,6 +239,7 @@ def executer_pipeline(
     paddle_lang: Optional[str] = None,
     ocr_mode: OcrMode = "auto",
     render: bool = True,
+    review_session_path: Optional[Union[str, PathLike[str]]] = None,
 ) -> Document: ...
 
 run_pipeline = executer_pipeline

@@ -392,6 +392,10 @@ def apply_candidates(page, candidates: list[OcrCandidate]) -> None:
     if not candidates:
         return
     page.review = build_review(candidates)
+    if len(candidates) == 1:
+        page.review.state = "in_review"
+        page.review.reference_candidate_id = candidates[0].id
+        page.review.draft_text = candidates[0].text
     text = page.review.validated_text
     if text is None:
         reference_id = page.review.reference_candidate_id or candidates[0].id
@@ -399,6 +403,8 @@ def apply_candidates(page, candidates: list[OcrCandidate]) -> None:
             (item.text for item in candidates if item.id == reference_id),
             candidates[0].text,
         )
+    if page.review.draft_text is None:
+        page.review.draft_text = text
     engine = candidates[0].model if len(candidates) == 1 else "openrouter-vlm"
     fill_provisional_ocr(
         page,

@@ -229,6 +229,7 @@ class PageReview:
     reference_candidate_id: Optional[str] = None
     divergences: List[Divergence] = field(default_factory=list)
     validated_text: Optional[str] = None
+    draft_text: Optional[str] = None
 
 
 @dataclass
