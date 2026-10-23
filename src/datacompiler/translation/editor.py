@@ -589,6 +589,9 @@ class TranslationEditor(tk.Tk if tk is not None else object):
         self.draw_box_mode = False
         self.draw_box_start = None
         self.draw_box_item = None
+        self.create_segment_mode = False
+        self.segment_creation_start = None
+        self.segment_creation_item = None
         self.saved = False
         self._preview_dir = tempfile.TemporaryDirectory(prefix="datacompiler-editor-")
         self.preview_path = Path(self._preview_dir.name) / "preview.pdf"
@@ -669,7 +672,7 @@ class TranslationEditor(tk.Tk if tk is not None else object):
             ttk.Button(content, text="Ajouter un bloc texte", command=self._add_text).pack(fill=tk.X)
         if self.mode == "vlm":
             ttk.Button(
-                content, text="Ajouter une ligne manquante", command=self._add_text,
+                content, text="Créer une ligne sur le scan", command=self._start_segment_creation,
             ).pack(fill=tk.X)
             ttk.Button(
                 content, text="Tracer / refaire la boîte sélectionnée",
@@ -726,6 +729,9 @@ class TranslationEditor(tk.Tk if tk is not None else object):
         ttk.Label(editor_fields, text="Taille (pt)").grid(row=2, column=0, sticky="w")
         self.size_value = tk.StringVar(value="10")
         ttk.Spinbox(editor_fields, from_=1, to=120, increment=0.5, textvariable=self.size_value, width=10).grid(row=2, column=1, sticky="e")
+        ttk.Button(
+            editor_fields, text="Uniformiser tout", command=self._uniformize_font_size,
+        ).grid(row=2, column=2, padx=(6, 0))
         self.bold_value = tk.BooleanVar()
         self.italic_value = tk.BooleanVar()
         ttk.Checkbutton(editor_fields, text="Gras", variable=self.bold_value).grid(row=3, column=0, sticky="w")
@@ -835,7 +841,7 @@ class TranslationEditor(tk.Tk if tk is not None else object):
             )
         )
 
-    def _commit_fields(self):
+    def _commit_fields(self, *, apply_format_to_selection=False):
         if self.selected is None:
             return
         text = self.text_value.get("1.0", "end-1c")
@@ -847,11 +853,31 @@ class TranslationEditor(tk.Tk if tk is not None else object):
             messagebox.showerror("Taille invalide", "La taille doit être un nombre positif.")
             return
         _apply_editor_text(self.selected, text, generic=self.mode == "generic")
-        self.selected.font_size = size
-        self.selected._translation_base_font_size = size
-        self.selected.bold = self.bold_value.get()
-        self.selected.italic = self.italic_value.get()
-        self.selected._translation_script = self.script_value.get()
+        selected_indices = self.segment_list.curselection() if hasattr(self, "segment_list") else ()
+        format_words = (
+            [self.words[index] for index in selected_indices]
+            if apply_format_to_selection and selected_indices
+            else [self.selected]
+        )
+        for word in format_words:
+            word.font_size = size
+            word._translation_base_font_size = size
+            word.bold = self.bold_value.get()
+            word.italic = self.italic_value.get()
+            word._translation_script = self.script_value.get()
+
+    def _uniformize_font_size(self):
+        try:
+            size = float(self.size_value.get())
+            if size <= 0:
+                raise ValueError
+        except ValueError:
+            messagebox.showerror("Taille invalide", "La taille doit être un nombre positif.")
+            return
+        for word in self.words:
+            word.font_size = size
+            word._translation_base_font_size = size
+        self._apply_and_preview(apply_format_to_selection=False)
 
     def _update_color_display(self):
         if self.selected is None or not hasattr(self, "color_value"):
@@ -942,6 +968,13 @@ class TranslationEditor(tk.Tk if tk is not None else object):
         page = self._page_for_word(self.selected) if self.selected else None
         if page is None:
             return
+        if self.create_segment_mode:
+            self.create_segment_mode = False
+            self.segment_creation_start = (x, y)
+            self.segment_creation_item = self.canvas.create_rectangle(
+                x, y, x, y, outline="#00a6ff", width=2, tags=("overlay",),
+            )
+            return
         if self.draw_box_mode:
             self.draw_box_start = (x, y)
             self.draw_box_item = self.canvas.create_rectangle(
@@ -969,6 +1002,11 @@ class TranslationEditor(tk.Tk if tk is not None else object):
                 return
 
     def _mouse_drag(self, event):
+        if self.segment_creation_start is not None:
+            x, y = self.canvas.canvasx(event.x), self.canvas.canvasy(event.y)
+            x0, y0 = self.segment_creation_start
+            self.canvas.coords(self.segment_creation_item, x0, y0, x, y)
+            return
         if self.draw_box_start is not None:
             x, y = self.canvas.canvasx(event.x), self.canvas.canvasy(event.y)
             x0, y0 = self.draw_box_start
@@ -992,6 +1030,25 @@ class TranslationEditor(tk.Tk if tk is not None else object):
         self.canvas.create_rectangle(x1 - 5, y1 - 5, x1 + 5, y1 + 5, fill="#ffb000", outline="#ffb000", tags=("overlay",))
 
     def _mouse_up(self, _event):
+        if self.segment_creation_start is not None:
+            x0, y0 = self.segment_creation_start
+            item = self.segment_creation_item
+            x1, y1 = self.canvas.coords(item)[2:]
+            page = self._page_for_word(self.selected)
+            self.canvas.delete(item)
+            self.segment_creation_start = None
+            self.segment_creation_item = None
+            if page is None:
+                return
+            page_x0, page_y0 = min(x0, x1) / self.scale, min(y0, y1) / self.scale
+            page_x1, page_y1 = max(x0, x1) / self.scale, max(y0, y1) / self.scale
+            if page_x1 - page_x0 < 8 or page_y1 - page_y0 < 8:
+                width, height = 220.0, 32.0
+                page_x0 = min(max(0.0, x0 / self.scale - 4), max(0.0, page.width - width))
+                page_y0 = min(max(0.0, y0 / self.scale - height / 2), max(0.0, page.height - height))
+                page_x1, page_y1 = page_x0 + min(width, page.width), page_y0 + min(height, page.height)
+            self._create_manual_segment(page, BBox(page_x0, page_y0, page_x1, page_y1))
+            return
         if self.draw_box_start is not None:
             x0, y0 = self.draw_box_start
             item = self.draw_box_item
@@ -1026,13 +1083,62 @@ class TranslationEditor(tk.Tk if tk is not None else object):
         self.draw_box_mode = True
         self.status.set("Tracez une boîte autour de la ligne sélectionnée sur le scan.")
 
-    def _apply_and_preview(self):
+    def _start_segment_creation(self):
         self._commit_fields()
+        self.create_segment_mode = True
+        self.draw_box_mode = False
+        self.status.set("Cliquez-glissez sur le scan pour créer une ligne à cet emplacement.")
+
+    def _create_manual_segment(self, page, bbox):
+        unit_id = self._new_manual_id(page)
+        font_size = max(6.0, (bbox.y1 - bbox.y0) * .72)
+        word = Word(
+            id=max((item.id for item in page.resolved.words), default=0) + 1,
+            text="", bbox=bbox, font_size=font_size,
+            source="manual_translation", reconstructed=True,
+        )
+        word.resolved_text = ""
+        word._translation_unit_id = unit_id
+        word._translation_block_id = unit_id
+        word._translation_baseline = None
+        word._translation_base_font_size = font_size
+        word._translation_script = "normal"
+        word._translation_segments = []
+        word._editor_generic = True
+        page_insert_at = next(
+            (index for index, existing in enumerate(page.resolved.words)
+             if existing.bbox and (existing.bbox.y0, existing.bbox.x0) > (bbox.y0, bbox.x0)),
+            len(page.resolved.words),
+        )
+        page.resolved.words.insert(page_insert_at, word)
+        next_word = page.resolved.words[page_insert_at + 1] if page_insert_at + 1 < len(page.resolved.words) else None
+        editor_insert_at = self.words.index(next_word) if next_word in self.words else len(self.words)
+        self.words.insert(editor_insert_at, word)
+        self.selected = word
+        self._refresh_list(keep_id=unit_id)
+        index = self.words.index(word)
+        self.segment_list.selection_clear(0, tk.END)
+        self.segment_list.selection_set(index)
+        self._reference_index = index
+        self._load_fields()
+        self.text_value.focus_set()
+        self._draw_page()
+        self.status.set("Ligne créée. Saisissez son texte, puis enregistrez.")
+
+    def _apply_and_preview(self, *, apply_format_to_selection=True):
+        self._commit_fields(apply_format_to_selection=apply_format_to_selection)
         if self.selected is None:
             return
         self.status.set("Génération de l'aperçu…")
         self.update_idletasks()
-        self._refresh_list(getattr(self.selected, "_translation_unit_id", None))
+        selected_ids = [
+            getattr(self.words[index], "_translation_unit_id", str(self.words[index].id))
+            for index in self.segment_list.curselection()
+        ]
+        self._refresh_list(
+            getattr(self.selected, "_translation_unit_id", None),
+            selected_ids=selected_ids,
+        )
         self._draw_page()
         self.status.set("Modifications prévisualisées. Enregistrez pour produire le PDF et le fichier de corrections.")
 
@@ -1250,7 +1356,7 @@ class TranslationEditor(tk.Tk if tk is not None else object):
         ttk.Button(dialog, text="Scinder", command=create_blocks).pack(anchor="e", padx=12, pady=(0, 12))
 
     def _save(self):
-        self._commit_fields()
+        self._commit_fields(apply_format_to_selection=True)
         if self.mode == "vlm":
             missing_boxes = [
                 word for word in self.words

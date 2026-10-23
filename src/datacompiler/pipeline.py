@@ -432,9 +432,15 @@ def main():
                             page.ocr.candidates[0].text.splitlines(),
                         )
                         edited_lines = [""] * len(original_lines)
-                        extra_lines = []
+                        manual_words = []
                         for word in page.resolved.words:
-                            if word.source != "vlm_transcription" or getattr(word, "_translation_deleted", False):
+                            if getattr(word, "_translation_deleted", False):
+                                continue
+                            if word.source == "manual_translation":
+                                if (word.resolved_text or word.text or "").strip():
+                                    manual_words.append(word)
+                                continue
+                            if word.source != "vlm_transcription":
                                 continue
                             line_index = max(0, int(word.line or 1) - 1)
                             if line_index < len(edited_lines):
@@ -444,12 +450,39 @@ def main():
                                 edited_lines[line_index] = (
                                     prefix + (word.resolved_text or word.text or "") + suffix
                                 )
-                            else:
-                                extra_lines.append(word.resolved_text or word.text or "")
-                        text = "\n".join(edited_lines + extra_lines).rstrip()
+                        insertions = {}
+                        transcript_words = [
+                            word for word in page.resolved.words
+                            if word.source == "vlm_transcription"
+                            and word.bbox is not None
+                            and not getattr(word, "_translation_deleted", False)
+                        ]
+                        for word in manual_words:
+                            next_word = min(
+                                (candidate for candidate in transcript_words
+                                 if candidate.bbox.y0 > word.bbox.y0),
+                                key=lambda candidate: candidate.bbox.y0,
+                                default=None,
+                            ) if word.bbox else None
+                            insertion_index = (
+                                max(0, int(next_word.line or 1) - 1)
+                                if next_word is not None else len(original_lines)
+                            )
+                            insertions.setdefault(insertion_index, []).append(word)
+                        for words in insertions.values():
+                            words.sort(key=lambda word: word.bbox.y0 if word.bbox else 0)
+                        output_lines = []
+                        for line_index in range(len(original_lines) + 1):
+                            output_lines.extend(
+                                word.resolved_text or word.text or ""
+                                for word in insertions.get(line_index, [])
+                            )
+                            if line_index < len(original_lines):
+                                output_lines.append(edited_lines[line_index])
+                        text = "\n".join(output_lines).rstrip("\r\n")
                         page.review.draft_text = text
                         page.review.validated_text = text
-                        page.review.draft_is_manual = text != "\n".join(original_lines).rstrip()
+                        page.review.draft_is_manual = text != "\n".join(original_lines).rstrip("\r\n")
                         page.review.state = "validated"
                         for block in page.ocr.blocks:
                             if block.metadata.get("source") == "openrouter":
@@ -459,6 +492,18 @@ def main():
                 save_review_session(document, review_path)
                 progress.info("Transcription enregistrée : %s", review_path)
                 progress.info("PDF rebuilt : %s", output_path)
+                text_pages = []
+                for page in document.pages:
+                    if page.review.validated_text is not None:
+                        text_pages.append(page.review.validated_text)
+                    else:
+                        text_pages.append("\n".join(
+                            word.output_text for word in page.resolved.words
+                            if (word.output_text or "").strip()
+                        ))
+                text_path = Path(output_path).with_suffix(".txt")
+                text_path.write_text("\n\f\n".join(text_pages), encoding="utf-8")
+                progress.info("Transcription texte exportée : %s", text_path)
             else:
                 save_review_session(document, review_path)
                 progress.info("Éditeur fermé sans enregistrement. Document laissé en revue : %s", review_path)
