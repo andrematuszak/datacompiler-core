@@ -383,6 +383,10 @@ def apply_single_model_ocr(page, candidate: OcrCandidate) -> None:
     """NVIDIA-compatible write: one engine, split words, markdown block, one candidate."""
     page.ocr.candidates = [candidate]
     page.review = build_review(page.ocr.candidates)
+    page.review.state = "in_review"
+    page.review.reference_candidate_id = candidate.id
+    page.review.draft_text = candidate.text
+    page.review.draft_candidate_id = candidate.id
     fill_provisional_ocr(page, candidate.text, engine=candidate.model)
 
 
@@ -391,20 +395,25 @@ def apply_candidates(page, candidates: list[OcrCandidate]) -> None:
     page.ocr.candidates = list(candidates)
     if not candidates:
         return
-    page.review = build_review(candidates)
-    if len(candidates) == 1:
-        page.review.state = "in_review"
-        page.review.reference_candidate_id = candidates[0].id
-        page.review.draft_text = candidates[0].text
-    text = page.review.validated_text
-    if text is None:
-        reference_id = page.review.reference_candidate_id or candidates[0].id
-        text = next(
-            (item.text for item in candidates if item.id == reference_id),
-            candidates[0].text,
-        )
-    if page.review.draft_text is None:
-        page.review.draft_text = text
+    reference = next(
+        (
+            item for item in candidates
+            if "dots-3-note-preview" in f"{item.id} {item.model}".lower()
+        ),
+        candidates[0],
+    )
+    page.review = build_review(candidates, reference_id=reference.id)
+    # Keep every model's raw reading for later evaluation, but don't let an
+    # automatic vote modify the chosen transcript. Dots is the current default
+    # when available; model merging remains an explicit future experiment.
+    for divergence in page.review.divergences:
+        divergence.decision = None
+    page.review.state = "in_review"
+    page.review.reference_candidate_id = reference.id
+    page.review.validated_text = None
+    page.review.draft_text = reference.text
+    page.review.draft_candidate_id = reference.id
+    text = reference.text
     engine = candidates[0].model if len(candidates) == 1 else "openrouter-vlm"
     fill_provisional_ocr(
         page,

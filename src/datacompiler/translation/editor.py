@@ -21,6 +21,7 @@ except ImportError:  # Keep the non-GUI translation API usable without Tk suppor
 import pymupdf
 from datacompiler.model.document import Word
 from datacompiler.model.geometry import BBox
+from datacompiler.review.divergence import build_review
 from datacompiler.utils.colors import normalize_hex_color
 from .xliff import TranslationUnit, XliffTranslation, apply_xliff_translation
 
@@ -56,7 +57,7 @@ def _prepare_generic_words(document):
     words = []
     for page in document.pages:
         for word in page.resolved.words:
-            if word.bbox is None:
+            if word.bbox is None and word.source != "vlm_transcription":
                 continue
             unit_id = getattr(word, "_translation_unit_id", "")
             if not (word.source == "manual_translation" and unit_id.startswith("manual-")):
@@ -73,6 +74,49 @@ def _prepare_generic_words(document):
                 )
             words.append(word)
     return words
+
+
+def prepare_vlm_editor_words(document):
+    """Use the Dots transcript as line-level editable text for full-page VLM scans."""
+    for page in document.pages:
+        candidates = page.ocr.candidates
+        if not candidates:
+            continue
+        reference = next(
+            (
+                item for item in candidates
+                if "dots-3-note-preview" in f"{item.id} {item.model}".lower()
+            ),
+            candidates[0],
+        )
+        if page.review.reference_candidate_id != reference.id:
+            page.review = build_review(candidates, reference_id=reference.id)
+            for divergence in page.review.divergences:
+                divergence.decision = None
+            page.review.state = "in_review"
+            page.review.reference_candidate_id = reference.id
+            page.review.validated_text = None
+            page.review.draft_text = reference.text
+            page.review.draft_candidate_id = reference.id
+        else:
+            page.review.draft_candidate_id = reference.id
+        line_words = []
+        for line_number, raw_line in enumerate(reference.text.splitlines(), start=1):
+            if not raw_line.strip():
+                continue
+            line = raw_line.strip()
+            word = Word(
+                id=line_number,
+                text=line,
+                resolved_text=line,
+                line=line_number,
+                source="vlm_transcription",
+                reconstructed=True,
+            )
+            word._vlm_prefix = raw_line[:len(raw_line) - len(raw_line.lstrip())]
+            word._vlm_suffix = raw_line[len(raw_line.rstrip()):]
+            line_words.append(word)
+        page.resolved.words = line_words
 
 
 def _replace_word_with_blocks(page, editor_words, original, replacements):
@@ -265,8 +309,7 @@ def _load_layout(application, path):
         getattr(word, "_translation_unit_id", ""): word
         for page in application.document.pages
         for word in page.resolved.words
-        if word.bbox is not None
-        and (
+        if (
             word.source in {"xliff_translation", "manual_translation"}
             or getattr(word, "_editor_generic", False)
         )
@@ -450,10 +493,16 @@ class TranslationEditor(tk.Tk if tk is not None else object):
         self.photo = None
         self.image_item = None
         self.drag = None
+        self.draw_box_mode = False
+        self.draw_box_start = None
+        self.draw_box_item = None
         self.saved = False
         self._preview_dir = tempfile.TemporaryDirectory(prefix="datacompiler-editor-")
         self.preview_path = Path(self._preview_dir.name) / "preview.pdf"
         title = (
+            "DataCompiler — placement de transcription VLM"
+            if self.mode == "vlm"
+            else
             "DataCompiler — édition du document"
             if self.mode == "generic"
             else "DataCompiler — édition légère des segments"
@@ -477,6 +526,9 @@ class TranslationEditor(tk.Tk if tk is not None else object):
         root.add(right, weight=4)
 
         list_title = (
+            "Lignes de transcription VLM"
+            if self.mode == "vlm"
+            else
             "Texte résolu et blocs manuels"
             if self.mode == "generic"
             else "Segments traduits et blocs manuels"
@@ -486,7 +538,11 @@ class TranslationEditor(tk.Tk if tk is not None else object):
         ttk.Button(
             footer, text="Enregistrer le PDF et les corrections", command=self._save,
         ).pack(fill=tk.X)
-        self.status = tk.StringVar(value="Glissez un segment pour déplacer un bloc ; tirez son coin inférieur droit pour le redimensionner.")
+        self.status = tk.StringVar(value=(
+            "Sélectionnez une ligne, tracez sa boîte sur le scan, puis ajustez-la si besoin."
+            if self.mode == "vlm"
+            else "Glissez un segment pour déplacer un bloc ; tirez son coin inférieur droit pour le redimensionner."
+        ))
         ttk.Label(footer, textvariable=self.status, wraplength=440).pack(anchor="w", pady=4)
 
         content = ttk.Frame(left)
@@ -494,7 +550,11 @@ class TranslationEditor(tk.Tk if tk is not None else object):
         ttk.Label(content, text=list_title).pack(anchor="w")
         ttk.Label(
             content,
-            text="Ctrl/Cmd+clic ou Maj+clic pour sélectionner plusieurs blocs.",
+            text=(
+                "Sélectionnez une ligne pour modifier son texte, puis tracez sa boîte sur le scan."
+                if self.mode == "vlm"
+                else "Ctrl/Cmd+clic ou Maj+clic pour sélectionner plusieurs blocs."
+            ),
             wraplength=330,
         ).pack(anchor="w")
         list_frame = ttk.Frame(content)
@@ -512,35 +572,49 @@ class TranslationEditor(tk.Tk if tk is not None else object):
         self.segment_list.bind("<<ListboxSelect>>", self._select_from_list)
         self.segment_list.bind("<ButtonRelease-1>", self._list_click_released, add="+")
         self.segment_list.bind("<KeyRelease>", self._list_key_released, add="+")
-        ttk.Button(content, text="Ajouter un bloc texte", command=self._add_text).pack(fill=tk.X)
-        ttk.Button(content, text="Scinder le segment en deux", command=self._split_selected).pack(fill=tk.X, pady=(4, 0))
+        if self.mode != "vlm":
+            ttk.Button(content, text="Ajouter un bloc texte", command=self._add_text).pack(fill=tk.X)
+        if self.mode == "vlm":
+            ttk.Button(
+                content, text="Tracer la boîte de la ligne sélectionnée",
+                command=self._start_box_creation,
+            ).pack(fill=tk.X, pady=(4, 0))
+        if self.mode != "vlm":
+            ttk.Button(content, text="Scinder le segment en deux", command=self._split_selected).pack(fill=tk.X, pady=(4, 0))
         self.delete_button = ttk.Button(content, command=self._toggle_deleted)
         self.delete_button.pack(fill=tk.X, pady=(4, 0))
-        ttk.Button(content, text="Fusionner les segments", command=self._merge_selection).pack(fill=tk.X, pady=(4, 0))
+        if self.mode != "vlm":
+            ttk.Button(content, text="Fusionner les segments", command=self._merge_selection).pack(fill=tk.X, pady=(4, 0))
         self.reference_value = tk.StringVar(value="Référence : aucune")
-        ttk.Label(content, textvariable=self.reference_value, wraplength=330).pack(
-            anchor="w", pady=(8, 2),
+        if self.mode != "vlm":
+            ttk.Label(content, textvariable=self.reference_value, wraplength=330).pack(
+                anchor="w", pady=(8, 2),
+            )
+
+        if self.mode != "vlm":
+            alignments = ttk.LabelFrame(content, text="Aligner les blocs sélectionnés", padding=6)
+            alignments.pack(fill=tk.X, pady=(4, 0))
+            for column, (label, axis, anchor) in enumerate((
+                ("Bords gauches", "horizontal", "left"),
+                ("Centres horizontaux", "horizontal", "center"),
+                ("Bords droits", "horizontal", "right"),
+                ("Bords hauts", "vertical", "top"),
+                ("Centres verticaux", "vertical", "center"),
+                ("Bords bas", "vertical", "bottom"),
+            )):
+                ttk.Button(
+                    alignments,
+                    text=label,
+                    command=lambda a=axis, p=anchor: self._align_selection(a, p),
+                ).grid(row=column // 2, column=column % 2, sticky="ew", padx=2, pady=2)
+            alignments.columnconfigure(0, weight=1)
+            alignments.columnconfigure(1, weight=1)
+
+        controls = ttk.LabelFrame(
+            content,
+            text="Ligne sélectionnée" if self.mode == "vlm" else "Segment sélectionné",
+            padding=8,
         )
-
-        alignments = ttk.LabelFrame(content, text="Aligner les blocs sélectionnés", padding=6)
-        alignments.pack(fill=tk.X, pady=(4, 0))
-        for column, (label, axis, anchor) in enumerate((
-            ("Bords gauches", "horizontal", "left"),
-            ("Centres horizontaux", "horizontal", "center"),
-            ("Bords droits", "horizontal", "right"),
-            ("Bords hauts", "vertical", "top"),
-            ("Centres verticaux", "vertical", "center"),
-            ("Bords bas", "vertical", "bottom"),
-        )):
-            ttk.Button(
-                alignments,
-                text=label,
-                command=lambda a=axis, p=anchor: self._align_selection(a, p),
-            ).grid(row=column // 2, column=column % 2, sticky="ew", padx=2, pady=2)
-        alignments.columnconfigure(0, weight=1)
-        alignments.columnconfigure(1, weight=1)
-
-        controls = ttk.LabelFrame(content, text="Segment sélectionné", padding=8)
         controls.pack(fill=tk.X, pady=8)
         editor_fields = ttk.Frame(controls)
         editor_fields.grid(row=0, column=0, sticky="nsew", padx=(0, 6))
@@ -549,7 +623,7 @@ class TranslationEditor(tk.Tk if tk is not None else object):
         controls.columnconfigure(0, weight=1)
         controls.columnconfigure(1, weight=0)
         controls.rowconfigure(0, weight=1)
-        text_label = "Texte édité" if self.mode == "generic" else "Texte cible"
+        text_label = "Transcription de la ligne" if self.mode == "vlm" else "Texte édité" if self.mode == "generic" else "Texte cible"
         ttk.Label(editor_fields, text=text_label).grid(row=0, column=0, columnspan=2, sticky="w")
         self.text_value = tk.Text(editor_fields, width=28, height=4, wrap=tk.WORD)
         self.text_value.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(2, 6))
@@ -613,6 +687,8 @@ class TranslationEditor(tk.Tk if tk is not None else object):
         selection = self.segment_list.curselection()
         if not selection:
             return
+        self.draw_box_mode = False
+        self.draw_box_start = None
         reference_index = getattr(self, "_reference_index", None)
         if reference_index not in selection:
             reference_index = selection[-1]
@@ -656,7 +732,11 @@ class TranslationEditor(tk.Tk if tk is not None else object):
         self._update_color_display()
         deleted = bool(getattr(word, "_translation_deleted", False))
         self.delete_button.configure(
-            text="Restaurer le bloc" if deleted else "Supprimer le bloc"
+            text=(
+                ("Restaurer la ligne" if deleted else "Supprimer la ligne")
+                if self.mode == "vlm"
+                else ("Restaurer le bloc" if deleted else "Supprimer le bloc")
+            )
         )
 
     def _commit_fields(self):
@@ -766,6 +846,12 @@ class TranslationEditor(tk.Tk if tk is not None else object):
         page = self._page_for_word(self.selected) if self.selected else None
         if page is None:
             return
+        if self.draw_box_mode:
+            self.draw_box_start = (x, y)
+            self.draw_box_item = self.canvas.create_rectangle(
+                x, y, x, y, outline="#00a6ff", width=2, tags=("overlay",),
+            )
+            return
         for word in reversed(self.words):
             if self._page_for_word(word) is not page or not word.bbox:
                 continue
@@ -787,6 +873,11 @@ class TranslationEditor(tk.Tk if tk is not None else object):
                 return
 
     def _mouse_drag(self, event):
+        if self.draw_box_start is not None:
+            x, y = self.canvas.canvasx(event.x), self.canvas.canvasy(event.y)
+            x0, y0 = self.draw_box_start
+            self.canvas.coords(self.draw_box_item, x0, y0, x, y)
+            return
         if not self.drag or self.selected is None:
             return
         x, y = self.canvas.canvasx(event.x), self.canvas.canvasy(event.y)
@@ -805,9 +896,39 @@ class TranslationEditor(tk.Tk if tk is not None else object):
         self.canvas.create_rectangle(x1 - 5, y1 - 5, x1 + 5, y1 + 5, fill="#ffb000", outline="#ffb000", tags=("overlay",))
 
     def _mouse_up(self, _event):
+        if self.draw_box_start is not None:
+            x0, y0 = self.draw_box_start
+            item = self.draw_box_item
+            x1, y1 = self.canvas.coords(item)[2:]
+            self.draw_box_start = None
+            self.draw_box_item = None
+            if abs(x1 - x0) < 8 or abs(y1 - y0) < 8:
+                self.canvas.delete(item)
+                self.draw_box_mode = False
+                self.status.set("Boîte trop petite ; tracez un rectangle autour de la ligne.")
+                return
+            box = BBox(
+                min(x0, x1) / self.scale, min(y0, y1) / self.scale,
+                max(x0, x1) / self.scale, max(y0, y1) / self.scale,
+            )
+            self.selected.bbox = box
+            self.selected.font_size = max(4.0, box.height * 0.78)
+            self.selected._translation_base_font_size = self.selected.font_size
+            self.selected.reconstructed = True
+            self.size_value.set(f"{self.selected.font_size:.1f}")
+            self.draw_box_mode = False
+            self._apply_and_preview()
+            return
         if self.drag:
             self.drag = None
             self._apply_and_preview()
+
+    def _start_box_creation(self):
+        if self.selected is None or self._page_for_word(self.selected) is None:
+            return
+        self._commit_fields()
+        self.draw_box_mode = True
+        self.status.set("Tracez une boîte autour de la ligne sélectionnée sur le scan.")
 
     def _apply_and_preview(self):
         self._commit_fields()
@@ -1034,6 +1155,21 @@ class TranslationEditor(tk.Tk if tk is not None else object):
 
     def _save(self):
         self._commit_fields()
+        if self.mode == "vlm":
+            missing_boxes = [
+                word for word in self.words
+                if word.source == "vlm_transcription"
+                and (word.resolved_text or word.text or "").strip()
+                and not word.bbox
+                and not getattr(word, "_translation_deleted", False)
+            ]
+            if missing_boxes:
+                messagebox.showerror(
+                    "Boîtes manquantes",
+                    f"Tracez une boîte pour chacune des {len(missing_boxes)} ligne(s) restante(s) avant d'enregistrer le PDF.",
+                )
+                self.status.set("Certaines lignes n'ont pas encore de boîte.")
+                return
         try:
             from datacompiler.backend.rebuilt_pdf import render_rebuilt_pdf
 
@@ -1087,13 +1223,16 @@ def edit_document_pdf(
     output_path: str | Path,
     *,
     corrections_path: str | Path | None = None,
+    editor_mode: str = "generic",
 ):
     """Open the editor on resolved source text without requiring a translation."""
     if not document.metadata.source_pdf:
         raise ValueError("The source PDF path is required (doc.metadata.source_pdf).")
     output_path = Path(output_path)
     corrections_path = Path(corrections_path or output_path.with_suffix(".layout.json"))
-    application = SimpleNamespace(document=document, editor_mode="generic")
+    application = SimpleNamespace(document=document, editor_mode=editor_mode)
+    if editor_mode == "vlm":
+        prepare_vlm_editor_words(document)
     _prepare_generic_words(document)
     _load_layout(application, corrections_path)
     editor = TranslationEditor(application, output_path, corrections_path)

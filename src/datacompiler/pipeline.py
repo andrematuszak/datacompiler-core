@@ -392,25 +392,76 @@ def main():
             if page.ocr.candidates or page.review.state == "in_review"
         ]
         if review_pages:
-            from datacompiler.frontend.ocr.vlm import fill_provisional_ocr
-            from datacompiler.review.web import open_review, save_review_session
+            from datacompiler.review.web import save_review_session
+            from datacompiler.translation.editor import (
+                edit_document_pdf, prepare_vlm_editor_words,
+            )
 
+            layout_path = Path(output_path).with_suffix(".layout.json")
+            has_vlm_candidates = any(p.ocr.candidates for p in review_pages)
+            if has_vlm_candidates:
+                prepare_vlm_editor_words(document)
+                if not layout_path.exists():
+                    for page in review_pages:
+                        reference = next(
+                            (c for c in page.ocr.candidates
+                             if "dots-3-note-preview" in f"{c.id} {c.model}".lower()),
+                            page.ocr.candidates[0] if page.ocr.candidates else None,
+                        )
+                        if reference is not None:
+                            page.review.state = "in_review"
+                            page.review.validated_text = None
+                            page.review.draft_text = reference.text
+                            for divergence in page.review.divergences:
+                                divergence.decision = None
             save_review_session(document, review_path)
-            progress.info("Revue ouverte dans le navigateur local. Le PDF rebuilt sera généré après validation.")
+            progress.info("Éditeur de transcription ouvert. Tracez une boîte pour chaque ligne du scan.")
             try:
-                complete = open_review(document, args.pdf, review_path)
+                result = edit_document_pdf(
+                    document, output_path, corrections_path=layout_path,
+                    editor_mode="vlm" if has_vlm_candidates else "generic",
+                )
             except (RuntimeError, ValueError, OSError) as exc:
                 parser.exit(1, f"Review editor failed: {exc}\n")
-            if complete:
+            if result is not None:
                 for page in review_pages:
-                    text = page.review.validated_text or page.review.draft_text or ""
-                    engine = page.ocr.candidates[0].model if page.ocr.candidates else (page.ocr.engine or "manual-review")
-                    fill_provisional_ocr(page, text, engine=engine)
-                resoudre(document)
-                render_rebuilt_pdf(document, output_path, source_pdf=args.pdf, dpi=args.dpi)
-                progress.info("Revue validée : %s", output_path)
+                    if page.ocr.candidates:
+                        original_lines = next(
+                            (c.text.splitlines() for c in page.ocr.candidates
+                             if "dots-3-note-preview" in f"{c.id} {c.model}".lower()),
+                            page.ocr.candidates[0].text.splitlines(),
+                        )
+                        edited_lines = [""] * len(original_lines)
+                        extra_lines = []
+                        for word in page.resolved.words:
+                            if word.source != "vlm_transcription" or getattr(word, "_translation_deleted", False):
+                                continue
+                            line_index = max(0, int(word.line or 1) - 1)
+                            if line_index < len(edited_lines):
+                                raw_line = original_lines[line_index]
+                                prefix = raw_line[:len(raw_line) - len(raw_line.lstrip())]
+                                suffix = raw_line[len(raw_line.rstrip()):]
+                                edited_lines[line_index] = (
+                                    prefix + (word.resolved_text or word.text or "") + suffix
+                                )
+                            else:
+                                extra_lines.append(word.resolved_text or word.text or "")
+                        text = "\n".join(edited_lines + extra_lines).rstrip()
+                        page.review.draft_text = text
+                        page.review.validated_text = text
+                        page.review.draft_is_manual = text != "\n".join(original_lines).rstrip()
+                        page.review.state = "validated"
+                        for block in page.ocr.blocks:
+                            if block.metadata.get("source") == "openrouter":
+                                block.content = text
+                                block.metadata["review_state"] = "validated"
+                                block.metadata["provisional"] = False
+                save_review_session(document, review_path)
+                progress.info("Transcription enregistrée : %s", review_path)
+                progress.info("PDF rebuilt : %s", output_path)
             else:
-                progress.info("Document laissé en revue. Session : %s", review_path)
+                save_review_session(document, review_path)
+                progress.info("Éditeur fermé sans enregistrement. Document laissé en revue : %s", review_path)
         else:
             from datacompiler.translation import edit_document_pdf
 

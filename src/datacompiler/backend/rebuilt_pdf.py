@@ -192,6 +192,7 @@ def _grouper_en_spans(mots, couleurs_echantillonnees=None, tolerance_y=3.0, ecar
         # In fidelity mode unchanged vector text stays as source glyph paths;
         # generic editor mode reconstructs it as visible text instead.
         source_graphic = _source_vector_matches_layout(w)
+        invisible_overlay = getattr(w, "source", None) == "vlm_transcription"
 
         mot_id = id(w)
         editor_color = getattr(w, "editor_color", None)
@@ -213,6 +214,7 @@ def _grouper_en_spans(mots, couleurs_echantillonnees=None, tolerance_y=3.0, ecar
                 "italic": italic,
                 "color": couleur_key,
                 "source_graphic": source_graphic,
+                "invisible_overlay": invisible_overlay,
             }
             continue
 
@@ -223,6 +225,7 @@ def _grouper_en_spans(mots, couleurs_echantillonnees=None, tolerance_y=3.0, ecar
             and span_courant["italic"] == italic
             and span_courant["color"] == couleur_key
             and span_courant["source_graphic"] == source_graphic
+            and span_courant["invisible_overlay"] == invisible_overlay
             and abs(span_courant["size"] - taille) <= 1.5
         )
         proche = (b.x0 - span_courant["bbox"].x1) <= ecart_max_mot
@@ -252,6 +255,7 @@ def _grouper_en_spans(mots, couleurs_echantillonnees=None, tolerance_y=3.0, ecar
                 "italic": italic,
                 "color": couleur_key,
                 "source_graphic": source_graphic,
+                "invisible_overlay": invisible_overlay,
             }
 
     if span_courant:
@@ -376,7 +380,7 @@ def _inserer_span(writers, page_rect, span, report, baseline_par_id=None):
     police, _ = _font_objet(span["bold"], span["italic"])
 
     est_vectorise = any(w.is_vectorized for w in span["mots"])
-    render_mode = 3 if span["source_graphic"] else 0
+    render_mode = 3 if span["source_graphic"] or span["invisible_overlay"] else 0
 
     # 1. Baseline : priorité au calibrage par ligne (médiane des mots
     # natifs de cette ligne visuelle, cf. _calibrer_lignes) -- plus
@@ -632,10 +636,10 @@ def render_rebuilt_pdf(doc: Document, output_path: str, source_pdf: str = None,
                     opacity=1.0, morph=morph
                 )
 
-            # Full-page VLM transcriptions have no word coordinates. Once a
-            # human validates them, keep the scan visually unchanged and add
-            # the approved text as an invisible searchable text layer.
-            if model_page.review.state == "validated" and not any(w.bbox for w in ordinary_words):
+            # Full-page VLM transcriptions have no word coordinates until the
+            # editor assigns line boxes. Keep the scan visually unchanged and
+            # add the chosen transcript as an invisible searchable layer.
+            if not any(w.bbox for w in ordinary_words):
                 transcript = next((
                     block.content for block in model_page.ocr.blocks
                     if block.metadata.get("source") == "openrouter" and block.content.strip()

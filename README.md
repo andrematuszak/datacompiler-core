@@ -142,17 +142,20 @@ datacompiler document.pdf --target-lang en --edit-translation
 
 `--edit-translation` requires `--target-lang` and cannot be combined with
 `--no-translate`. `--editor` opens the generic resolved-text editor for pages
-without VLM review. If a page has a VLM transcription or is already in review,
-it opens a local browser review with the scan and candidate readings. Choices
-and draft text are saved beside the source as `<name>.review.json`; rerunning
-the same command resumes the session without calling the VLMs again. A rebuilt
-PDF is written only after all reviewed pages are validated. `--editor` requires
-the rebuilt PDF output format. The generic and translation editors require
-Tkinter and a graphical desktop session.
+without VLM transcription. VLM pages use the existing desktop editor with the
+Dots transcription as the default when available. Each non-empty line is an
+editable segment; draw a box around each line on the scan, then move or resize
+it as needed. The rebuilt PDF keeps the scan unchanged and adds an invisible,
+searchable text layer at those box positions. The session is saved beside the
+source as `<name>.review.json`, and line geometry and edits as
+`<name>_rebuilt.layout.json`; rerunning resumes from these files without calling the
+VLMs again. Saving requires every active VLM line to have a box.
+`--editor` requires the rebuilt PDF output format. The generic and translation
+editors require Tkinter and a graphical desktop session.
 
 Without `--editor`, the CLI stays non-interactive and writes its normal output
 immediately; use `datacompiler document.pdf --editor` when you want the process
-to wait for transcription review before producing the rebuilt PDF.
+to wait for line placement and transcription editing before producing the rebuilt PDF.
 
 In the editor, select a block to change its text, size, bold/italic style,
 superscript or subscript, color, position, and dimensions. The native color
